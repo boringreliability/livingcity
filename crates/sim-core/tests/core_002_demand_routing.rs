@@ -1000,6 +1000,10 @@ fn validate_rejects_non_finite_rates_and_profiles() {
     assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, f64::INFINITY)])), Some(DemandError::BadProfile));
     assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, 1.0), (600.0, f64::NAN)])), Some(DemandError::BadProfile));
     assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, 1.0), (f64::NAN, 1.0)])), Some(DemandError::BadProfile));
+    // non-finite profile times anywhere (verified by the Red reviewer, round 4)
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(f64::NEG_INFINITY, 1.0), (600.0, 2.0)])), Some(DemandError::BadProfile));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, 1.0), (f64::INFINITY, 2.0)])), Some(DemandError::BadProfile));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(f64::NAN, 1.0)])), Some(DemandError::BadProfile));
     // flows are validated before the profile
     assert_eq!(err(mk(vec![(z, k, -1.0)], vec![(0.0, -1.0)])), Some(DemandError::BadRate(0)));
 }
