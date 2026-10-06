@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-002"]
 layer: "rust"
-estimated_tests: 16
+estimated_tests: 26
 created: "2026-10-06"
 completed: null
 ---
@@ -35,6 +35,10 @@ User interventions as tick-keyed commands (close/open a link), the brief's exact
   - West residential: Westbrook (north, y = 700), Old Town (center), Riverside (south).
   - East: Tech Park (workplace, north), Harbor Works (workplace, center), St. Mary's Hospital (hospital, south).
 - Demand (constant profile): each residential → each workplace 300 veh/h; each residential → hospital 60 veh/h; each east zone → each west zone 80 veh/h.
+- **Exact construction order** (fixes all ids; implementations must follow it):
+  1. Nodes: west junctions `W(r,c)` for r = 0..3 (y = −700, 0, 700), c = 0..3 (x = −1000, −550, −100) → ids 0–8; east junctions `E(r,c)` (x = 100, 550, 1000) → ids 9–17; zones (x = −1150 west / 1150 east, y of their row): Riverside (W row 0), Old Town (W row 1), Westbrook (W row 2), St. Mary's Hospital (E row 0), Harbor Works (E row 1), Tech Park (E row 2) → ids 18–23.
+  2. Links, each pair by `two_way(a, b)` (a→b, then b→a): west horizontals (r, then c: `W(r,c)`–`W(r,c+1)`), west verticals (c, then r: `W(r,c)`–`W(r+1,c)`), east horizontals, east verticals, then bridges south `W(0,2)`–`E(0,0)`, central `W(1,2)`–`E(1,0)`, north `W(2,2)`–`E(2,0)`, then connectors in zone-id order (zone → its outer junction: west zones to `W(r,0)`, east zones to `E(r,2)`).
+  3. Flows: for each west zone in id order: hospital 60, Harbor Works 300, Tech Park 300; then for each east zone in id order: each west zone in id order, 80.
 
 ## Tests
 
@@ -48,15 +52,25 @@ All in `crates/sim-core/tests/core_003_closures.rs`. "Close the central bridge" 
 | 4 | `affected_vehicles_reroute_around_closure` | 60 s after closure no live vehicle's remaining route contains a closed link; north + south bridge exits in [T+300 s, T+1500 s) exceed the same window of a run without closure |
 | 5 | `routes_change_only_at_valid_decision_points` | every tick, for every vehicle: OnLink(l) ⇒ route[route_pos] == l; the route stays contiguous origin→dest; the already-driven prefix `route[..=route_pos]` is never rewritten (with closures, reopenings and periodic reroutes over 40 min) |
 | 6 | `no_route_retries_then_removed_on_schedule` | closing all six bridge links at T: the cross-river vehicles that become NoRoute or stranded at T get `no_route_retries` 1…10 at T+60k and are removed exactly after step T+600, not completed; `removed_unreachable` and conservation match every tick; stranded ones stay on their lane until removal |
-| 7 | `reopen_restores_access` | closing all bridges at T and reopening at T+300 s: NoRoute/stranded vehicles resume on their next retry and later complete, with 0 removed; reopening the central bridge after a single closure brings its exits back |
+| 7 | `reopen_restores_access` | closing all bridges at T and reopening at T+240 s: NoRoute/stranded vehicles resume on their next retry and later complete, with 0 removed; reopening the central bridge after a single closure brings its exits back |
 | 8 | `reroute_budget_respected` | 3000 waiting vehicles routed over road A; closing A gives `max_budgeted_in_a_tick ≤ 200`, the backlog drains over ≥ 15 ticks, and after it no remaining route uses A |
 | 9 | `hysteresis_limits_route_switching` | two near-equal parallel roads under load for 1 h: ≥ 95 % of vehicles switch ≤ 1 time, and the total switch count ≤ 10 % of trips |
 | 10 | `commands_take_effect_at_their_tick` | with a closure scheduled for T, all observable state (link vehicles, metrics, costs, closed set) equals a run without it through step T−1; after step T the link is closed and the hashes differ; `InPast`/`UnknownLink` rejected; `command_log` keeps acceptance order; same-tick commands apply in acceptance order |
 | 11 | `same_seed_and_commands_give_identical_state` | two worlds, same scenario and command log (close at 10 min, reopen at 30 min): `state_hash` equal at every tick for 2 h |
 | 12 | `intervention_does_not_change_demand` | with vs. without closing the central bridge: identical `generated_trips` (incl. trip ids), different `state_hash` after the closure |
-| 13 | `conservation_under_random_closure_stress` | 50 seeded random close/open commands over 1 h: invariants every tick, `spawned == active + completed + removed`, `active == on_network + waiting + no_route` |
+| 13 | `conservation_under_random_closure_stress` | 50 seeded random close/open commands on non-connector links over 1 h: invariants every tick, conservation, the unreachable split; traffic keeps flowing (> 500 completed) and the stress produced stranded vehicles and removals |
 | 14 | `clone_continues_identically` | a clone taken mid-run with pending commands matches the original's hash every tick for 30 min |
 | 15 | `state_hash_covers_state` | the hash differs for worlds differing only in: behavior seed (before any draw), one pending future command, the closed state of an unused link, or one extra tick; and is equal for independently built identical worlds |
+| 17 | `backlog_forced_decision_never_enters_closed_link` | with a priority backlog > budget, nobody enters the closed link; a vehicle reaching the stop line before its priority turn is forced onto the alternative |
+| 18 | `admission_refuses_closed_first_link_under_backlog` | vehicles still queued for reroute are never admitted onto a closed first link, and become NoRoute when there is no way out |
+| 19 | `removal_is_not_an_exit` | removals do not change `link_exit_count`; everything stranded/NoRoute is removed exactly once |
+| 20 | `state_hash_covers_vehicle_state` | the hash differs for worlds differing only in routes or slot assignment |
+| 21 | `same_seed_and_commands_give_identical_observables` | identical metrics, reroute stats, vehicle infos, link vehicles and costs every 300 ticks (determinism not resting on the hash) |
+| 22 | `reopen_off_epoch_is_routable_immediately` | after a reopen at a non-epoch tick, new trips are routable at once (cache invalidated on open) |
+| 23 | `same_tick_open_then_close_ends_closed` | same-tick commands apply in acceptance order (the reverse case of test 10) |
+| 24 | `stranded_not_resumed_before_retry` | stranded vehicles act only on their retry schedule: not resumed at the reopen tick, and stranded fronts take no forced decisions |
+| 25 | `periodic_reconsideration_switches_when_clearly_better` | waiting vehicles on a clearly worse route switch exactly once at their periodic due tick |
+| 26 | `priority_drains_exactly_at_budget` | the priority backlog shrinks by exactly 200 per tick (priority served before periodic) |
 | 16 | `stranded_vehicle_semantics` | vehicles (on the connector and L1) whose only continuation closes become stranded on their lanes (front blocks the lane, counted in `stranded`, `on_network`, `unreachable`), `VehicleState` stays `OnLink`, and it resumes immediately on the first retry after reopening |
 
 ## Must NOT
@@ -75,13 +89,13 @@ cargo build -p sim-core --examples --release
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core_001 20, core_002 24, core_003 16 pass.
+   Expected: core_001 20, core_002 24, core_003 26 pass.
 2. Run: `cargo run -p sim-core --release --example bridge`
    Verify: before closure the central bridge carries the most west→east exits per minute. After closure its exits drop to 0 within about a minute, north/south exits rise, queued rises near the alternative crossings, and `unreachable` stays 0.
 3. Run it twice and `diff` the outputs.
    Expected: identical.
 ### Pass criteria
-- [ ] 60 tests green, clippy clean
+- [ ] 70 tests green, clippy clean
 - [ ] Bridge example shows emergent rerouting and queue growth
 - [ ] Deterministic output
 

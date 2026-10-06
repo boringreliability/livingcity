@@ -576,29 +576,35 @@ fn intervention_does_not_change_demand() {
 
 // ─── 13 ───────────────────────────────────────────────────────────────────
 #[test]
+/// Never closes zone connectors (premise independent of link-id layout).
 fn conservation_under_random_closure_stress() {
-    // Given 50 seeded random close/open commands over an hour
     let c = city();
-    let n_links = c.scenario.network.links().len() as u64;
+    let net = c.scenario.network.clone();
+    let candidates: Vec<LinkId> =
+        net.links().iter().filter(|l| !net.is_zone(l.from) && !net.is_zone(l.to)).map(|l| l.id).collect();
     let mut w = world(&c);
     let mut x = 0x00C0_FFEE_u64;
     for _ in 0..50 {
         x = splitmix64(x);
         let tick = x % 7200;
         x = splitmix64(x);
-        let l = LinkId((x % n_links) as u32);
+        let l = candidates[(x % candidates.len() as u64) as usize];
         x = splitmix64(x);
         let cmd = if unit_f64(x) < 0.6 { close(l, tick) } else { open(l, tick) };
         w.schedule(cmd).unwrap();
     }
-    // When it runs, Then every invariant holds every tick (step_checked)
+    let mut max_stranded = 0;
     for _ in 0..7200 {
         step_checked(&mut w);
         let m = w.metrics();
         assert_eq!(m.unreachable, m.no_route + m.stranded + m.removed_unreachable);
         assert_eq!(m.spawned, m.active + m.completed + m.removed_unreachable);
+        max_stranded = max_stranded.max(m.stranded);
     }
-    assert!(w.metrics().completed > 1000);
+    let m = w.metrics();
+    // (premise: traffic kept flowing, and the stress reached stranded vehicles and removals)
+    assert!(m.completed > 500, "{m:?}");
+    assert!(max_stranded > 0 && m.removed_unreachable > 0, "stress too mild: {m:?}");
 }
 
 // ─── 14 ───────────────────────────────────────────────────────────────────
@@ -722,3 +728,307 @@ fn stranded_vehicle_semantics() {
     assert_eq!(w.metrics().completed, 12);
     assert_eq!(w.metrics().removed_unreachable, 0);
 }
+
+// ─── 17–26 ────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 1.
+
+/// z ⇒ j (zj, 150 m) and y ⇒ j (yj, 150 m); j → d directly over A, or j → k → d over B1, B2.
+fn backlog_net() -> (sim_core::Network, [LinkId; 5]) {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let y = b.zone(0.0, -150.0);
+    let j = b.node(0.0, 0.0);
+    let k = b.node(500.0, 600.0);
+    let d = b.node(1000.0, 0.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let yj = b.link(y, j, 11.1, 1);
+    let a = b.link(j, d, 13.9, 2);
+    let b1 = b.link(j, k, 13.9, 1);
+    let b2 = b.link(k, d, 13.9, 1);
+    (b.build().unwrap(), [zj, yj, a, b1, b2])
+}
+
+// ─── 17 ──────────────────────────────────────────────────────────────────
+#[test]
+fn backlog_forced_decision_never_enters_closed_link() {
+    let (net, [zj, yj, a, b1, _b2]) = backlog_net();
+    let mut w = World::new(net);
+    // 3000 backlog vehicles first (low slots, processed first) ...
+    for _ in 0..3000 {
+        w.spawn_with_route(vec![yj, a]).unwrap();
+    }
+    // ... then 10 vehicles from z (high slots: their priority turn comes 15 ticks after the closure)
+    let zs: Vec<_> = (0..10).map(|_| w.spawn_with_route(vec![zj, a]).unwrap()).collect();
+    let close_tick = 25;
+    w.schedule(close(a, close_tick)).unwrap();
+    for _ in 0..close_tick {
+        step_checked(&mut w);
+    }
+    assert_eq!(w.link_count(a), 0, "premise: nobody on A at closure");
+    let z_trip0 = w.vehicle(zs[0]).unwrap().trip_id;
+    // When the backlog is worked off (3010 entries / 200 per tick ⇒ the z vehicles' turn is tick close+15)
+    let mut first_z_on_b1: Option<u64> = None;
+    for _ in 0..40 {
+        step_checked(&mut w);
+        // Then nobody ever enters the closed link
+        assert_eq!(w.link_count(a), 0, "a vehicle entered closed A at tick {}", w.tick() - 1);
+        if first_z_on_b1.is_none() && w.link_vehicles(b1).iter().any(|v| v.trip_id == z_trip0) {
+            first_z_on_b1 = Some(w.tick() - 1);
+        }
+    }
+    // And the first z vehicle, which reaches the stop line before its priority turn, was forced onto B
+    let s = w.reroute_stats();
+    assert!(s.forced_total >= 1, "no forced decision: {s:?}");
+    let t = first_z_on_b1.expect("z vehicle reached B1");
+    assert!(t < close_tick + 15, "waited at the closed stop line until its priority pass (tick {t})");
+    assert!(s.max_budgeted_in_a_tick <= REROUTE_BUDGET_PER_TICK);
+}
+
+// ─── 18 ──────────────────────────────────────────────────────────────────
+#[test]
+fn admission_refuses_closed_first_link_under_backlog() {
+    let (net, [zj, yj, a, _b1, _b2]) = backlog_net();
+    let mut w = World::new(net);
+    for _ in 0..2000 {
+        w.spawn_with_route(vec![yj, a]).unwrap();
+    }
+    for _ in 0..50 {
+        w.spawn_with_route(vec![zj, a]).unwrap();
+    }
+    // Close A (2050 priority entries in slot order: the z vehicles' turn is tick 10) and the z
+    // connector, before anybody left z
+    w.schedule(close(a, 0)).unwrap();
+    w.schedule(close(zj, 0)).unwrap();
+    for _ in 0..30 {
+        step_checked(&mut w);
+        // Then no z vehicle is ever admitted onto the closed connector
+        assert_eq!(w.link_count(zj), 0, "admitted onto closed zj at tick {}", w.tick() - 1);
+    }
+    // And once their turn came they are NoRoute (z has no other way out)
+    let m = w.metrics();
+    assert_eq!(m.no_route, 50, "{m:?}");
+}
+
+// ─── 19 ──────────────────────────────────────────────────────────────────
+#[test]
+fn removal_is_not_an_exit() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let a = b.node(300.0, 0.0);
+    let d = b.node(600.0, 0.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let l1 = b.link(j, a, 13.9, 1);
+    let l2 = b.link(a, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..12 {
+        w.spawn_with_route(vec![zj, l1, l2]).unwrap();
+    }
+    for _ in 0..80 {
+        step_checked(&mut w);
+    }
+    w.schedule(close(l2, w.tick())).unwrap();
+    step_checked(&mut w);
+    let stuck = w.metrics().stranded + w.metrics().no_route;
+    assert!(w.metrics().stranded >= 3, "premise");
+    let exits = (w.link_exit_count(zj), w.link_exit_count(l1));
+    for _ in 0..700 {
+        step_checked(&mut w);
+        assert_eq!((w.link_exit_count(zj), w.link_exit_count(l1)), exits, "a removal counted as an exit");
+    }
+    let m = w.metrics();
+    assert_eq!(m.removed_unreachable, stuck);
+    assert_eq!(m.stranded + m.no_route + m.active, 0);
+}
+
+// ─── 20 ──────────────────────────────────────────────────────────────────
+#[test]
+fn state_hash_covers_vehicle_state() {
+    let (net, [zj, yj, a, b1, b2]) = backlog_net();
+    let mut p = World::new(net.clone());
+    let mut q = World::new(net);
+    // Same log, tick and seeds; only the vehicles' routes differ
+    p.spawn_with_route(vec![zj, a]).unwrap();
+    q.spawn_with_route(vec![zj, b1, b2]).unwrap();
+    assert_ne!(p.state_hash(), q.state_hash(), "route not hashed");
+    // Same vehicles, different slot assignment
+    let (net2, _) = backlog_net();
+    let mut r = World::new(net2.clone());
+    let mut s = World::new(net2);
+    r.spawn_with_route(vec![zj, a]).unwrap();
+    r.spawn_with_route(vec![yj, a]).unwrap();
+    s.spawn_with_route(vec![yj, a]).unwrap();
+    s.spawn_with_route(vec![zj, a]).unwrap();
+    for _ in 0..20 {
+        r.step();
+        s.step();
+        p.step();
+        q.step();
+        assert_ne!(r.state_hash(), s.state_hash());
+        assert_ne!(p.state_hash(), q.state_hash());
+    }
+}
+
+// ─── 21 ──────────────────────────────────────────────────────────────────
+#[test]
+fn same_seed_and_commands_give_identical_observables() {
+    let c = city();
+    let b = c.landmarks.central_bridge;
+    let mut w1 = world(&c);
+    let mut w2 = world(&c);
+    for w in [&mut w1, &mut w2] {
+        for l in b {
+            w.schedule(close(l, 1200)).unwrap();
+            w.schedule(open(l, 3600)).unwrap();
+        }
+    }
+    let links: Vec<LinkId> = c.scenario.network.links().iter().map(|l| l.id).collect();
+    for t in 0..5400u64 {
+        w1.step();
+        w2.step();
+        if t % 300 == 0 {
+            assert_eq!(w1.metrics(), w2.metrics(), "tick {t}");
+            assert_eq!(w1.reroute_stats(), w2.reroute_stats(), "tick {t}");
+            assert_eq!(infos(&w1), infos(&w2), "tick {t}");
+            for &l in &links {
+                assert_eq!(w1.link_vehicles(l), w2.link_vehicles(l), "tick {t}");
+                assert_eq!(w1.link_cost(l), w2.link_cost(l));
+            }
+        }
+    }
+}
+
+// ─── 22 ──────────────────────────────────────────────────────────────────
+#[test]
+fn reopen_off_epoch_is_routable_immediately() {
+    let c = city();
+    let lm = c.landmarks;
+    let reopen = T + 510; // 1710: not a multiple of COST_EPOCH_TICKS
+    let mut w = world(&c);
+    for bdg in [lm.north_bridge, lm.central_bridge, lm.south_bridge] {
+        for l in bdg {
+            w.schedule(close(l, T)).unwrap();
+            w.schedule(open(l, reopen)).unwrap();
+        }
+    }
+    for _ in 0..reopen + 120 {
+        step_checked(&mut w);
+        if w.tick() > reopen {
+            for i in infos(&w) {
+                if i.created_tick >= reopen {
+                    assert!(i.state != VehicleState::NoRoute, "trip {} spawned after reopening is NoRoute", i.trip_id);
+                }
+            }
+        }
+    }
+    assert_eq!(w.metrics().removed_unreachable, 0);
+}
+
+// ─── 23 ──────────────────────────────────────────────────────────────────
+#[test]
+fn same_tick_open_then_close_ends_closed() {
+    let c = city();
+    let x = c.landmarks.north_bridge[0];
+    let mut w = world(&c);
+    w.schedule(open(x, 3)).unwrap();
+    w.schedule(close(x, 3)).unwrap();
+    for _ in 0..4 {
+        step_checked(&mut w);
+    }
+    assert!(w.is_closed(x), "open-then-close at the same tick must end closed");
+}
+
+// ─── 24 ──────────────────────────────────────────────────────────────────
+#[test]
+fn stranded_not_resumed_before_retry() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let a = b.node(300.0, 0.0);
+    let d = b.node(600.0, 0.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let l1 = b.link(j, a, 13.9, 1);
+    let l2 = b.link(a, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..12 {
+        w.spawn_with_route(vec![zj, l1, l2]).unwrap();
+    }
+    for _ in 0..80 {
+        step_checked(&mut w);
+    }
+    let ct = w.tick();
+    w.schedule(close(l2, ct)).unwrap();
+    w.schedule(open(l2, ct + 90)).unwrap();
+    step_checked(&mut w);
+    let forced0 = w.reroute_stats().forced_total;
+    let n = w.metrics().stranded;
+    while w.tick() < ct + 120 {
+        step_checked(&mut w);
+    }
+    // after step ct+119: reopened 30 ticks ago, but the retry is due at ct+120
+    assert_eq!(w.metrics().stranded, n, "resumed before the scheduled retry");
+    assert_eq!(w.reroute_stats().forced_total, forced0, "stranded fronts must not take forced decisions");
+    step_checked(&mut w);
+    assert_eq!(w.metrics().stranded, 0);
+}
+
+// ─── 25 ──────────────────────────────────────────────────────────────────
+#[test]
+fn periodic_reconsideration_switches_when_clearly_better() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let k = b.node(500.0, 600.0);
+    let d = b.node(1000.0, 0.0);
+    let zj = b.link(z, j, 11.1, 2);
+    let a = b.link(j, d, 13.9, 2);
+    let b1 = b.link(j, k, 13.9, 1);
+    let b2 = b.link(k, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..300 {
+        w.spawn_with_route(vec![zj, b1, b2]).unwrap();
+    }
+    for _ in 0..240 {
+        step_checked(&mut w);
+    }
+    // Then everyone still waiting was offered (and took) the clearly better route exactly once
+    let waiting: Vec<VehicleInfo> =
+        infos(&w).into_iter().filter(|i| i.state == VehicleState::WaitingAtOrigin).collect();
+    assert!(waiting.len() > 100, "premise: {} still waiting", waiting.len());
+    for i in &waiting {
+        assert_eq!(i.route, vec![zj, a], "trip {} kept the slow route", i.trip_id);
+        assert_eq!(i.route_switches, 1);
+    }
+    assert!(w.reroute_stats().switches_total >= waiting.len() as u64);
+}
+
+// ─── 26 ──────────────────────────────────────────────────────────────────
+#[test]
+fn priority_drains_exactly_at_budget() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let k = b.node(500.0, 600.0);
+    let d = b.node(1000.0, 0.0);
+    let zj = b.link(z, j, 11.1, 2);
+    let a = b.link(j, d, 13.9, 2);
+    b.link(j, k, 13.9, 1);
+    b.link(k, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..3000 {
+        w.spawn_with_route(vec![zj, a]).unwrap();
+    }
+    w.schedule(close(a, 10)).unwrap();
+    for _ in 0..10 {
+        step_checked(&mut w);
+    }
+    let uses_a = |w: &World| infos(w).iter().filter(|i| remaining(i).contains(&a)).count();
+    let n0 = uses_a(&w);
+    for t in 10..25u64 {
+        step_checked(&mut w);
+        let expect = n0.saturating_sub(REROUTE_BUDGET_PER_TICK as usize * (t - 9) as usize);
+        assert_eq!(uses_a(&w), expect, "tick {t}");
+    }
+}
+
