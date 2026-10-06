@@ -367,6 +367,10 @@ impl World {
                     None => {
                         blocked.push(first);
                         i += 1;
+                        // Every way out is blocked: nobody else can be admitted.
+                        if blocked.len() == self.network.out_links(NodeId(n as u32)).len() {
+                            break;
+                        }
                     }
                 }
             }

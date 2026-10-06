@@ -19,5 +19,7 @@ pub const QUEUED_SPEED: f64 = 2.0;
 pub const ORIGIN_ADMIT_PER_TICK: usize = 2;
 /// Shortest allowed link (m). Guarantees a vehicle cannot cross a link in one tick.
 pub const MIN_LINK_LENGTH: f64 = 10.0;
+/// Longest allowed link (m). Keeps lane/link capacities far inside `u32`.
+pub const MAX_LINK_LENGTH: f64 = 50_000.0;
 /// Max lanes per link.
 pub const MAX_LANES: u8 = 8;

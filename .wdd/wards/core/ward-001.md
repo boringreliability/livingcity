@@ -3,12 +3,12 @@ ward: 1
 revision: null
 name: "Road network, vehicles, queues and discharge"
 epic: "core"
-status: "gold"
+status: "complete"
 dependencies: []
 layer: "rust"
 estimated_tests: 20
 created: "2026-10-06"
-completed: null
+completed: "2026-10-06"
 ---
 # Ward core-001: Road network, vehicles, queues and discharge
 

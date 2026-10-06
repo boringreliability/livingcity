@@ -21,7 +21,7 @@ Make the city generate its own traffic and send it along sensible routes. Seeded
 
 ## Outputs
 - `sim_core::rng`: `splitmix64(u64) -> u64`, `mix3(a, b, c) -> u64`, `unit_f64(u64) -> f64` in [0, 1) (53-bit), `BehaviorRng` (stateful, `Clone`, `next_u64`, `next_f64`).
-- `sim_core::demand`: `OdFlow { origin, dest, veh_per_hour }`, `Profile` (piecewise-linear `(sim_s, multiplier)` points, constant outside the range, empty = 1.0), `DemandModel { flows, profile }`, `pub fn trips_at(model: &DemandModel, demand_seed: u64, tick: u64) -> Vec<TripRequest { flow_index, origin, dest }>` (**pure**; flow order, then k).
+- `sim_core::demand`: `OdFlow { origin, dest, veh_per_hour }` (origin must be a zone or a source node; `DemandModel::validate(&Network)` rejects other origins), `Profile` (piecewise-linear `(sim_s, multiplier)` points, constant outside the range, empty = 1.0), `DemandModel { flows, profile }`, `pub fn trips_at(model: &DemandModel, demand_seed: u64, tick: u64) -> Vec<TripRequest { flow_index, origin, dest }>` (**pure**; flow order, then k).
 - `sim_core::routing`: `free_flow_cost(link) -> f64`, `Router` (reverse Dijkstra per destination; trees cached per `(dest, cost_epoch)`; integer-millisecond keys; tie → lower link id).
 - `World` additions:
   - `Scenario { network, demand: DemandModel, demand_seed: u64, behavior_seed: u64 }` and `World::from_scenario(Scenario)`. `World::new(network)` remains (empty demand, seeds 0).
@@ -37,7 +37,7 @@ Make the city generate its own traffic and send it along sensible routes. Seeded
 - Trip IDs: one global sequential counter shared with explicit spawns (core-001 behavior unchanged). Demand trips are spawned in `trips_at` order.
 - **Behavior RNG**: `BehaviorRng::new(behavior_seed)`, used only for behavioral draws (speed factor now). Never used by demand.
 - **Link costs**: initial = `free_flow_cost = length/vmax + 1/(lanes × SAT_FLOW_PER_LANE)`. Each exit records `(exit_tick − link_enter_tick) × DT` into per-link epoch accumulators. At ticks where `tick > 0 && tick % COST_EPOCH_TICKS == 0`, in step 3: `obs = max(mean_exit_time if any, queue_term)`, `queue_term = count / (lanes × SAT_FLOW_PER_LANE) + length / vmax`, `smoothed = α·obs + (1−α)·smoothed`, `cost = max(free_flow, smoothed)`, accumulators reset, `cost_epoch += 1`. Costs therefore change only at epoch boundaries.
-- **Router**: reverse Dijkstra from `dest` over in-links, key `round(cost × 1000) as u64`, ties broken by lower link id (then lower node id). The cache is invalidated by epoch change (and, in core-003, closure changes). The cache is not part of `state_hash` (derived data).
+- **Router**: reverse Dijkstra from `dest` over in-links, key `round(cost × 1000) as u64`, ties broken by lower link id (then lower node id). **Never relaxes through a zone**: a zone node can only be a route's origin or its destination (decision `zone-centroids`). Returned routes always pass core-001 spawn validation. The cache is invalidated by epoch change (and, in core-003, closure changes). The cache is not part of `state_hash` (derived data).
 - **Metrics**: `queued` = on-network vehicles with `v < QUEUED_SPEED`. `mean_travel_time_s` over all completed trips, `(completed − created) × DT`. `incomplete = active`, `mean_incomplete_age_s` = mean of `(tick − created) × DT` over active vehicles. `unreachable = removed_unreachable + no_route`.
 
 ## Tests
@@ -51,7 +51,7 @@ All in `crates/sim-core/tests/core_002_demand_routing.rs`.
 | 3 | `demand_mean_rate_matches_model` | 600 veh/h over 4 h sim gives 2400 ± 5 % trips; a 7200 veh/h flow (expected > 1 per tick) is also within ± 3 % |
 | 4 | `profile_scales_demand` | multiplier 0 gives no trips; a piecewise ramp interpolates linearly; 2× multiplier gives ≈ 2× trips |
 | 5 | `demand_ignores_world_state` | a congested world (lots of explicit spawns) and an empty world produce identical demand logs (flow, origin, dest, tick) |
-| 6 | `router_finds_free_flow_shortest_path` | 3×3 grid with a fast ring: the router picks the analytically cheapest path and reports its cost |
+| 6 | `router_finds_free_flow_shortest_path` | 3×3 grid with a fast ring and zones on two corners: the router picks the analytically cheapest path, reports its cost, and never routes through a third zone even when it would be shorter |
 | 7 | `router_ties_broken_by_lowest_link_id` | symmetric diamond: always routes via the lower link id, independent of builder insertion of other links |
 | 8 | `unreachable_destination_yields_no_route_state` | one-way dead end: `shortest_route` → None, the demand vehicle enters `NoRoute`, and metrics count it as unreachable |
 | 9 | `congestion_raises_link_cost` | a congested link's cost rises > 1.5× free flow, and an unused link stays at free flow |

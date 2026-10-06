@@ -1,7 +1,7 @@
 //! Directed road network. Node coordinates are world meters (simulation
 //! data); nothing here knows about screens or drawing.
 
-use crate::params::{JAM_SPACING, MAX_LANES, MIN_LINK_LENGTH};
+use crate::params::{JAM_SPACING, MAX_LANES, MAX_LINK_LENGTH, MIN_LINK_LENGTH};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u32);
@@ -43,6 +43,7 @@ pub enum NetworkError {
     UnknownNode(NodeId),
     SelfLoop(NodeId),
     TooShort { from: NodeId, to: NodeId, length_m: f64 },
+    TooLong { from: NodeId, to: NodeId, length_m: f64 },
     InvalidSpeed { from: NodeId, to: NodeId },
     InvalidLanes { from: NodeId, to: NodeId, lanes: u8 },
 }
@@ -133,6 +134,9 @@ impl NetworkBuilder {
             });
             if !(length_m.is_finite() && length_m >= MIN_LINK_LENGTH) {
                 return Err(NetworkError::TooShort { from: p.from, to: p.to, length_m });
+            }
+            if length_m > MAX_LINK_LENGTH {
+                return Err(NetworkError::TooLong { from: p.from, to: p.to, length_m });
             }
             if !(p.speed_limit_mps.is_finite() && p.speed_limit_mps > 0.0) {
                 return Err(NetworkError::InvalidSpeed { from: p.from, to: p.to });

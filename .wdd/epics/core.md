@@ -12,7 +12,7 @@ Build the authoritative Rust traffic simulation (native-tested) and carry it all
 ## Wards
 | Ward | Name | Status |
 |------|------|--------|
-| core-001 | Road network, vehicles, queues and discharge | planned |
+| core-001 | Road network, vehicles, queues and discharge | complete |
 | core-002 | Demand, routing and metrics | planned |
 | core-003 | Closures, rerouting, commands and determinism | planned |
 | core-004 | WASM worker bridge | planned |

@@ -26,7 +26,7 @@ fn main() {
             w.spawn_with_route(vec![l1, l2, l3]).expect("valid route");
         }
         w.step();
-        if w.tick() % 60 == 0 {
+        if w.tick().is_multiple_of(60) {
             let exits = w.link_exit_count(l2);
             println!(
                 "{:>8.0} {:>4}/{:<5} {:>4}/{:<5} {:>10} {:>14}",
