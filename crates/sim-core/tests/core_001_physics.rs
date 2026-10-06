@@ -120,6 +120,24 @@ fn builder_rejects_invalid_links() {
         }),
         Err(NetworkError::TooShort { .. })
     ));
+    assert!(matches!(
+        build_with(|b, a, c| {
+            b.link(a, c, f64::NAN, 1);
+        }),
+        Err(NetworkError::InvalidSpeed { .. })
+    ));
+    assert!(matches!(
+        build_with(|b, a, c| {
+            b.link(a, c, f64::INFINITY, 1);
+        }),
+        Err(NetworkError::InvalidSpeed { .. })
+    ));
+    assert!(matches!(
+        build_with(|b, a, c| {
+            b.link_with_length(a, c, f64::INFINITY, 10.0, 1);
+        }),
+        Err(NetworkError::TooShort { .. })
+    ));
     // Zero lanes and too many lanes
     assert!(matches!(
         build_with(|b, a, c| {
@@ -288,8 +306,9 @@ fn storage_capacity_never_exceeded() {
 fn discharge_rate_bounded_by_saturation_flow() {
     for lanes in [1u8, 2u8] {
         // Given o ─L0(500 m, 4 lanes)─▶ a ─L1(300 m, `lanes`)─▶ b ─L2(1000 m, 3 lanes)─▶ c
-        // with demand above L1's capacity. The binding constraint is entry into
-        // and discharge through L1's lanes (start-up headway = credit = 4 ticks).
+        // with demand above L1's capacity. With 2 lanes L1 holds a standing queue;
+        // with 1 lane the binding constraint is the 4-lane → 1-lane entry into L1.
+        // Either way L1's exit flow is bounded by lanes × 0.5 veh/s.
         let mut b = NetworkBuilder::new();
         let o = b.node(0.0, 0.0);
         let a = b.node(500.0, 0.0);
@@ -535,6 +554,8 @@ fn completion_logs_travel_time() {
     by_trip.sort_by_key(|c| c.trip_id);
     assert_eq!(by_trip.iter().map(|c| c.trip_id).collect::<Vec<_>>(), vec![0, 1, 2]);
     assert_eq!(by_trip.iter().map(|c| c.created_tick).collect::<Vec<_>>(), vec![0, 10, 20]);
+    // Exact under the contract (independent reference implementation: 65/75/85)
+    assert_eq!(by_trip.iter().map(|c| c.completed_tick).collect::<Vec<_>>(), vec![65, 75, 85]);
     // And travel time is at least the free-flow time (400 m at 13.9 m/s ≈ 58 ticks)
     for c in &by_trip {
         let travel_s = (c.completed_tick - c.created_tick) as f64 * DT;
@@ -563,6 +584,10 @@ fn merge_shares_capacity_round_robin() {
     let l2 = b.link(o2, m, 13.9, 1);
     let l3 = b.link(m, x, 13.9, 1);
     let l4 = b.link(x, y, 13.9, 1);
+    // A third in-link whose trips END at the merge node: completions there
+    // must not advance the round-robin pointer (else a feeder starves)
+    let o3 = b.node(300.0, -300.0);
+    let l3c = b.link(o3, m, 13.9, 1);
     let mut w = World::new(b.build().unwrap());
 
     let mut window_start = (0, 0);
@@ -570,6 +595,7 @@ fn merge_shares_capacity_round_robin() {
         if t % 2 == 0 {
             w.spawn_with_route(vec![l1, l3, l4]).unwrap();
             w.spawn_with_route(vec![l2, l3, l4]).unwrap();
+            w.spawn_with_route(vec![l3c]).unwrap();
         }
         if t == 600 {
             window_start = (w.link_exit_count(l1), w.link_exit_count(l2));
@@ -735,13 +761,13 @@ fn sink_completion_does_not_consume_credit() {
             max_l1 = max_l1.max(w.link_count(l1));
         }
     }
-    // Premise: the feed really is free-flowing (L1 never queues up)
-    assert!((max_l1 as f64) < 0.5 * w.network().capacity(l1) as f64, "L1 queued: {max_l1}");
     // When we count completions at the end of L2 over ticks 300..1000 (350 s)
     let done = (w.counts().completed - start) as f64;
     // Then they exceed what a credit-limited (0.5 veh/s) exit would allow
     let credit_limited = SAT_FLOW_PER_LANE * 700.0 * DT;
     assert!(done > 1.3 * credit_limited, "completions {done} look credit-limited (≤ {credit_limited})");
+    // And the premise held: the feed was free-flowing (L1 never queued up)
+    assert!((max_l1 as f64) < 0.5 * w.network().capacity(l1) as f64, "L1 queued: {max_l1}");
 }
 
 // ─── 17 ───────────────────────────────────────────────────────────────────
@@ -778,5 +804,33 @@ fn empty_lanes_bank_credit() {
     }
     // Then it never waits for credit: L2's lane banked credit while empty
     assert_eq!(w.counts().completed, 1);
+    assert!(cruising, "vehicle never reached cruise speed");
+    // Exact under the contract (reference: 152 ticks; waiting for credit gives 160)
+    let trip = w.completed_log()[0];
+    assert_eq!(trip.completed_tick - trip.created_tick, 152);
     assert!(slowest_after_cruise > 5.0, "vehicle slowed to {slowest_after_cruise} m/s at the short link");
+}
+
+// ─── 18 ───────────────────────────────────────────────────────────────────
+#[test]
+fn speed_limit_change_along_route() {
+    // Given a 200 m link at 13.9 m/s followed by a 200 m link at 8.0 m/s
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(200.0, 0.0);
+    let d = b.node(400.0, 0.0);
+    let l1 = b.link(o, a, 13.9, 1);
+    let l2 = b.link(a, d, 8.0, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.spawn_with_route(vec![l1, l2]).unwrap();
+    // When it drives
+    for _ in 0..200 {
+        step_checked(&mut w);
+        // Then it never exceeds the current link's limit
+        for v in w.link_vehicles(l2) {
+            assert!(v.v <= 8.0 + 1e-9, "{} m/s on an 8 m/s link", v.v);
+        }
+    }
+    // And completes exactly when the contract says (reference: tick 85)
+    assert_eq!(w.completed_log()[0].completed_tick, 85);
 }
