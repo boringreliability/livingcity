@@ -1352,3 +1352,82 @@ fn retry_count_restarts_for_each_stranding() {
     assert_eq!(w.metrics().removed_unreachable, 6);
     assert_eq!(NO_ROUTE_MAX_RETRIES, 10);
 }
+
+
+
+// ─── 34 ──────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 5. Append to core_003_closures.rs (uses its helpers).
+#[test]
+fn noroute_retry_count_restarts_and_ignores_unrelated_commands() {
+    // Given a corridor with a spur at J, and 16 vehicles of which most still wait at the origin
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let a = b.node(1500.0, 0.0);
+    let d = b.node(1800.0, 0.0);
+    let e = b.node(0.0, 300.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let l1 = b.link(j, a, 13.9, 1);
+    let l2 = b.link(a, d, 13.9, 1);
+    let spur = b.link(j, e, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..16 {
+        w.spawn_with_route(vec![zj, l1, l2]).unwrap();
+    }
+    for _ in 0..10 {
+        step_checked(&mut w);
+    }
+    // When L2 closes (NoRoute at the origin, stranded on links), reopens (successful
+    // retry at ct + 120) and closes again at S = ct + 150; during the second episode an
+    // unrelated spur link is closed (S + 100) and reopened (S + 200)
+    let ct = w.tick();
+    let s = ct + 150;
+    w.schedule(close(l2, ct)).unwrap();
+    w.schedule(open(l2, ct + 90)).unwrap();
+    w.schedule(close(l2, s)).unwrap();
+    w.schedule(close(spur, s + 100)).unwrap();
+    w.schedule(open(spur, s + 200)).unwrap();
+    let ids = w.vehicle_ids();
+    assert_eq!(ids.len(), 16, "premise");
+    while w.tick() <= s {
+        step_checked(&mut w);
+        let t = w.tick() - 1;
+        for &id in &ids {
+            let i = w.vehicle(id).unwrap();
+            assert!(!matches!(i.state, VehicleState::OnLink(l) if l == l2), "premise: nobody reaches L2 (tick {t})");
+            if t == ct + 60 {
+                assert!(i.stranded || i.state == VehicleState::NoRoute, "premise: first episode");
+                assert_eq!(i.no_route_retries, 1, "premise: first episode, one failed retry");
+            }
+            if t == ct + 120 {
+                assert!(!i.stranded && i.state != VehicleState::NoRoute, "premise: resumed on the retry after the reopening");
+            }
+        }
+    }
+    // Then every vehicle starts the second episode at S with a fresh count, NoRoute ones included
+    let n_noroute = ids.iter().filter(|&&id| w.vehicle(id).unwrap().state == VehicleState::NoRoute).count();
+    assert!(n_noroute >= 4, "premise: some vehicles re-enter NoRoute at the origin ({n_noroute})");
+    for &id in &ids {
+        let i = w.vehicle(id).unwrap();
+        assert!(i.stranded || i.state == VehicleState::NoRoute);
+        assert_eq!(i.no_route_retries, 0, "trip {}: retry count carried over from the earlier episode", i.trip_id);
+    }
+    // And the unrelated close/open does not touch the schedule: k failed retries after
+    // step S + 60k, removal exactly after step S + 600
+    while w.tick() < s + 600 {
+        step_checked(&mut w);
+        let t = w.tick() - 1;
+        if t > s && (t - s) % NO_ROUTE_RETRY_TICKS == 0 {
+            let k = ((t - s) / NO_ROUTE_RETRY_TICKS) as u32;
+            for &id in &ids {
+                let i = w.vehicle(id).unwrap_or_else(|| panic!("removed early at tick {t} (after {k} retries)"));
+                assert_eq!(i.no_route_retries, k, "trip {} at tick {t}", i.trip_id);
+            }
+        }
+    }
+    assert_eq!(w.metrics().removed_unreachable, 0);
+    step_checked(&mut w);
+    assert!(ids.iter().all(|&id| w.vehicle(id).is_none()));
+    assert_eq!(w.metrics().removed_unreachable, 16);
+}
