@@ -163,6 +163,8 @@ pub struct World {
     completed: u64,
     removed: u64,
     completed_log: Vec<CompletedTrip>,
+    /// Running Σ travel time (s) over `completed_log`, in log order.
+    completed_tt_sum: f64,
     demand: DemandModel,
     demand_seed: u64,
     behavior_rng: BehaviorRng,
@@ -216,6 +218,7 @@ impl World {
             completed: 0,
             removed: 0,
             completed_log: Vec::new(),
+            completed_tt_sum: 0.0,
             demand,
             demand_seed,
             behavior_rng: BehaviorRng::new(behavior_seed),
@@ -259,7 +262,7 @@ impl World {
     /// Route via the per-epoch cache (same result as `shortest_route`).
     fn route_for(&mut self, from: NodeId, to: NodeId) -> Option<(Vec<LinkId>, f64)> {
         let (net, keys) = (&self.network, &self.cost_keys);
-        self.router.tree(net, keys, |_| true, self.cost_epoch, to).route(net, from)
+        self.router.tree(net, keys, |_| true, to).route(net, from)
     }
 
     pub fn vehicle(&self, id: VehicleId) -> Option<VehicleInfo> {
@@ -316,7 +319,7 @@ impl World {
             completed: c.completed,
             removed_unreachable: c.removed,
             unreachable: c.no_route + c.removed,
-            mean_travel_time_s: mean_travel_time(self.completed_log.iter()),
+            mean_travel_time_s: (self.completed > 0).then(|| self.completed_tt_sum / self.completed as f64),
             incomplete: c.active,
             mean_incomplete_age_s,
         }
@@ -605,6 +608,7 @@ impl World {
             created_tick: veh.created_tick,
             completed_tick: self.tick,
         });
+        self.completed_tt_sum += (self.tick - veh.created_tick) as f64 * DT;
         self.completed += 1;
         self.free.push(slot);
     }

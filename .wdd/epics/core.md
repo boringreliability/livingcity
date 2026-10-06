@@ -13,7 +13,7 @@ Build the authoritative Rust traffic simulation (native-tested) and carry it all
 | Ward | Name | Status |
 |------|------|--------|
 | core-001 | Road network, vehicles, queues and discharge | complete |
-| core-002 | Demand, routing and metrics | planned |
+| core-002 | Demand, routing and metrics | complete |
 | core-003 | Closures, rerouting, commands and determinism | planned |
 | core-004 | WASM worker bridge | planned |
 | core-005 | First closure in the browser (integration ward) | planned |
@@ -68,7 +68,7 @@ This is a deliberately simplified, coherent mesoscopic/microscopic hybrid. It is
 Queue spillback emerges from rule 4: a full downstream link stops the front vehicle, followers stack at `JAM_SPACING`, the link fills, and its upstream feeder then cannot discharge.
 
 ### Demand (`sim_core::demand`)
-- `DemandModel { flows: Vec<OdFlow { origin, dest, veh_per_hour }>, profile: Profile }`. A flow's origin must be a zone or a source node, `origin != dest`, and `veh_per_hour` is finite and ≥ 0 (`DemandModel::validate`). Validation is flow-major: for each flow in order, `UnknownNode` (origin, then dest) → `BadOrigin` → `SameOriginDest` → `BadRate`, then the profile → `BadProfile`.
+- `DemandModel { flows: Vec<OdFlow { origin, dest, veh_per_hour }>, profile: Profile }`. A flow's origin must be a zone or a source node, `origin != dest`, and `veh_per_hour` is finite and in `[0, MAX_FLOW_VEH_PER_HOUR = 100 000]` (`DemandModel::validate`). Validation is flow-major: for each flow in order, `UnknownNode` (origin, then dest) → `BadOrigin` → `SameOriginDest` → `BadRate`, then the profile → `BadProfile`.
 - `Profile`: points `(sim_s, multiplier)` with **finite**, strictly increasing times and finite multipliers ≥ 0 (∞ or NaN anywhere → `BadProfile`; a rate of ∞ would make `floor(expected)` saturate to `usize::MAX`). Empty means constant 1.0. Before the first point it takes the first multiplier, after the last the last, and in between `m0 + (m1 − m0) × (t − t0) / (t1 − t0)`. It is evaluated at **sim seconds** `t = tick × DT`.
 - For tick `t`, flow `i`: `expected = veh_per_hour / 3600.0 * DT * profile(t × DT)`. Count = `floor(expected)` + (1 if `unit_f64(splitmix64(mix3(demand_seed, t, i))) < expected − floor(expected)`). The requests come out in flow order, then copy index.
 - RNG primitives (`sim_core::rng`): `splitmix64(x)` (standard: `z = x + 0x9E3779B97F4A7C15; z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9; z = (z ^ (z >> 27)) * 0x94D049BB133111EB; z ^ (z >> 31)`, wrapping), `mix3(a, b, c) = splitmix64(splitmix64(splitmix64(a) ^ b) ^ c)`, `unit_f64(x) = (x >> 11) as f64 × 2⁻⁵³`. `BehaviorRng { state }`: `next_u64` does `state += 0x9E3779B97F4A7C15` and returns the splitmix64 output mix of the new state. No transcendental functions anywhere, so native ≡ WASM bit for bit.
@@ -86,11 +86,14 @@ Queue spillback emerges from rule 4: a full downstream link stops the front vehi
 - A route is computed at spawn (from the origin), at periodic reconsideration and when forced. A vehicle is always committed to its current link: new routes start at the current link's `to` node (a **valid decision point**). A waiting origin vehicle routes from its origin.
 
 ### Closures and rerouting
-- `CloseLink(l)`: no vehicle may enter `l` (discharge and origin admission). Vehicles already on `l` continue and may leave. Every vehicle whose **remaining** route (after its current link) contains `l` is pushed onto the priority reroute queue.
-- A front vehicle at a stop line whose next link is closed and which has not been rerouted yet is rerouted **immediately** (a forced decision, outside the budget).
-- No route → `NoRoute`: the vehicle waits in place, retries every `NO_ROUTE_RETRY_TICKS`, and after `NO_ROUTE_MAX_RETRIES` it is **explicitly removed** (`removed_unreachable += 1`, vacates its link).
-- `OpenLink(l)`: link enterable again. Vehicles pick it up through periodic reconsideration and NoRoute retries (no global forced recompute).
-- Periodic reconsideration: due at `(tick + trip_id) mod REROUTE_PERIOD_TICKS == 0`, enqueued FIFO, processed within budget (overflow carries over). The hysteresis rule (above) prevents flapping.
+- `CloseLink(l)` (tick step 1): `l` becomes closed. No vehicle may enter it (discharge and origin admission refuse it). Vehicles already on `l` continue and may leave. The router excludes closed links (`usable = !closed`) and its cache is invalidated. Every vehicle whose **remaining** route contains `l` is pushed onto the **priority reroute queue** in ascending slot order (skipping duplicates). For a vehicle on a link, remaining means `route[route_pos+1..]`; for a vehicle waiting at its origin, the whole route.
+- `OpenLink(l)`: `l` is enterable and usable again, and the cache is invalidated. Nothing is forced. Vehicles pick it up through periodic reconsideration, and stranded/NoRoute vehicles on their next retry.
+- **Valid decision point**: an on-link vehicle reroutes from its current link's `to` node and keeps `route[..=route_pos]` (the current link is never replaced); new route = `route[..=route_pos] ++ path(to → dest)`. A waiting origin vehicle reroutes from its origin (new route = path(origin → dest)). A vehicle on its final link never needs a reroute.
+- Step 3 order: (a) epoch cost update; (b) **priority queue** first, then the **periodic FIFO**, spending at most `REROUTE_BUDGET_PER_TICK` route computations this tick (the rest waits for the next tick, order kept). Priority reroutes always take the best route. Periodic reroutes switch only if `new < SWITCH_RATIO × current_remaining` **and** `current_remaining − new ≥ SWITCH_MIN_GAIN_S`, where `current_remaining = Σ cost_key(link_cost) / 1000` over the current remaining links (∞ if any is closed) and `new` is the router's reported cost.
+- Periodic due rule: at step 3 of tick `t`, each live vehicle that is `WaitingAtOrigin` or on-link-not-final with `(t + trip_id) % REROUTE_PERIOD_TICKS == 0` is appended to the periodic FIFO (ascending slot order) unless already queued.
+- **Forced decision** (step 4): a lane front that reaches the stop line, has a next link, and whose next link is closed is rerouted on the spot from the link's `to` node (counted in `forced_total`, not in the budget). If a route is found, the normal crossing rules then apply to the new next link in the same evaluation.
+- **No route**: a waiting origin vehicle without a route becomes `NoRoute` (stays in its buffer, counted in `no_route`). An on-link vehicle without a route becomes **stranded**: it stays on its lane (a stranded front blocks its lane) and is counted in `stranded`. Both retry every `NO_ROUTE_RETRY_TICKS` (step 3, outside the budget; `next_retry_tick = tick + NO_ROUTE_RETRY_TICKS`). A successful retry restores normal state. After `NO_ROUTE_MAX_RETRIES` failed retries the vehicle is **removed**: it leaves its buffer/lane, `removed_unreachable += 1`, it is not logged as completed, and its slot is freed.
+- Counting: `on_network` includes stranded vehicles. `waiting_at_origin` excludes NoRoute. `active = on_network + waiting_at_origin + no_route`. `unreachable = no_route + stranded + removed_unreachable`.
 
 ### Commands and determinism
 - `Command { tick, kind }` is applied at the start of `tick`. The command log is part of the scenario.
@@ -101,7 +104,7 @@ Queue spillback emerges from rule 4: a full downstream link stops the front vehi
 - **Active** = on network + waiting at origin + NoRoute (spawned, not yet finished). A NoRoute vehicle in an origin buffer counts as NoRoute, not as waiting.
 - **Queued** = vehicles **on the network** with `v < QUEUED_SPEED` (2 m/s ≈ 7 km/h), i.e. stopped or crawling.
 - **Completed**, plus a trip log `(trip_id, created_tick, completed_tick)`. **Mean travel time** = mean of `(completed − created) × DT` over a chosen window (default: since start). Waiting at the origin counts as travel time.
-- **Unreachable** = `removed_unreachable` + currently `NoRoute`.
+- **Unreachable** = `removed_unreachable` + `no_route` (at origins) + `stranded` (on links without a route).
 - **Incomplete** = active trips with their current age (for fair comparisons).
 - Conservation: `spawned == active + completed + removed` **at every tick** (`spawned` = demand trips + explicit spawns; `trips_generated` = demand trips only).
 

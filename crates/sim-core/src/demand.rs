@@ -1,7 +1,7 @@
 //! Seeded, reproducible trip demand: a pure function of (model, seed, tick).
 
 use crate::network::{Network, NodeId};
-use crate::params::DT;
+use crate::params::{DT, MAX_FLOW_VEH_PER_HOUR};
 use crate::rng::{mix3, splitmix64, unit_f64};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -74,7 +74,7 @@ impl DemandModel {
             if f.origin == f.dest {
                 return Err(DemandError::SameOriginDest(i));
             }
-            if !(f.veh_per_hour.is_finite() && f.veh_per_hour >= 0.0) {
+            if !(f.veh_per_hour.is_finite() && (0.0..=MAX_FLOW_VEH_PER_HOUR).contains(&f.veh_per_hour)) {
                 return Err(DemandError::BadRate(i));
             }
         }

@@ -1,13 +1,15 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-06, after core-001 completed (Gold approved, gold-1)
+2026-10-06, after core-002 completed (Gold approved, gold-1)
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). `main` holds only the initial commit.
 - Epic `core` active, with wards core-001…005 specced (001–003 Rust, 004 WASM/worker, 005 browser integration).
 - **core-001 complete**: `crates/sim-core` (`network.rs`, `world.rs`, `params.rs`). 20 tests green, clippy clean. The Red gate took 8 rounds (contract bugs found: tail time level, origin-vs-through starvation → zones). Gold was approved in round 1, with exact reference values matched and a 180k-tick fuzz with no failures.
-- Next: core-002 (demand, routing, metrics); the spec is aligned with zones.
+- **core-002 complete**: `rng.rs`, `demand.rs`, `routing.rs` + World demand/costs/metrics. 44 tests green (20 + 24). The Red gate took 4 rounds (underflow, NoRoute-removal premise, untested router-uses-congestion, non-finite inputs). Gold was approved in round 1, with all exact reference values matched.
+- `crates/sim-core/clippy.toml` machine-checks the Must NOT rules (no transcendental functions, HashMap/HashSet or wall clock).
+- Next: core-003 (closures, rerouting, commands, determinism, `cities::three_bridges`). The contract's Closures section has been rewritten for it (stranded vehicles, decision points, budget/hysteresis).
 
 ## Architecture Decisions Made
 | Decision | Rationale | Ward |
@@ -31,6 +33,8 @@
 ## Key Metrics
 | Metric | Value | Ward |
 |--------|-------|------|
+| Step incl. demand+routing, 20×20 grid, ~10.2k active (release) | 0.108 ms median, 0.245 ms p95, 0.32 ms epoch ticks | core-002 |
+| Step, 10×10 grid, ~2.9k active | 0.029 ms median, 0.051 ms p95 | core-002 |
 | Sim tick, 10k vehicles, 30×30 grid (release, M4 Pro) | 0.174 ms mean, 0.30 ms max | core-001 |
 | Sim tick, 30k vehicles, 50×50 grid | 0.568 ms mean | core-001 |
 | 1-lane saturation discharge | exactly 0.5 veh/s (30/min) | core-001 |
@@ -41,7 +45,10 @@
 - `World::clone` copies the `Network` and the unbounded `completed_log`, a snapshot cost to address in epic timeline (share the network via `Arc`, window the log).
 - Admission reads `route[0]`. core-002/003 must keep this valid with rerouting at origins.
 - `check_invariants` does not yet check credit/rr ranges, slot uniqueness or route_pos.
+- Dense all-pairs grid demand gridlocks (10×10 at 120 vph per pair). Tune the demo city (epic city) and consider gridlock relief.
+- `World::shortest_route` builds a fresh tree per call (test/UI use only; internal routing uses the cache).
+- RouterCache must be invalidated on every key/usable change (epoch, close/open, restore). core-003 adds the closure filter.
 
 ## What Comes Next
-- core-002 Red: write tests per `.wdd/wards/core/ward-002.md` → Red gate.
-- Then core-002 Gold, and after it core-003 (closures/commands/determinism + three_bridges city), core-004 (WASM worker bridge), core-005 (WebGL2 + React, first closure in the browser).
+- core-003 Red: tests per `.wdd/wards/core/ward-003.md` (update the spec to the rewritten contract: stranded, counting) → Red gate.
+- Then core-004 (WASM worker bridge), core-005 (WebGL2 + React, first closure in the browser).

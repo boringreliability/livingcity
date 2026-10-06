@@ -45,7 +45,7 @@ impl Tree {
                     continue;
                 }
                 let p = net.link(l).from;
-                let nd = d + keys[l.index()];
+                let nd = d.saturating_add(keys[l.index()]);
                 if nd < dist_ms[p.index()] {
                     dist_ms[p.index()] = nd;
                     heap.push(Reverse((nd, p.0)));
@@ -66,7 +66,7 @@ impl Tree {
                     if !usable(l) || dist_ms[v.index()] == UNREACHABLE || (v != dest && net.is_zone(v)) {
                         continue;
                     }
-                    let total = keys[l.index()] + dist_ms[v.index()];
+                    let total = keys[l.index()].saturating_add(dist_ms[v.index()]);
                     if best.is_none_or(|(b, _)| total < b) {
                         best = Some((total, l));
                     }
@@ -94,11 +94,11 @@ impl Tree {
     }
 }
 
-/// Derived cache of trees, valid for one cost epoch (and closure set).
-/// Not part of the simulation state: it is rebuilt deterministically on demand.
+/// Derived cache of trees. Not part of the simulation state: it is rebuilt
+/// deterministically on demand. The owner must call `invalidate` whenever the
+/// keys or the usable-link set change (epoch update, closures, restore).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RouterCache {
-    epoch: u64,
     trees: BTreeMap<NodeId, Tree>,
 }
 
@@ -107,18 +107,8 @@ impl RouterCache {
         self.trees.clear();
     }
 
-    pub(crate) fn tree(
-        &mut self,
-        net: &Network,
-        keys: &[u64],
-        usable: impl Fn(LinkId) -> bool,
-        epoch: u64,
-        dest: NodeId,
-    ) -> &Tree {
-        if self.epoch != epoch {
-            self.trees.clear();
-            self.epoch = epoch;
-        }
+    /// The cached tree for `dest`, built from `keys`/`usable` on a miss.
+    pub(crate) fn tree(&mut self, net: &Network, keys: &[u64], usable: impl Fn(LinkId) -> bool, dest: NodeId) -> &Tree {
         self.trees.entry(dest).or_insert_with(|| Tree::build(net, keys, usable, dest))
     }
 }

@@ -3,12 +3,12 @@ ward: 2
 revision: null
 name: "Demand, routing and metrics"
 epic: "core"
-status: "gold"
+status: "complete"
 dependencies: ["core-001"]
 layer: "rust"
 estimated_tests: 24
 created: "2026-10-06"
-completed: null
+completed: "2026-10-06"
 ---
 # Ward core-002: Demand, routing and metrics
 

@@ -21,6 +21,8 @@ pub const ORIGIN_ADMIT_PER_TICK: usize = 2;
 pub const MIN_LINK_LENGTH: f64 = 10.0;
 /// Longest allowed link (m). Keeps lane/link capacities far inside `u32`.
 pub const MAX_LINK_LENGTH: f64 = 50_000.0;
+/// Highest accepted demand rate per OD flow (veh/h); keeps `trips_at` bounded.
+pub const MAX_FLOW_VEH_PER_HOUR: f64 = 100_000.0;
 /// Link-cost update interval (ticks) = 30 s.
 pub const COST_EPOCH_TICKS: u64 = 60;
 /// Link-cost smoothing weight of the new observation.
