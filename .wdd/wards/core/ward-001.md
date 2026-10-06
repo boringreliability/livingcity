@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: []
 layer: "rust"
-estimated_tests: 16
+estimated_tests: 17
 created: "2026-10-06"
 completed: null
 ---
@@ -35,7 +35,7 @@ Create the Cargo workspace and the `sim-core` crate with the directed road netwo
 ## Specification
 Implements exactly the contract's sections **Network**, **Vehicles**, **Tick order** steps 4–7, plus completion at the end of the route.
 - `NetworkBuilder::node(x_m, y_m) -> NodeId`, `link(from, to, speed_limit_mps, lanes) -> LinkId` (length = Euclidean distance), `link_with_length(from, to, length_m, speed, lanes)`, `two_way(a, b, speed, lanes) -> (LinkId, LinkId)`, `build() -> Result<Network, NetworkError>`.
-- Validation: unknown node, self-loop, length < 10 m (`MIN_LINK_LENGTH`), speed ≤ 0, lanes == 0 or > 8 → error.
+- Validation: unknown node, self-loop, length < 10 m (`MIN_LINK_LENGTH`) or NaN, speed ≤ 0 or NaN, lanes == 0 or > 8 → error. The builder never panics: `link()` to an unknown node returns an id and the error surfaces in `build()`.
 - `Network::lane_capacity(link)` = `max(1, floor(len / 7.5))`, `Network::capacity(link)` = `lanes × lane_capacity`.
 - Lane credit: at the start of each lane's discharge evaluation, `credit = min(1.0, credit + 0.25)`.
 - Spawn validation: route non-empty, consecutive links share nodes (`a.to == b.from`) → else `SpawnError::NonContiguousRoute` / `EmptyRoute` / `UnknownLink`.
@@ -62,9 +62,10 @@ All in `crates/sim-core/tests/core_001_physics.rs` (Given/When/Then comments).
 | 11 | `completion_logs_travel_time` | completed trips are logged with correct created/completed ticks, and they leave the network |
 | 12 | `merge_shares_capacity_round_robin` | two saturated feeders into one link: each gets 40–60 % of the merged flow over 10 minutes |
 | 13 | `lane_credit_limits_moving_platoon` | moving traffic denser than 0.5 veh/s at a 1-lane stop line: from the first exit, crossings ≤ 1 + 0.25·n over n ticks (credit cap 1.0, 0.25/tick) |
-| 14 | `lane_choice_prefers_most_room_and_vehicles_keep_lane` | entry into an empty 2-lane link alternates 0,1,0,1 per the lane-choice rule; no lane changes on a link |
+| 14 | `lane_choice_prefers_most_room_and_vehicles_keep_lane` | asymmetric arrivals (ticks 0,0,5,12) give lanes 0,1,0,1, which distinguishes "tail furthest ahead" from "lowest feasible lane"; no lane changes (also checked under congestion in test 5) |
 | 15 | `origin_admission_is_rate_limited_fifo_and_starts_at_rest` | ≤ 2 admissions per origin per tick, FIFO, at s = 0 and v = 0; a blocked first link blocks only later vehicles for the same link |
-| 16 | `sink_completion_does_not_consume_credit` | completions at the end of a 1-lane final link exceed 1.3 × the credit rate |
+| 16 | `sink_completion_does_not_consume_credit` | free-flowing feed (asserted) into a 1-lane final link: completions exceed 1.3 × the credit rate |
+| 17 | `empty_lanes_bank_credit` | a lone cruising vehicle crosses a 10 m link without slowing below 5 m/s (credit banked while the lane was empty) |
 
 ## Must NOT
 - No routing, demand, closures or RNG (later wards). No WASM/browser dependencies in `sim-core`.
@@ -85,11 +86,11 @@ cargo build -p sim-core --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core --test core_001_physics`
-   Expected: `test result: ok. 16 passed`
+   Expected: `test result: ok. 17 passed`
 2. Run: `cargo run -p sim-core --example bottleneck`
    Verify: the printed table (every 30 s sim time) shows the bottleneck link reaching its capacity first, then the upstream link filling, then the origin buffer growing. Discharged count per minute ≈ 30 for the 1-lane bottleneck.
 ### Pass criteria
-- [ ] All 16 tests pass
+- [ ] All 17 tests pass
 - [ ] Bottleneck example output shows spillback order: bottleneck → upstream → origin
 - [ ] `cargo clippy -p sim-core -- -D warnings` clean
 

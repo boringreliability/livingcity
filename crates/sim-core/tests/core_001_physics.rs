@@ -218,7 +218,7 @@ fn free_flow_vehicle_travel_time_matches_kinematics() {
 fn vehicles_never_overlap_or_reorder() {
     // Given a 3-lane → 1-lane → 3-lane chain under heavy load
     let (mut w, links, _) = bottleneck_chain(3, 300.0);
-    let mut last_pos: BTreeMap<(VehicleId, u64), (LinkId, f64)> = BTreeMap::new();
+    let mut last_pos: BTreeMap<(VehicleId, u64), (LinkId, f64, u8)> = BTreeMap::new();
 
     for t in 0..1500 {
         if t < 300 {
@@ -242,12 +242,14 @@ fn vehicles_never_overlap_or_reorder() {
                 assert!(v.s >= -EPS && v.s <= len + EPS, "s {} outside [0,{len}]", v.s);
                 // And s never decreases while a vehicle stays on a link
                 let key = (v.id, v.trip_id);
-                if let Some((pl, ps)) = last_pos.get(&key) {
+                if let Some((pl, ps, plane)) = last_pos.get(&key) {
                     if *pl == l {
                         assert!(v.s + EPS >= *ps, "vehicle moved backwards on {l:?}");
+                        // And it keeps its lane while on the link (also under congestion)
+                        assert_eq!(*plane, v.lane, "lane change on {l:?}");
                     }
                 }
-                last_pos.insert(key, (l, v.s));
+                last_pos.insert(key, (l, v.s, v.lane));
             }
             // lanes are reported ascending
             assert!(vs.windows(2).all(|p| p[0].lane <= p[1].lane));
@@ -286,7 +288,8 @@ fn storage_capacity_never_exceeded() {
 fn discharge_rate_bounded_by_saturation_flow() {
     for lanes in [1u8, 2u8] {
         // Given o ─L0(500 m, 4 lanes)─▶ a ─L1(300 m, `lanes`)─▶ b ─L2(1000 m, 3 lanes)─▶ c
-        // fed faster than L1 can discharge, so L1 holds a standing queue
+        // with demand above L1's capacity. The binding constraint is entry into
+        // and discharge through L1's lanes (start-up headway = credit = 4 ticks).
         let mut b = NetworkBuilder::new();
         let o = b.node(0.0, 0.0);
         let a = b.node(500.0, 0.0);
@@ -465,6 +468,27 @@ fn conservation_holds_every_tick() {
     assert_eq!(ids.len() as u64, c.completed, "a trip completed twice");
     assert_eq!(ids, (0..c.spawned).collect::<Vec<_>>());
 
+    // And an independently constructed world fed the same inputs ends identically
+    let mut b2 = NetworkBuilder::new();
+    let (p1, p2, pa, pb, pc, pd) = (b2.node(0.0, 0.0), b2.node(0.0, 200.0), b2.node(200.0, 0.0), b2.node(400.0, 100.0), b2.node(400.0, -100.0), b2.node(600.0, 0.0));
+    let r = [b2.link(p1, pa, 13.9, 2), b2.link(p2, pa, 13.9, 1), b2.link(pa, pb, 13.9, 1), b2.link(pa, pc, 13.9, 1), b2.link(pb, pd, 13.9, 1), b2.link(pc, pd, 13.9, 1)];
+    let mut twin = World::new(b2.build().unwrap());
+    for t in 0..8000u64 {
+        if t < 1500 {
+            if t % 3 == 0 {
+                twin.spawn_with_route(vec![r[0], r[2], r[4]]).unwrap();
+            }
+            if t % 5 == 0 {
+                twin.spawn_with_route(vec![r[0], r[3], r[5]]).unwrap();
+            }
+            if t % 7 == 0 {
+                twin.spawn_with_route(vec![r[1], r[2], r[4]]).unwrap();
+            }
+        }
+        twin.step();
+    }
+    assert_eq!(twin.completed_log(), w.completed_log());
+
     // And a clone taken mid-run continues identically under the same inputs
     let mut copy = clone_check.unwrap();
     for t in 1000..8000u64 {
@@ -528,7 +552,7 @@ fn completion_logs_travel_time() {
 // ─── 12 ───────────────────────────────────────────────────────────────────
 #[test]
 fn merge_shares_capacity_round_robin() {
-    // Given two saturated 1-lane feeders merging into a congested 1-lane link
+    // Given two saturated 1-lane feeders competing for entry into one 1-lane link
     let mut b = NetworkBuilder::new();
     let o1 = b.node(0.0, 0.0);
     let m = b.node(300.0, 0.0);
@@ -597,7 +621,8 @@ fn lane_credit_limits_moving_platoon() {
 // ─── 14 ───────────────────────────────────────────────────────────────────
 #[test]
 fn lane_choice_prefers_most_room_and_vehicles_keep_lane() {
-    // Given four vehicles waiting to enter an empty 2-lane link
+    // Given an empty 2-lane link and vehicles spawned at ticks 0, 0, 5 and 12
+    // (asymmetric, so "tail furthest ahead" differs from "lowest feasible lane")
     let mut b = NetworkBuilder::new();
     let o = b.node(0.0, 0.0);
     let a = b.node(500.0, 0.0);
@@ -605,12 +630,15 @@ fn lane_choice_prefers_most_room_and_vehicles_keep_lane() {
     let l1 = b.link(o, a, 13.9, 2);
     let l2 = b.link(a, d, 13.9, 2);
     let mut w = World::new(b.build().unwrap());
-    for _ in 0..4 {
-        w.spawn_with_route(vec![l1, l2]).unwrap();
-    }
     // When they are admitted and drive
     let mut lane_of: BTreeMap<(u64, LinkId), u8> = BTreeMap::new();
-    for _ in 0..200 {
+    for t in 0..200u64 {
+        if t == 0 || t == 5 || t == 12 {
+            w.spawn_with_route(vec![l1, l2]).unwrap();
+        }
+        if t == 0 {
+            w.spawn_with_route(vec![l1, l2]).unwrap();
+        }
         step_checked(&mut w);
         for l in [l1, l2] {
             for v in w.link_vehicles(l) {
@@ -621,8 +649,9 @@ fn lane_choice_prefers_most_room_and_vehicles_keep_lane() {
             }
         }
     }
-    // And entry alternates: empty lanes tie → lane 0, then the empty lane 1,
-    // then the lane whose tail is furthest ahead (tie → lowest)
+    // And entry follows the rule: trips 0,1 at tick 0 → lanes 0 (tie) and 1
+    // (lane 0 tail too close); trip 2 → lane 0 (tails equal, tie → lowest);
+    // trip 3 → lane 1, whose tail (trip 1) is further ahead than lane 0's (trip 2)
     let lanes: Vec<u8> = (0..4).map(|trip| lane_of[&(trip, l1)]).collect();
     assert_eq!(lanes, vec![0, 1, 0, 1]);
 }
@@ -693,18 +722,61 @@ fn sink_completion_does_not_consume_credit() {
     let l2 = b.link(a, d, 13.9, 1);
     let mut w = World::new(b.build().unwrap());
     let mut start = 0;
+    let mut max_l1 = 0;
     for t in 0..1000u64 {
-        if t < 800 {
+        if t < 800 && t % 2 == 0 {
             w.spawn_with_route(vec![l1, l2]).unwrap();
         }
         if t == 300 {
             start = w.counts().completed;
         }
         step_checked(&mut w);
+        if t >= 300 {
+            max_l1 = max_l1.max(w.link_count(l1));
+        }
     }
+    // Premise: the feed really is free-flowing (L1 never queues up)
+    assert!((max_l1 as f64) < 0.5 * w.network().capacity(l1) as f64, "L1 queued: {max_l1}");
     // When we count completions at the end of L2 over ticks 300..1000 (350 s)
     let done = (w.counts().completed - start) as f64;
     // Then they exceed what a credit-limited (0.5 veh/s) exit would allow
     let credit_limited = SAT_FLOW_PER_LANE * 700.0 * DT;
     assert!(done > 1.3 * credit_limited, "completions {done} look credit-limited (≤ {credit_limited})");
+}
+
+// ─── 17 ───────────────────────────────────────────────────────────────────
+#[test]
+fn empty_lanes_bank_credit() {
+    // Given a lone vehicle crossing a 10 m link (it reaches the stop line in
+    // about one tick, long before a freshly occupied lane could earn credit)
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(500.0, 0.0);
+    let s = b.node(510.0, 0.0);
+    let d = b.node(1010.0, 0.0);
+    let l1 = b.link(o, a, 13.9, 1);
+    let l2 = b.link(a, s, 13.9, 1);
+    let l3 = b.link(s, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.spawn_with_route(vec![l1, l2, l3]).unwrap();
+
+    // When it drives the whole route
+    let mut slowest_after_cruise = f64::MAX;
+    let mut cruising = false;
+    for _ in 0..400 {
+        step_checked(&mut w);
+        for l in [l1, l2, l3] {
+            if let Some(v) = w.link_vehicles(l).first() {
+                if v.v >= 13.0 {
+                    cruising = true;
+                }
+                if cruising {
+                    slowest_after_cruise = slowest_after_cruise.min(v.v);
+                }
+            }
+        }
+    }
+    // Then it never waits for credit: L2's lane banked credit while empty
+    assert_eq!(w.counts().completed, 1);
+    assert!(slowest_after_cruise > 5.0, "vehicle slowed to {slowest_after_cruise} m/s at the short link");
 }
