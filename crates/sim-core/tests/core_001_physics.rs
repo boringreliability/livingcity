@@ -323,6 +323,7 @@ fn discharge_rate_bounded_by_saturation_flow() {
         }
 
         // When we measure exits from L1 over T = 300 s after a 300 s warm-up
+        // (demand exceeds capacity throughout: the origin buffer never empties)
         for _ in 0..600 {
             step_checked(&mut w);
         }
@@ -729,11 +730,13 @@ fn origin_admission_is_rate_limited_fifo_and_starts_at_rest() {
     w2.spawn_with_route(vec![short]).unwrap(); // X, trip 0
     w2.spawn_with_route(vec![short]).unwrap(); // Y, trip 1
     w2.spawn_with_route(vec![wide]).unwrap(); // Z, trip 2
+    w2.spawn_with_route(vec![wide]).unwrap(); // Z2, trip 3
     step_checked(&mut w2);
-    // Then X enters, Y waits (blocked behind X), and Z is not blocked by Y
+    // Then X enters, Y waits (blocked behind X), Z is not blocked by Y,
+    // and Z2 waits: the limit of 2 admissions is per origin, not per link
     assert_eq!(w2.link_vehicles(short).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![0]);
     assert_eq!(w2.link_vehicles(wide).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![2]);
-    assert_eq!(w2.origin_buffer_len(o), 1);
+    assert_eq!(w2.origin_buffer_len(o), 2);
 }
 
 // ─── 16 ───────────────────────────────────────────────────────────────────
@@ -833,4 +836,68 @@ fn speed_limit_change_along_route() {
     }
     // And completes exactly when the contract says (reference: tick 85)
     assert_eq!(w.completed_log()[0].completed_tick, 85);
+}
+
+// ─── 19 ───────────────────────────────────────────────────────────────────
+/// Independent spacing check (does not rely on `check_invariants`).
+fn assert_lane_spacing(w: &World, links: &[LinkId], ctx: &str) {
+    for &l in links {
+        let vs = w.link_vehicles(l);
+        for pair in vs.windows(2) {
+            if pair[0].lane == pair[1].lane {
+                let gap = pair[0].s - pair[1].s;
+                assert!(gap >= JAM_SPACING - 1e-9, "{ctx}: overlap on {l:?} lane {} gap {gap}", pair[0].lane);
+            }
+        }
+    }
+}
+
+#[test]
+fn merging_moving_traffic_never_overlaps() {
+    // Given a deterministic grid of two-feeder merges where vehicles cross into
+    // the merge link *moving* (not only from standstill), so downstream tails
+    // are sometimes already moved this tick or limited by their own leader
+    let mut configs = 0;
+    for &len_a in &[100.0, 200.0, 300.0] {
+        for &len_b in &[100.0, 205.0, 300.0] {
+            for &len_m in &[30.0, 60.0] {
+                for &lanes_m in &[1u8, 2u8] {
+                    for &pa in &[1u64, 2, 3] {
+                        for &pb in &[1u64, 2, 3] {
+                            configs += 1;
+                            let mut b = NetworkBuilder::new();
+                            let oa = b.node(0.0, 0.0);
+                            let m = b.node(len_a, 0.0);
+                            let ob = b.node(len_a, len_b);
+                            let x = b.node(len_a + len_m, 0.0);
+                            let y = b.node(len_a + len_m + 500.0, 0.0);
+                            let la = b.link(oa, m, 13.9, 1);
+                            let lb = b.link(ob, m, 13.9, 1);
+                            let lm = b.link(m, x, 13.9, lanes_m);
+                            let ly = b.link(x, y, 13.9, 3);
+                            let mut w = World::new(b.build().unwrap());
+                            let links = [la, lb, lm, ly];
+                            // When both feeders send traffic for 300 ticks
+                            for t in 0..400u64 {
+                                if t < 300 && t % pa == 0 {
+                                    w.spawn_with_route(vec![la, lm, ly]).unwrap();
+                                }
+                                if t < 300 && t % pb == 0 {
+                                    w.spawn_with_route(vec![lb, lm, ly]).unwrap();
+                                }
+                                w.step();
+                                // Then no two vehicles in a lane are ever closer than 7.5 m
+                                let ctx = format!("A={len_a} B={len_b} M={len_m} lanes={lanes_m} pa={pa} pb={pb} t={t}");
+                                assert_lane_spacing(&w, &links, &ctx);
+                                if let Err(e) = w.check_invariants() {
+                                    panic!("{ctx}: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(configs, 324);
 }
