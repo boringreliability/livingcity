@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-001"]
 layer: "rust"
-estimated_tests: 19
+estimated_tests: 22
 created: "2026-10-06"
 completed: null
 ---
@@ -56,13 +56,16 @@ All in `crates/sim-core/tests/core_002_demand_routing.rs`.
 | 9 | `congestion_raises_link_cost` | upstream of a bottleneck, cost > 1.5 × free flow within 10 min; an unused link stays exactly at free flow |
 | 10 | `epoch_cost_update_is_exact` | in a congested run the test independently tracks enter/exit ticks and queued counts and recomputes the EMA. Every epoch matches `link_cost` within 1e-9, the cost is constant between epochs, and the cost is never below free flow |
 | 11 | `demand_vehicles_follow_valid_routes_and_complete` | grid with zone corners: every live vehicle's route is contiguous from its trip origin to its dest, `OnLink(l)` ⇒ `l == route[route_pos]`, trips complete, invariants hold every tick |
-| 12 | `behavior_rng_is_separate_from_demand` | speed factors in [0.9, 1.1), not constant, and reproducible for the same behavior seed; a different behavior seed gives an **identical** `generated_trips` (incl. trip ids) but different factors |
+| 12 | `behavior_rng_is_separate_from_demand` | speed factors in [0.9, 1.1], not constant, and reproducible for the same behavior seed; a different behavior seed gives an **identical** `generated_trips` (incl. trip ids) but different factors |
 | 14 | `rng_primitives_and_cost_helpers_are_pinned` | golden vectors for splitmix64/mix3/unit_f64/BehaviorRng; literal free-flow cost and ms keys |
 | 15 | `trips_at_matches_contract_formula` | `trips_at` equals an independent evaluation of the contract formula for 3000 ticks, 4 flows incl. ≥ 1/tick |
 | 16 | `demand_routes_use_current_pre_update_costs` | every new trip's route equals the router's route under the pre-step costs; congestion changes some routes; the reported cost = Σ keys / 1000 |
 | 17 | `created_tick_is_demand_tick` | the completed log and live vehicles carry the demand tick, so origin waiting counts |
 | 18 | `validate_rejects_bad_models` | UnknownNode, BadOrigin, SameOriginDest, BadRate (negative, NaN), BadProfile (non-increasing, negative), flow-major |
 | 19 | `speed_factor_draw_order` | the k-th demand trip (NoRoute included) gets the k-th behavior draw; explicit spawns draw nothing |
+| 20 | `idle_links_decay_to_free_flow` | demand stops after 15 min: the EMA oracle matches every epoch, idle links (no exits) use `queue_term`, and all links end at exactly free flow |
+| 21 | `validate_order_is_flow_major_and_source_nodes_are_origins` | precedence UnknownNode(origin→dest) → BadOrigin → SameOriginDest → BadRate per flow; a source node is a valid origin |
+| 22 | `noroute_draws_in_trips_at_order` | with the unreachable flow first, NoRoute and routed trips still draw in `trips_at` order |
 | 13 | `metrics_match_definitions` | every `Metrics` field is recomputed by hand from views/logs/vehicle info at many ticks and agrees exactly; windowed mean travel time is correct |
 
 ## Must NOT
@@ -81,13 +84,13 @@ cargo build -p sim-core --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core_001 (20) and core_002 (19) pass.
+   Expected: core_001 (20) and core_002 (22) pass.
 2. Run: `cargo run -p sim-core --example smoke`
    Verify: one line per 60 s sim time with `generated active queued completed mean_tt`. `generated` grows at about the configured rate, completed > 0 after a few minutes, and `spawned == active + completed + removed` on every line.
 3. Run: `cargo run -q -p sim-core --example smoke > /tmp/a.txt && cargo run -q -p sim-core --example smoke > /tmp/b.txt && diff /tmp/a.txt /tmp/b.txt && echo identical`
    Expected: `identical`.
 ### Pass criteria
-- [ ] 39 tests green
+- [ ] 42 tests green
 - [ ] Smoke output plausible and conserving
 - [ ] Two runs are byte-identical
 

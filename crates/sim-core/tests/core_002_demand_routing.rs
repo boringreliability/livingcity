@@ -553,7 +553,7 @@ fn behavior_rng_is_separate_from_demand() {
     assert_eq!(f1, f1b);
     // And lie in [0.9, 1.1), vary between vehicles, and change with the behavior seed
     assert!(f1.len() > 50);
-    assert!(f1.values().all(|&f| (0.9..1.1).contains(&f)));
+    assert!(f1.values().all(|&f| (0.9..=1.1).contains(&f)));
     let first = *f1.values().next().unwrap();
     assert!(f1.values().any(|&f| f != first), "speed factor is constant");
     let differing = f1.iter().filter(|(t, f)| f2.get(t).is_some_and(|g| g != *f)).count();
@@ -829,4 +829,145 @@ fn speed_factor_draw_order() {
         n += 1;
     }
     assert!(n > 100);
+}
+
+// ─── 20–22 ────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-002
+// Red reviewer, round 2 (mutants no_exit_keep, clamp_observed, kind_major,
+// rate_first, unknown_dest_after, origin_zone_only, noroute_draw_late).
+
+#[test]
+fn idle_links_decay_to_free_flow() {
+    // Given the bottleneck scenario whose demand stops after 15 min
+    let (mut sc, _, _) = bottleneck_scenario(2400.0);
+    sc.demand.profile = Profile { points: vec![(0.0, 1.0), (900.0, 1.0), (900.5, 0.0)] };
+    let net = sc.network.clone();
+    let n_links = net.links().len();
+    let ff: Vec<f64> = net.links().iter().map(free_flow_cost).collect();
+    let mut w = World::from_scenario(sc).unwrap();
+    let mut smoothed = ff.clone();
+    let mut acc_sum = vec![0.0f64; n_links];
+    let mut acc_n = vec![0u64; n_links];
+    let mut on_link: BTreeMap<u64, (usize, u64)> = BTreeMap::new();
+    let mut queued_prev = vec![0u64; n_links];
+    let mut idle_above_ff = 0;
+    let mut low_obs_above_ff = 0;
+    for _ in 0..4800 {
+        let k = w.tick();
+        if k > 0 && k % COST_EPOCH_TICKS == 0 {
+            for l in 0..n_links {
+                let link = net.link(LinkId(l as u32));
+                let queue_term = link.length_m / link.speed_limit_mps
+                    + queued_prev[l] as f64 / (link.lanes as f64 * SAT_FLOW_PER_LANE);
+                let observed = if acc_n[l] > 0 { (acc_sum[l] / acc_n[l] as f64).max(queue_term) } else { queue_term };
+                if acc_n[l] == 0 && smoothed[l] > ff[l] {
+                    idle_above_ff += 1;
+                }
+                if observed < ff[l] && smoothed[l] > ff[l] {
+                    low_obs_above_ff += 1;
+                }
+                smoothed[l] = ff[l].max(COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * smoothed[l]);
+                acc_sum[l] = 0.0;
+                acc_n[l] = 0;
+            }
+        }
+        step_checked(&mut w);
+        if k > 0 && k % COST_EPOCH_TICKS == 0 {
+            for l in 0..n_links {
+                let got = w.link_cost(LinkId(l as u32));
+                assert!((got - smoothed[l]).abs() <= 1e-9, "tick {k} link {l}: cost {got} vs {}", smoothed[l]);
+            }
+        }
+        let mut now: BTreeMap<u64, usize> = BTreeMap::new();
+        for l in 0..n_links {
+            for v in w.link_vehicles(LinkId(l as u32)) {
+                now.insert(v.trip_id, l);
+            }
+        }
+        on_link.retain(|trip, (l, enter)| {
+            if now.get(trip) == Some(l) {
+                true
+            } else {
+                acc_sum[*l] += (k - *enter) as f64 * DT;
+                acc_n[*l] += 1;
+                false
+            }
+        });
+        for (trip, l) in now {
+            on_link.entry(trip).or_insert((l, k));
+        }
+        for (l, q) in queued_prev.iter_mut().enumerate() {
+            *q = w.link_vehicles(LinkId(l as u32)).iter().filter(|v| v.v < QUEUED_SPEED).count() as u64;
+        }
+    }
+    // Then the premise held (idle and low-observation epochs while above free flow)
+    assert!(idle_above_ff > 0 && low_obs_above_ff > 0, "premise");
+    // And every link is back at exactly free flow on the empty network
+    for l in 0..n_links {
+        assert_eq!(w.link_cost(LinkId(l as u32)), ff[l], "link {l} did not return to free flow");
+    }
+}
+
+#[test]
+fn validate_order_is_flow_major_and_source_nodes_are_origins() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(0.0, 0.0);
+    let j = b.node(100.0, 0.0);
+    let k = b.node(200.0, 0.0);
+    b.two_way(z, j, 13.9, 1);
+    b.two_way(j, k, 13.9, 1);
+    let src = b.node(100.0, 100.0);
+    b.link(src, j, 13.9, 1);
+    let network = b.build().unwrap();
+    let mk = |flows: Vec<(NodeId, NodeId, f64)>| Scenario {
+        network: network.clone(),
+        demand: DemandModel {
+            flows: flows.into_iter().map(|(origin, dest, veh_per_hour)| OdFlow { origin, dest, veh_per_hour }).collect(),
+            profile: Profile::default(),
+        },
+        demand_seed: 0,
+        behavior_seed: 0,
+    };
+    let err = |sc: Scenario| World::from_scenario(sc).err();
+    let u = NodeId(99);
+    let u2 = NodeId(98);
+    assert_eq!(err(mk(vec![(src, k, 10.0)])), None, "source node is a valid origin");
+    assert_eq!(err(mk(vec![(u, k, 10.0)])), Some(DemandError::UnknownNode(u)));
+    assert_eq!(err(mk(vec![(u, u2, 10.0)])), Some(DemandError::UnknownNode(u)));
+    assert_eq!(err(mk(vec![(j, u, 10.0)])), Some(DemandError::UnknownNode(u)));
+    assert_eq!(err(mk(vec![(j, k, f64::NAN)])), Some(DemandError::BadOrigin(j)));
+    assert_eq!(err(mk(vec![(z, z, -1.0)])), Some(DemandError::SameOriginDest(0)));
+    assert_eq!(err(mk(vec![(z, k, -1.0), (j, k, 10.0)])), Some(DemandError::BadRate(0)));
+    assert_eq!(err(mk(vec![(z, k, 10.0), (z, u, 10.0)])), Some(DemandError::UnknownNode(u)));
+}
+
+#[test]
+fn noroute_draws_in_trips_at_order() {
+    let mut b = NetworkBuilder::new();
+    let z1 = b.zone(0.0, 0.0);
+    let j1 = b.node(100.0, 0.0);
+    let z2 = b.zone(1200.0, 0.0);
+    let z3 = b.zone(0.0, 500.0);
+    b.two_way(z1, j1, 13.9, 2);
+    b.two_way(j1, z2, 13.9, 2);
+    let network = b.build().unwrap();
+    // unreachable flow FIRST so a NoRoute request precedes routed ones in a tick
+    let flows = vec![
+        OdFlow { origin: z1, dest: z3, veh_per_hour: 1800.0 },
+        OdFlow { origin: z1, dest: z2, veh_per_hour: 1800.0 },
+    ];
+    let sc = Scenario { network, demand: DemandModel { flows, profile: Profile::default() }, demand_seed: 7, behavior_seed: 3 };
+    let mut w = World::from_scenario(sc).unwrap();
+    let mut seen: BTreeMap<u64, f64> = BTreeMap::new();
+    for _ in 0..600 {
+        w.step();
+        for id in w.vehicle_ids() {
+            let i = w.vehicle(id).unwrap();
+            seen.entry(i.trip_id).or_insert(i.speed_factor);
+        }
+    }
+    let mut rng = BehaviorRng::new(3);
+    for g in w.generated_trips() {
+        assert_eq!(seen[&g.trip_id], 0.9 + 0.2 * rng.next_f64(), "trip {}", g.trip_id);
+    }
 }

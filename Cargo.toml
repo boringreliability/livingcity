@@ -6,7 +6,7 @@ members = ["crates/sim-core"]
 edition = "2021"
 license = "MIT"
 version = "0.1.0"
-rust-version = "1.87"
+rust-version = "1.93"
 
 [profile.release]
 debug = 1
