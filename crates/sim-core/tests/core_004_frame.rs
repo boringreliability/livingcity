@@ -172,3 +172,21 @@ fn metrics_array_matches_names() {
     ];
     assert_eq!(a, want);
 }
+
+#[test]
+fn empty_world_encodes_nothing_and_clears_buffers() {
+    // Given a fresh world (no vehicles yet) and dirty output buffers
+    let c = three_bridges(1, 1);
+    let w = World::from_scenario(c.scenario).unwrap();
+    let mut out = vec![1u32; 9];
+    let (mut counts, mut queued) = (vec![7u16; 2], vec![7u16; 200]);
+    // When encoded
+    let n = write_vehicle_records(&w, &mut out);
+    write_link_stats(&w, &mut counts, &mut queued);
+    // Then nothing is left over from the previous contents
+    assert_eq!(n, 0);
+    assert!(out.is_empty());
+    let links = w.network().links().len();
+    assert_eq!(counts, vec![0u16; links]);
+    assert_eq!(queued, vec![0u16; links]);
+}

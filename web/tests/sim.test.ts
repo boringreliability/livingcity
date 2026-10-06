@@ -32,7 +32,7 @@ test('wasm sim runs in node', () => {
   const words = new Uint32Array(memory.buffer, sim.frame_ptr(), sim.frame_words()).slice();
   const nLinks = sim.link_from().length;
   const d = decodeVehicles(words.buffer, count);
-  for (let i = 0; i < count; i++) expect(d.link[i]!).toBeLessThan(nLinks);
+  for (let i = 0; i < count; i++) expect(d.link(i)).toBeLessThan(nLinks);
   // And unknown links are rejected without panicking
   expect(sim.close_link(99_999)).toBe(false);
   expect(sim.open_link(99_999)).toBe(false);
@@ -95,8 +95,8 @@ describe('worker host', () => {
       expect(Array.from(f.closed)).toEqual(expect.arrayContaining([central[0], central[1]]));
       const d = decodeVehicles(f.vehicles, f.count);
       for (let i = 0; i < d.count; i++) {
-        if (d.link[i] === central[0] || d.link[i] === central[1]) {
-          expect(d.flags[i]! & FLAG_ON_CLOSED_LINK).toBeTruthy();
+        if (d.link(i) === central[0] || d.link(i) === central[1]) {
+          expect(d.flags(i) & FLAG_ON_CLOSED_LINK).toBeTruthy();
           flagged++;
         }
       }

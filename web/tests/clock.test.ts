@@ -23,7 +23,8 @@ describe('SimClock', () => {
       const target = (multiplier / DT) * 10;
       expect(Math.abs(s.executedTicks - target)).toBeLessThanOrEqual(2);
       expect(s.targetTicksPerS).toBe(multiplier / DT);
-      expect(Math.abs(s.achievedTicksPerS - s.targetTicksPerS)).toBeLessThanOrEqual(0.1 * s.targetTicksPerS);
+      // ±10 % or ±1 tick per 1 s window, whichever is larger (reviewer r1, F1)
+      expect(Math.abs(s.achievedTicksPerS - s.targetTicksPerS)).toBeLessThanOrEqual(Math.max(0.1 * s.targetTicksPerS, 1));
       expect(s.behind).toBe(false);
       expect(s.simTimeS).toBe(s.executedTicks * DT);
     }
