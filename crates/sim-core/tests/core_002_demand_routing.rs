@@ -1,13 +1,17 @@
 //! Ward core-002: demand, routing and metrics.
 //! Model contract: `.wdd/epics/core.md` (Demand, Routing, Metrics).
+// Index-parallel arrays and tuple logs read most clearly in these oracles.
+#![allow(clippy::needless_range_loop, clippy::manual_is_multiple_of, clippy::type_complexity)]
 
 use std::collections::BTreeMap;
 
 use sim_core::demand::trips_at;
 use sim_core::params::{COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, QUEUED_SPEED, SAT_FLOW_PER_LANE};
+use sim_core::rng::{mix3, splitmix64, unit_f64, BehaviorRng};
 use sim_core::routing::{cost_key, free_flow_cost};
 use sim_core::{
-    DemandModel, LinkId, Network, NetworkBuilder, NodeId, OdFlow, Profile, Scenario, TripRequest, VehicleState, World,
+    DemandError, DemandModel, LinkId, Network, NetworkBuilder, NodeId, OdFlow, Profile, Scenario, TripRequest,
+    VehicleState, World,
 };
 
 fn step_checked(w: &mut World) {
@@ -317,10 +321,13 @@ fn unreachable_destination_yields_no_route_state() {
             no_route += 1;
         }
     }
-    assert_eq!(no_route, unreachable.len() as u64);
     let m = w.metrics();
+    assert!(no_route > 0);
     assert_eq!(m.no_route, no_route);
-    assert_eq!(m.unreachable, no_route);
+    // (core-003 may already have removed the oldest after bounded retries)
+    assert_eq!(no_route + m.removed_unreachable, unreachable.len() as u64);
+    assert_eq!(m.unreachable, m.no_route + m.removed_unreachable);
+    assert!(w.completed_log().iter().all(|c| !unreachable.contains(&c.trip_id)));
     // And they do not block reachable trips from the same zone
     assert!(m.completed > 100, "reachable trips blocked: {}", m.completed);
 }
@@ -398,7 +405,7 @@ fn epoch_cost_update_is_exact() {
                 let queue_term = link.length_m / link.speed_limit_mps
                     + queued_prev[l] as f64 / (link.lanes as f64 * SAT_FLOW_PER_LANE);
                 let observed = if acc_n[l] > 0 { (acc_sum[l] / acc_n[l] as f64).max(queue_term) } else { queue_term };
-                smoothed[l] = COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * smoothed[l];
+                smoothed[l] = ff[l].max(COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * smoothed[l]);
                 acc_sum[l] = 0.0;
                 acc_n[l] = 0;
             }
@@ -410,7 +417,7 @@ fn epoch_cost_update_is_exact() {
         for l in 0..n_links {
             let got = w.link_cost(LinkId(l as u32));
             if k > 0 && k % COST_EPOCH_TICKS == 0 {
-                let want = ff[l].max(smoothed[l]);
+                let want = smoothed[l];
                 assert!((got - want).abs() <= 1e-9, "tick {k} link {l}: cost {got} vs {want}");
             } else {
                 assert_eq!(got, before[l], "cost changed between epochs at tick {k}");
@@ -614,7 +621,6 @@ fn metrics_match_definitions() {
         assert_eq!(m.active, infos.len() as u64);
         assert_eq!(m.active, m.on_network + m.waiting_at_origin + m.no_route);
         assert_eq!(m.completed, log.len() as u64);
-        assert_eq!(m.removed_unreachable, 0);
         assert_eq!(m.unreachable, m.no_route + m.removed_unreachable);
         assert_eq!(m.incomplete, m.active);
         assert_eq!(m.spawned, m.active + m.completed + m.removed_unreachable);
@@ -629,7 +635,7 @@ fn metrics_match_definitions() {
             other => panic!("mean age mismatch {other:?}"),
         }
         // And the windowed mean covers exactly completions in [from, to)
-        let (from, to) = (tick.saturating_sub(600), tick - 100);
+        let (from, to) = (tick.saturating_sub(600), tick.saturating_sub(100));
         let win: Vec<_> = log.iter().filter(|c| c.completed_tick >= from && c.completed_tick < to).collect();
         let want = (!win.is_empty())
             .then(|| win.iter().map(|c| (c.completed_tick - c.created_tick) as f64 * DT).sum::<f64>() / win.len() as f64);
@@ -644,4 +650,183 @@ fn metrics_match_definitions() {
     }
     // And the run exercised queues, NoRoute and waiting vehicles
     assert!(saw.0 && saw.1 && saw.2, "metrics test vacuous: {saw:?}");
+}
+
+// ─── 14 ───────────────────────────────────────────────────────────────────
+// (tests 14–19 were proposed and verified against an independent reference
+// by the core-002 Red reviewer, round 1)
+#[test]
+fn rng_primitives_and_cost_helpers_are_pinned() {
+    // Given the contract's exact primitives, Then known vectors hold
+    assert_eq!(splitmix64(0), 0xE220_A839_7B1D_CDAF);
+    assert_eq!(mix3(1, 2, 3), splitmix64(splitmix64(splitmix64(1) ^ 2) ^ 3));
+    assert_eq!(mix3(1, 2, 3), 0xd073_4750_fde3_62b3);
+    assert_eq!(unit_f64(u64::MAX), 1.0 - f64::EPSILON / 2.0);
+    assert_eq!(unit_f64(1 << 11), f64::EPSILON / 2.0);
+    let mut r = BehaviorRng::new(0);
+    assert_eq!(r.next_u64(), splitmix64(0));
+    assert_eq!(r.next_u64(), splitmix64(0x9E37_79B9_7F4A_7C15));
+
+    // And free-flow cost and keys follow their literal definitions
+    let mut b = NetworkBuilder::new();
+    let a = b.node(0.0, 0.0);
+    let c = b.node(300.0, 0.0);
+    let l = b.link(a, c, 13.9, 3);
+    let net = b.build().unwrap();
+    assert_eq!(free_flow_cost(net.link(l)), 300.0 / 13.9 + 1.0 / (3.0 * 0.5));
+    assert_eq!(cost_key(1.0006), 1001);
+    assert_eq!(cost_key(0.25), 250);
+}
+
+// ─── 15 ───────────────────────────────────────────────────────────────────
+#[test]
+fn trips_at_matches_contract_formula() {
+    // Given several flows (two with ≥ 1 trip per tick) under a ramp profile
+    let flows: Vec<OdFlow> = [(0u32, 1u32, 900.0), (2, 3, 7200.0), (0, 3, 9000.0), (2, 1, 0.0)]
+        .iter()
+        .map(|&(o, d, r)| OdFlow { origin: NodeId(o), dest: NodeId(d), veh_per_hour: r })
+        .collect();
+    let model = DemandModel { flows: flows.clone(), profile: Profile { points: vec![(0.0, 0.5), (600.0, 1.5)] } };
+    let seed = 99;
+    for t in 0..3000u64 {
+        // When recomputing the contract formula independently
+        let m = model.profile.at(t as f64 * DT);
+        let mut want = Vec::new();
+        for (i, f) in flows.iter().enumerate() {
+            let e = f.veh_per_hour / 3600.0 * DT * m;
+            let n = e.floor() as usize + usize::from(unit_f64(splitmix64(mix3(seed, t, i as u64))) < e - e.floor());
+            want.extend(std::iter::repeat_n((i, f.origin, f.dest), n));
+        }
+        // Then trips_at matches it exactly (flow order, then copy index)
+        let got: Vec<_> = trips_at(&model, seed, t).iter().map(|r| (r.flow_index, r.origin, r.dest)).collect();
+        assert_eq!(got, want, "tick {t}");
+    }
+}
+
+// ─── 16 ───────────────────────────────────────────────────────────────────
+#[test]
+fn demand_routes_use_current_pre_update_costs() {
+    // Given heavy grid demand
+    let (sc, zones) = grid_with_corner_zones(600.0, 4);
+    let net = sc.network.clone();
+    let mut w = World::from_scenario(sc).unwrap();
+    let ff_world = World::new(net);
+    let mut differs_from_ff = 0;
+    for _ in 0..3000 {
+        let pre = w.clone();
+        let n_before = w.generated_trips().len();
+        // When a tick spawns demand
+        w.step();
+        let by_trip: BTreeMap<u64, Vec<LinkId>> =
+            w.vehicle_ids().into_iter().map(|id| w.vehicle(id).unwrap()).map(|i| (i.trip_id, i.route)).collect();
+        // Then each new trip got the router's route under the costs in force before the step
+        for g in &w.generated_trips()[n_before..] {
+            let (want, _) = pre.shortest_route(g.origin, g.dest).unwrap();
+            assert_eq!(by_trip[&g.trip_id], want, "trip {} at tick {}", g.trip_id, g.created_tick);
+            if ff_world.shortest_route(g.origin, g.dest).unwrap().0 != want {
+                differs_from_ff += 1;
+            }
+        }
+        // And a reported route cost is the sum of current cost keys along it
+        let (r, c) = w.shortest_route(zones[0], zones[3]).unwrap();
+        let ms: u64 = r.iter().map(|&l| cost_key(w.link_cost(l))).sum();
+        assert_eq!(c, ms as f64 / 1000.0);
+    }
+    // And congestion actually changed some routes (premise)
+    assert!(differs_from_ff > 0, "congestion never changed a route");
+}
+
+// ─── 17 ───────────────────────────────────────────────────────────────────
+#[test]
+fn created_tick_is_demand_tick() {
+    // Given heavy grid demand (vehicles wait at origins)
+    let (sc, _) = grid_with_corner_zones(600.0, 4);
+    let mut w = World::from_scenario(sc).unwrap();
+    for _ in 0..3000 {
+        w.step();
+    }
+    // Then completed and live vehicles carry the demand tick as created_tick,
+    // so origin waiting counts as travel time
+    let gen: BTreeMap<u64, u64> = w.generated_trips().iter().map(|g| (g.trip_id, g.created_tick)).collect();
+    assert!(!w.completed_log().is_empty());
+    for c in w.completed_log() {
+        assert_eq!(c.created_tick, gen[&c.trip_id]);
+    }
+    for id in w.vehicle_ids() {
+        let i = w.vehicle(id).unwrap();
+        assert_eq!(i.created_tick, gen[&i.trip_id]);
+    }
+}
+
+// ─── 18 ───────────────────────────────────────────────────────────────────
+#[test]
+fn validate_rejects_bad_models() {
+    // Given zone z ⇄ j ⇄ k
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(0.0, 0.0);
+    let j = b.node(100.0, 0.0);
+    let k = b.node(200.0, 0.0);
+    b.two_way(z, j, 13.9, 1);
+    b.two_way(j, k, 13.9, 1);
+    let network = b.build().unwrap();
+    let mk = |flows: Vec<(NodeId, NodeId, f64)>, points: Vec<(f64, f64)>| Scenario {
+        network: network.clone(),
+        demand: DemandModel {
+            flows: flows.into_iter().map(|(origin, dest, veh_per_hour)| OdFlow { origin, dest, veh_per_hour }).collect(),
+            profile: Profile { points },
+        },
+        demand_seed: 0,
+        behavior_seed: 0,
+    };
+    let err = |sc: Scenario| World::from_scenario(sc).err();
+    // Then valid models build and each kind of defect is reported (flow-major order)
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![])), None);
+    assert_eq!(err(mk(vec![(z, NodeId(99), 10.0)], vec![])), Some(DemandError::UnknownNode(NodeId(99))));
+    assert_eq!(err(mk(vec![(z, k, 10.0), (j, k, 10.0)], vec![])), Some(DemandError::BadOrigin(j)));
+    assert_eq!(err(mk(vec![(z, k, 10.0), (z, z, 10.0)], vec![])), Some(DemandError::SameOriginDest(1)));
+    assert_eq!(err(mk(vec![(z, k, -1.0)], vec![])), Some(DemandError::BadRate(0)));
+    assert_eq!(err(mk(vec![(z, k, f64::NAN)], vec![])), Some(DemandError::BadRate(0)));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(10.0, 1.0), (10.0, 2.0)])), Some(DemandError::BadProfile));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, -0.5)])), Some(DemandError::BadProfile));
+}
+
+// ─── 19 ───────────────────────────────────────────────────────────────────
+#[test]
+fn speed_factor_draw_order() {
+    // Given demand (incl. an unreachable flow) and interleaved explicit spawns
+    let mut b = NetworkBuilder::new();
+    let z1 = b.zone(0.0, 0.0);
+    let j1 = b.node(100.0, 0.0);
+    let z2 = b.zone(1200.0, 0.0);
+    let z3 = b.zone(0.0, 500.0);
+    let (c1, _) = b.two_way(z1, j1, 13.9, 2);
+    let (m, _) = b.two_way(j1, z2, 13.9, 2);
+    let network = b.build().unwrap();
+    let flows = vec![
+        OdFlow { origin: z1, dest: z2, veh_per_hour: 1800.0 },
+        OdFlow { origin: z1, dest: z3, veh_per_hour: 300.0 },
+    ];
+    let sc = Scenario { network, demand: DemandModel { flows, profile: Profile::default() }, demand_seed: 7, behavior_seed: 3 };
+    let mut w = World::from_scenario(sc).unwrap();
+    let mut seen: BTreeMap<u64, f64> = BTreeMap::new();
+    for t in 0..600 {
+        if t % 7 == 0 {
+            w.spawn_with_route(vec![c1, m]).unwrap();
+        }
+        w.step();
+        for id in w.vehicle_ids() {
+            let i = w.vehicle(id).unwrap();
+            seen.entry(i.trip_id).or_insert(i.speed_factor);
+        }
+    }
+    // Then the k-th demand trip (NoRoute included) drew the k-th behavior
+    // number, and explicit spawns drew nothing
+    let mut rng = BehaviorRng::new(3);
+    let mut n = 0;
+    for g in w.generated_trips() {
+        let want = 0.9 + 0.2 * rng.next_f64();
+        assert_eq!(seen[&g.trip_id], want, "trip {}", g.trip_id);
+        n += 1;
+    }
+    assert!(n > 100);
 }

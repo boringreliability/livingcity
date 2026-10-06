@@ -29,7 +29,9 @@ pub struct DemandModel {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DemandError {
-    /// Origin is neither a zone nor a source node (or unknown).
+    /// Origin or destination is not a node of the network.
+    UnknownNode(NodeId),
+    /// Origin is neither a zone nor a source node.
     BadOrigin(NodeId),
     SameOriginDest(usize),
     BadRate(usize),

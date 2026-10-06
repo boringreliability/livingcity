@@ -1,0 +1,25 @@
+# Machine-checked "Must NOT" rules for the simulation core (model contract):
+# no transcendental float functions (native ≡ WASM bit-for-bit), no hash
+# containers (iteration order), no wall clock. `sqrt` is correctly rounded
+# by IEEE 754 and therefore allowed.
+disallowed-methods = [
+    { path = "f64::exp", reason = "transcendental: not bit-identical across platforms" },
+    { path = "f64::exp2", reason = "transcendental" },
+    { path = "f64::ln", reason = "transcendental" },
+    { path = "f64::log", reason = "transcendental" },
+    { path = "f64::log2", reason = "transcendental" },
+    { path = "f64::log10", reason = "transcendental" },
+    { path = "f64::powf", reason = "transcendental" },
+    { path = "f64::powi", reason = "not guaranteed correctly rounded" },
+    { path = "f64::sin", reason = "transcendental" },
+    { path = "f64::cos", reason = "transcendental" },
+    { path = "f64::tan", reason = "transcendental" },
+    { path = "f64::atan2", reason = "transcendental" },
+    { path = "f64::hypot", reason = "not guaranteed correctly rounded" },
+    { path = "std::time::Instant::now", reason = "no wall clock in the simulation" },
+    { path = "std::time::SystemTime::now", reason = "no wall clock in the simulation" },
+]
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order is nondeterministic" },
+    { path = "std::collections::HashSet", reason = "iteration order is nondeterministic" },
+]
