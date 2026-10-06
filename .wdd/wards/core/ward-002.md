@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-001"]
 layer: "rust"
-estimated_tests: 22
+estimated_tests: 24
 created: "2026-10-06"
 completed: null
 ---
@@ -66,6 +66,8 @@ All in `crates/sim-core/tests/core_002_demand_routing.rs`.
 | 20 | `idle_links_decay_to_free_flow` | demand stops after 15 min: the EMA oracle matches every epoch, idle links (no exits) use `queue_term`, and all links end at exactly free flow |
 | 21 | `validate_order_is_flow_major_and_source_nodes_are_origins` | precedence UnknownNode(origin→dest) → BadOrigin → SameOriginDest → BadRate per flow; a source node is a valid origin |
 | 22 | `noroute_draws_in_trips_at_order` | with the unreachable flow first, NoRoute and routed trips still draw in `trips_at` order |
+| 23 | `validate_rejects_non_finite_rates_and_profiles` | ∞ rate → BadRate; ∞/NaN multiplier and NaN time → BadProfile; flows validated before the profile |
+| 24 | `speed_factor_caps_free_flow_speed` | free-flowing vehicles peak at exactly vmax × their own speed factor, never above |
 | 13 | `metrics_match_definitions` | every `Metrics` field is recomputed by hand from views/logs/vehicle info at many ticks and agrees exactly; windowed mean travel time is correct |
 
 ## Must NOT
@@ -84,13 +86,13 @@ cargo build -p sim-core --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core_001 (20) and core_002 (22) pass.
+   Expected: core_001 (20) and core_002 (24) pass.
 2. Run: `cargo run -p sim-core --example smoke`
    Verify: one line per 60 s sim time with `generated active queued completed mean_tt`. `generated` grows at about the configured rate, completed > 0 after a few minutes, and `spawned == active + completed + removed` on every line.
 3. Run: `cargo run -q -p sim-core --example smoke > /tmp/a.txt && cargo run -q -p sim-core --example smoke > /tmp/b.txt && diff /tmp/a.txt /tmp/b.txt && echo identical`
    Expected: `identical`.
 ### Pass criteria
-- [ ] 42 tests green
+- [ ] 44 tests green
 - [ ] Smoke output plausible and conserving
 - [ ] Two runs are byte-identical
 

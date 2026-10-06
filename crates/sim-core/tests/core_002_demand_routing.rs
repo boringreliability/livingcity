@@ -971,3 +971,62 @@ fn noroute_draws_in_trips_at_order() {
         assert_eq!(seen[&g.trip_id], 0.9 + 0.2 * rng.next_f64(), "trip {}", g.trip_id);
     }
 }
+
+// ─── 23–24 ────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-002
+// Red reviewer, round 3 (non-finite inputs would make trips_at allocate
+// ~1.8e19 trips; speed factor must act on the physics, not only be reported).
+
+#[test]
+fn validate_rejects_non_finite_rates_and_profiles() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(0.0, 0.0);
+    let j = b.node(100.0, 0.0);
+    let k = b.node(200.0, 0.0);
+    b.two_way(z, j, 13.9, 1);
+    b.two_way(j, k, 13.9, 1);
+    let network = b.build().unwrap();
+    let mk = |flows: Vec<(NodeId, NodeId, f64)>, points: Vec<(f64, f64)>| Scenario {
+        network: network.clone(),
+        demand: DemandModel {
+            flows: flows.into_iter().map(|(origin, dest, veh_per_hour)| OdFlow { origin, dest, veh_per_hour }).collect(),
+            profile: Profile { points },
+        },
+        demand_seed: 0,
+        behavior_seed: 0,
+    };
+    let err = |sc: Scenario| World::from_scenario(sc).err();
+    assert_eq!(err(mk(vec![(z, k, f64::INFINITY)], vec![])), Some(DemandError::BadRate(0)));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, f64::INFINITY)])), Some(DemandError::BadProfile));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, 1.0), (600.0, f64::NAN)])), Some(DemandError::BadProfile));
+    assert_eq!(err(mk(vec![(z, k, 10.0)], vec![(0.0, 1.0), (f64::NAN, 1.0)])), Some(DemandError::BadProfile));
+    // flows are validated before the profile
+    assert_eq!(err(mk(vec![(z, k, -1.0)], vec![(0.0, -1.0)])), Some(DemandError::BadRate(0)));
+}
+
+#[test]
+fn speed_factor_caps_free_flow_speed() {
+    // Given a long free-flowing corridor at light demand
+    let (sc, _, [_, main, _]) = corridor(300.0, 5, 9);
+    let vmax = sc.network.link(main).speed_limit_mps;
+    let mut w = World::from_scenario(sc).unwrap();
+    let mut top: BTreeMap<u64, (f64, f64)> = BTreeMap::new();
+    for _ in 0..2400 {
+        step_checked(&mut w);
+        for v in w.link_vehicles(main) {
+            let e = top.entry(v.trip_id).or_insert((0.0, 0.0));
+            e.0 = e.0.max(v.v);
+        }
+        for id in w.vehicle_ids() {
+            let i = w.vehicle(id).unwrap();
+            if let Some(e) = top.get_mut(&i.trip_id) {
+                e.1 = i.speed_factor;
+            }
+        }
+    }
+    // Then every vehicle that crossed the main road peaked at exactly vmax × its own speed factor
+    let reached = top.values().filter(|(peak, sf)| *sf > 0.0 && (*peak - vmax * *sf).abs() <= 1e-9).count();
+    let exceeded = top.values().filter(|(peak, sf)| *sf > 0.0 && *peak > vmax * *sf + 1e-9).count();
+    assert_eq!(exceeded, 0);
+    assert!(reached > 20, "premise: free-flow vehicles reach their own top speed");
+}
