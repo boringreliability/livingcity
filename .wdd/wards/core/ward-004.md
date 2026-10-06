@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-003"]
 layer: "typescript"
-estimated_tests: 30
+estimated_tests: 35
 created: "2026-10-06"
 completed: null
 ---
@@ -41,12 +41,12 @@ Carry the Rust simulation into the browser without per-vehicle calls or per-fram
   - `report(ticks, elapsedMs)`;
   - `status()` gives `{ running, multiplier, targetTicksPerS, achievedTicksPerS, behind, executedTicks, simTimeS, backlogTicks }`.
   - `achievedTicksPerS` = ticks reported at times in `(now − 1 s, now]` per second.
-  - `behind` is **always false while paused**. While running it is true if **either** (a) the backlog was clamped at the cap within the last 1 s (a sticky event that expires 1 s after the last clamp), **or** (b) at least 1 s has run since the last start/resume or speed change and achieved < 90 % of target. This gives a 1 s grace after start, resume and speed changes.
+  - `behind` is **always false while paused**. While running it is true if **either** (a) the backlog was clamped at the cap within the last 1 s (a sticky event that expires 1 s after the last clamp), **or** (b) at least 1 s has run since the last start/resume or speed change and achieved < 90 % of target. This gives a 1 s grace after start, resume and speed changes. The grace applies **only to (b)**: a cap clamp is always reported. A clamp caused only by lowering the speed (the existing backlog exceeds the new, smaller cap) is not a cap event. `setSpeed` first credits the wall time elapsed since the last plan at the old speed, then switches. The grace for the first start counts from `setRunning(true)`, not from construction.
   - `setSpeed` with a non-finite or ≤ 0 multiplier is ignored.
   - **No silent skipping:** sim time is always executed ticks × DT, never wall time.
 - `src/sim/host.ts`: `createSimHost(deps)` holds the worker logic without `self`:
-  - handles `ToWorker`; each `iterate()` is exactly: `n = clock.plan()` → `sim.step(n)` if `n > 0` → `clock.report(n, ms)` → post a frame if `now − lastPost ≥ FRAME_INTERVAL_MS` (also when `n = 0`; the first frame after init is posted on the first iteration). Nothing is posted and nothing throws before init;
-  - posts at most one frame per `FRAME_INTERVAL_MS` = 16 ms of wall time, **also while paused** (tick unchanged), so commands are visible immediately;
+  - handles `ToWorker`; each `iterate()` is exactly: `n = clock.plan()` → `sim.step(n)` if `n > 0` → `clock.report(n, ms)` → post a frame if `now − lastPost ≥ FRAME_INTERVAL_MS` and then set `lastPost = now` (the wall time of that post, never `lastPost += 16`, so there are no catch-up bursts after a stall). This happens also when `n = 0`; the first frame after init is posted on the first iteration. Nothing is posted and nothing throws before init;
+  - posts at most one frame per `FRAME_INTERVAL_MS` = 16 ms of wall time, **also while paused** (tick and state unchanged), so the UI stays live and keeps receiving clock status;
   - transfers `vehicles` (in the transfer list, never cloned);
   - reuses a returned buffer **only if its byteLength equals the next frame's exact size** (others are dropped);
   - never throws: an unknown link in a command, a command before init, or a failing `createSim` posts `error{message}` (with the cause) and is otherwise ignored;
@@ -84,6 +84,11 @@ Carry the Rust simulation into the browser without per-vehicle calls or per-fram
 | 25 | `G4 frames keep coming while paused…` (Vitest) | ≈ 1 frame/16 ms while paused at the same tick; a close issued while paused shows at the first resumed tick |
 | 26 | `G6 commands and iterations before init never throw…` (Vitest) | no throw, error posted, no frames before init |
 | 27 | `G8 a returned buffer that does not fit…` + `G7 lane uses all 8 bits` (Vitest) | wrong-size buffers are dropped (bounded pool); lane = bits 8..15 |
+| 28 | `G9 after a single stall, behind stays true for the whole second…` (Vitest) | the sticky cap event lasts the full second, then clears |
+| 29 | `G2b the 1 s grace follows the first start…` (Vitest) | grace counts from the first `setRunning(true)` |
+| 30 | `G10 frames stay >= 16 ms apart with a jittered loop and after a stall` (Vitest) | `lastPost = now`: every gap ≥ 16 ms, no burst after a stall, ~60 fps after it |
+| 31 | `G4b paused frames show the unchanged state…` (Vitest) | a close issued while paused is not in `closed` until resumed |
+| 32 | `G6b iterating before init posts nothing at all` (Vitest) | no frames/errors from `iterate()` before init |
 | 11 | `frame payload is proportional` (Vitest) | `vehicles.byteLength == count × 16`; link stats length == number of links; no JSON in frame messages (structured-clone-safe typed arrays only) |
 
 ## Must NOT
