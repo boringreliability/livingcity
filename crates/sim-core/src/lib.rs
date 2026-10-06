@@ -7,6 +7,7 @@
 pub mod cities;
 pub mod command;
 pub mod demand;
+pub mod frame;
 pub mod network;
 pub mod params;
 pub mod rng;

@@ -114,7 +114,7 @@ Queue spillback emerges from rule 4: a full downstream link stops the front vehi
 - Conservation: `spawned == active + completed + removed` **at every tick** (`spawned` = demand trips + explicit spawns; `trips_generated` = demand trips only).
 
 ### Frame / boundary format (core-004)
-- Per vehicle, 16 bytes: `link_id: u32`, `s: f32` (m), `v: f32` (m/s), `flags: u32` (bit0 queued, bit1 on closed link, bit2 NoRoute, bits 8..15 lane index). There are **no x/y or screen coordinates from Rust**. The renderer maps link + s → world → screen.
+- Per vehicle, 16 bytes: `link_id: u32`, `s: f32` (m), `v: f32` (m/s), `flags: u32` (bit0 queued, bit1 on closed link, bit2 stranded, bits 8..15 lane index; records ordered links → lanes → front first). There are **no x/y or screen coordinates from Rust**. The renderer maps link + s → world → screen.
 - The network is exported once: node coordinates (m), link from/to/lanes/length/speed.
 
 ### Float comparisons

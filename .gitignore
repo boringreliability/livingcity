@@ -19,3 +19,6 @@ test-results/
 .claude/settings.local.json
 .claude/worktrees/
 .env*
+
+# wasm-pack output for the web app
+web/src/wasm/
