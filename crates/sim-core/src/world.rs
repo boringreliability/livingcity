@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 
+use crate::command::{Command, CommandError};
 use crate::demand::{trips_at, DemandError, DemandModel};
 use crate::network::{LinkId, Network, NodeId};
 use crate::params::{
@@ -32,6 +33,7 @@ pub struct Counts {
     pub on_network: u64,
     pub waiting_at_origin: u64,
     pub no_route: u64,
+    pub stranded: u64,
     pub completed: u64,
     pub removed: u64,
 }
@@ -80,6 +82,21 @@ pub struct VehicleInfo {
     pub s: f64,
     pub v: f64,
     pub created_tick: u64,
+    /// On a link without a route (all ways on are closed); retrying.
+    pub stranded: bool,
+    /// Failed NoRoute/stranded retries so far.
+    pub no_route_retries: u32,
+    /// Route changes after spawn (any cause).
+    pub route_switches: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RerouteStats {
+    pub budgeted_total: u64,
+    pub forced_total: u64,
+    pub retries_total: u64,
+    pub switches_total: u64,
+    pub max_budgeted_in_a_tick: u32,
 }
 
 /// The metric set shown in the UI; definitions in the model contract.
@@ -93,6 +110,7 @@ pub struct Metrics {
     pub on_network: u64,
     pub waiting_at_origin: u64,
     pub no_route: u64,
+    pub stranded: u64,
     pub queued: u64,
     pub completed: u64,
     pub removed_unreachable: u64,
@@ -282,6 +300,9 @@ impl World {
             s: v.s,
             v: v.v,
             created_tick: v.created_tick,
+            stranded: false,
+            no_route_retries: 0,
+            route_switches: 0,
         })
     }
 
@@ -315,6 +336,7 @@ impl World {
             on_network: c.on_network,
             waiting_at_origin: c.waiting_at_origin,
             no_route: c.no_route,
+            stranded: c.stranded,
             queued,
             completed: c.completed,
             removed_unreachable: c.removed,
@@ -334,6 +356,34 @@ impl World {
 
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// Accept a command for `cmd.tick >= tick()`; applied in step 1 of that tick.
+    pub fn schedule(&mut self, _cmd: Command) -> Result<(), CommandError> {
+        todo!()
+    }
+
+    /// Every accepted command, in acceptance order (applied or pending).
+    pub fn command_log(&self) -> &[Command] {
+        todo!()
+    }
+
+    pub fn is_closed(&self, _link: LinkId) -> bool {
+        todo!()
+    }
+
+    /// Closed links, ascending.
+    pub fn closed_links(&self) -> Vec<LinkId> {
+        todo!()
+    }
+
+    /// FNV-1a over all simulation state (see the contract).
+    pub fn state_hash(&self) -> u64 {
+        todo!()
+    }
+
+    pub fn reroute_stats(&self) -> RerouteStats {
+        todo!()
     }
 
     /// Enqueue a vehicle with an explicit route in the origin buffer of
@@ -697,6 +747,7 @@ impl World {
             on_network,
             waiting_at_origin: buffered - no_route,
             no_route,
+            stranded: 0,
             completed: self.completed,
             removed: self.removed,
         }

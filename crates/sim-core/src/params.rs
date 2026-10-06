@@ -27,5 +27,17 @@ pub const MAX_FLOW_VEH_PER_HOUR: f64 = 100_000.0;
 pub const COST_EPOCH_TICKS: u64 = 60;
 /// Link-cost smoothing weight of the new observation.
 pub const COST_EMA_ALPHA: f64 = 0.5;
+/// Periodic route reconsideration interval (ticks) = 120 s, staggered by trip id.
+pub const REROUTE_PERIOD_TICKS: u64 = 240;
+/// Max budgeted route computations per tick (forced decisions and retries excluded).
+pub const REROUTE_BUDGET_PER_TICK: u32 = 200;
+/// Hysteresis: a periodic reroute switches only if new < SWITCH_RATIO × current …
+pub const SWITCH_RATIO: f64 = 0.85;
+/// … and saves at least this many seconds.
+pub const SWITCH_MIN_GAIN_S: f64 = 20.0;
+/// NoRoute/stranded retry interval (ticks) = 30 s.
+pub const NO_ROUTE_RETRY_TICKS: u64 = 60;
+/// Failed retries before a NoRoute/stranded vehicle is removed.
+pub const NO_ROUTE_MAX_RETRIES: u32 = 10;
 /// Max lanes per link.
 pub const MAX_LANES: u8 = 8;
