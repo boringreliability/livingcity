@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Closures, rerouting, commands and determinism"
 epic: "core"
-status: "approved"
+status: "gold"
 dependencies: ["core-002"]
 layer: "rust"
 estimated_tests: 36

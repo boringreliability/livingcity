@@ -3,12 +3,13 @@
 
 use std::collections::VecDeque;
 
-use crate::command::{Command, CommandError};
+use crate::command::{Command, CommandError, CommandKind};
 use crate::demand::{trips_at, DemandError, DemandModel};
 use crate::network::{LinkId, Network, NodeId};
 use crate::params::{
     ACCEL, COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, JAM_SPACING, LANE_CREDIT_CAP, LANE_CREDIT_PER_TICK,
-    ORIGIN_ADMIT_PER_TICK, QUEUED_SPEED, SAT_FLOW_PER_LANE,
+    NO_ROUTE_MAX_RETRIES, NO_ROUTE_RETRY_TICKS, ORIGIN_ADMIT_PER_TICK, QUEUED_SPEED, REROUTE_BUDGET_PER_TICK,
+    REROUTE_PERIOD_TICKS, SAT_FLOW_PER_LANE, SWITCH_MIN_GAIN_S, SWITCH_RATIO,
 };
 use crate::rng::BehaviorRng;
 use crate::routing::{cost_key, free_flow_cost, RouterCache, Tree};
@@ -155,11 +156,69 @@ struct Vehicle {
     /// Tick in which the vehicle crossed or was admitted; such a vehicle does
     /// not move again (movement step) or cross again in that tick.
     moved_tick: u64,
+    /// On a link without a route; acts only on its retry schedule.
+    stranded: bool,
+    /// Failed retries of the current NoRoute/stranded episode.
+    retries: u32,
+    next_retry_tick: u64,
+    route_switches: u32,
+    in_priority: bool,
+    in_periodic: bool,
+    /// Trip endpoints (a NoRoute vehicle has an empty route).
+    origin: NodeId,
+    dest: NodeId,
 }
 
 impl Vehicle {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        trip_id: u64,
+        origin: NodeId,
+        dest: NodeId,
+        route: Vec<LinkId>,
+        state: Phase,
+        speed_factor: f64,
+        tick: u64,
+    ) -> Self {
+        Vehicle {
+            origin,
+            dest,
+            trip_id,
+            route,
+            route_pos: 0,
+            state,
+            lane: 0,
+            s: 0.0,
+            v: 0.0,
+            speed_factor,
+            created_tick: tick,
+            link_enter_tick: tick,
+            moved_tick: NOT_MOVED,
+            stranded: false,
+            retries: 0,
+            next_retry_tick: tick + NO_ROUTE_RETRY_TICKS,
+            route_switches: 0,
+            in_priority: false,
+            in_periodic: false,
+        }
+    }
+
     fn current_link(&self) -> LinkId {
         self.route[self.route_pos]
+    }
+
+    /// NoRoute at the origin or stranded on a link.
+    fn without_route(&self) -> bool {
+        self.state == Phase::NoRoute || self.stranded
+    }
+
+    /// Links still to be driven (after the current one on a link; all while waiting).
+    fn remaining(&self) -> &[LinkId] {
+        match self.state {
+            Phase::OnLink => &self.route[self.route_pos + 1..],
+            Phase::WaitingAtOrigin => &self.route,
+            Phase::NoRoute => &[],
+        }
     }
 }
 
@@ -194,6 +253,13 @@ pub struct World {
     exit_time_sum: Vec<f64>,
     exit_time_n: Vec<u64>,
     cost_epoch: u64,
+    closed: Vec<bool>,
+    /// Every accepted command, in acceptance order.
+    command_log: Vec<Command>,
+    /// Reroute queues of `(slot, trip_id)`.
+    priority_queue: VecDeque<(u32, u64)>,
+    periodic_queue: VecDeque<(u32, u64)>,
+    reroute_stats: RerouteStats,
     /// Derived from costs + epoch (+ closures); rebuildable, not sim state.
     router: RouterCache,
 }
@@ -247,6 +313,11 @@ impl World {
             exit_time_sum: vec![0.0; n_links],
             exit_time_n: vec![0; n_links],
             cost_epoch: 0,
+            closed: vec![false; n_links],
+            command_log: Vec::new(),
+            priority_queue: VecDeque::new(),
+            periodic_queue: VecDeque::new(),
+            reroute_stats: RerouteStats::default(),
             router: RouterCache::default(),
         }
     }
@@ -274,13 +345,14 @@ impl World {
         if from.index() >= n || to.index() >= n {
             return None;
         }
-        Tree::build(&self.network, &self.cost_keys, |_| true, to).route(&self.network, from)
+        let closed = &self.closed;
+        Tree::build(&self.network, &self.cost_keys, |l| !closed[l.index()], to).route(&self.network, from)
     }
 
-    /// Route via the per-epoch cache (same result as `shortest_route`).
+    /// Route via the cache (same result as `shortest_route`).
     fn route_for(&mut self, from: NodeId, to: NodeId) -> Option<(Vec<LinkId>, f64)> {
-        let (net, keys) = (&self.network, &self.cost_keys);
-        self.router.tree(net, keys, |_| true, to).route(net, from)
+        let (net, keys, closed) = (&self.network, &self.cost_keys, &self.closed);
+        self.router.tree(net, keys, |l| !closed[l.index()], to).route(net, from)
     }
 
     pub fn vehicle(&self, id: VehicleId) -> Option<VehicleInfo> {
@@ -300,9 +372,9 @@ impl World {
             s: v.s,
             v: v.v,
             created_tick: v.created_tick,
-            stranded: false,
-            no_route_retries: 0,
-            route_switches: 0,
+            stranded: v.stranded,
+            no_route_retries: v.retries,
+            route_switches: v.route_switches,
         })
     }
 
@@ -340,7 +412,7 @@ impl World {
             queued,
             completed: c.completed,
             removed_unreachable: c.removed,
-            unreachable: c.no_route + c.removed,
+            unreachable: c.no_route + c.stranded + c.removed,
             mean_travel_time_s: (self.completed > 0).then(|| self.completed_tt_sum / self.completed as f64),
             incomplete: c.active,
             mean_incomplete_age_s,
@@ -359,31 +431,137 @@ impl World {
     }
 
     /// Accept a command for `cmd.tick >= tick()`; applied in step 1 of that tick.
-    pub fn schedule(&mut self, _cmd: Command) -> Result<(), CommandError> {
-        todo!()
+    pub fn schedule(&mut self, cmd: Command) -> Result<(), CommandError> {
+        if cmd.tick < self.tick {
+            return Err(CommandError::InPast);
+        }
+        let (CommandKind::CloseLink(l) | CommandKind::OpenLink(l)) = cmd.kind;
+        if l.index() >= self.network.links().len() {
+            return Err(CommandError::UnknownLink(l));
+        }
+        self.command_log.push(cmd);
+        Ok(())
     }
 
     /// Every accepted command, in acceptance order (applied or pending).
     pub fn command_log(&self) -> &[Command] {
-        todo!()
+        &self.command_log
     }
 
-    pub fn is_closed(&self, _link: LinkId) -> bool {
-        todo!()
+    pub fn is_closed(&self, link: LinkId) -> bool {
+        self.closed[link.index()]
     }
 
     /// Closed links, ascending.
     pub fn closed_links(&self) -> Vec<LinkId> {
-        todo!()
+        (0..self.closed.len() as u32).map(LinkId).filter(|l| self.closed[l.index()]).collect()
     }
 
-    /// FNV-1a over all simulation state (see the contract).
+    /// 64-bit FNV-1a over all simulation state (see the contract); excludes
+    /// only the static network/demand model and the derived router cache.
     pub fn state_hash(&self) -> u64 {
-        todo!()
+        let mut h = Fnv::new();
+        h.u64(self.tick);
+        h.u64(self.slots.len() as u64);
+        for slot in &self.slots {
+            match slot {
+                None => h.u64(0),
+                Some(v) => {
+                    h.u64(1);
+                    h.u64(v.trip_id);
+                    h.u64(v.route.len() as u64);
+                    v.route.iter().for_each(|l| h.u64(l.0 as u64));
+                    h.u64(v.route_pos as u64);
+                    h.u64(v.state as u64);
+                    h.u64(v.lane as u64);
+                    h.f64(v.s);
+                    h.f64(v.v);
+                    h.f64(v.speed_factor);
+                    h.u64(v.created_tick);
+                    h.u64(v.link_enter_tick);
+                    h.u64(v.moved_tick);
+                    h.u64(v.stranded as u64);
+                    h.u64(v.retries as u64);
+                    h.u64(v.next_retry_tick);
+                    h.u64(v.route_switches as u64);
+                    h.u64(v.in_priority as u64);
+                    h.u64(v.in_periodic as u64);
+                    h.u64(v.origin.0 as u64);
+                    h.u64(v.dest.0 as u64);
+                }
+            }
+        }
+        h.u64(self.free.len() as u64);
+        self.free.iter().for_each(|&s| h.u64(s as u64));
+        for link in &self.lanes {
+            for q in link {
+                h.u64(q.len() as u64);
+                q.iter().for_each(|&s| h.u64(s as u64));
+            }
+        }
+        self.credit.iter().flatten().for_each(|&c| h.f64(c));
+        self.rr_next.iter().for_each(|&r| h.u64(r as u64));
+        for buf in &self.origin_buffers {
+            h.u64(buf.len() as u64);
+            buf.iter().for_each(|&s| h.u64(s as u64));
+        }
+        self.exit_count.iter().for_each(|&e| h.u64(e));
+        for x in [self.next_trip_id, self.spawned, self.completed, self.removed] {
+            h.u64(x);
+        }
+        h.u64(self.completed_log.len() as u64);
+        for c in &self.completed_log {
+            h.u64(c.trip_id);
+            h.u64(c.created_tick);
+            h.u64(c.completed_tick);
+        }
+        h.f64(self.completed_tt_sum);
+        h.u64(self.demand_seed);
+        h.u64(self.behavior_rng.state());
+        h.u64(self.generated.len() as u64);
+        for g in &self.generated {
+            h.u64(g.trip_id);
+            h.u64(g.flow_index as u64);
+            h.u64(g.origin.0 as u64);
+            h.u64(g.dest.0 as u64);
+            h.u64(g.created_tick);
+        }
+        self.smoothed.iter().for_each(|&c| h.f64(c));
+        self.cost_keys.iter().for_each(|&k| h.u64(k));
+        self.exit_time_sum.iter().for_each(|&s| h.f64(s));
+        self.exit_time_n.iter().for_each(|&n| h.u64(n));
+        h.u64(self.cost_epoch);
+        self.closed.iter().for_each(|&c| h.u64(c as u64));
+        h.u64(self.command_log.len() as u64);
+        for c in &self.command_log {
+            h.u64(c.tick);
+            match c.kind {
+                CommandKind::CloseLink(l) => {
+                    h.u64(1);
+                    h.u64(l.0 as u64);
+                }
+                CommandKind::OpenLink(l) => {
+                    h.u64(2);
+                    h.u64(l.0 as u64);
+                }
+            }
+        }
+        for q in [&self.priority_queue, &self.periodic_queue] {
+            h.u64(q.len() as u64);
+            for &(s, trip) in q {
+                h.u64(s as u64);
+                h.u64(trip);
+            }
+        }
+        let s = &self.reroute_stats;
+        for x in [s.budgeted_total, s.forced_total, s.retries_total, s.switches_total, s.max_budgeted_in_a_tick as u64] {
+            h.u64(x);
+        }
+        h.finish()
     }
 
     pub fn reroute_stats(&self) -> RerouteStats {
-        todo!()
+        self.reroute_stats
     }
 
     /// Enqueue a vehicle with an explicit route in the origin buffer of
@@ -391,19 +569,8 @@ impl World {
     pub fn spawn_with_route(&mut self, route: Vec<LinkId>) -> Result<VehicleId, SpawnError> {
         self.validate_route(&route)?;
         let origin = self.network.link(route[0]).from;
-        let vehicle = Vehicle {
-            trip_id: self.next_trip_id,
-            route,
-            route_pos: 0,
-            state: Phase::WaitingAtOrigin,
-            lane: 0,
-            s: 0.0,
-            v: 0.0,
-            speed_factor: 1.0,
-            created_tick: self.tick,
-            link_enter_tick: self.tick,
-            moved_tick: NOT_MOVED,
-        };
+        let dest = self.network.link(*route.last().expect("validated")).to;
+        let vehicle = Vehicle::new(self.next_trip_id, origin, dest, route, Phase::WaitingAtOrigin, 1.0, self.tick);
         Ok(self.enqueue_at_origin(origin, vehicle))
     }
 
@@ -443,19 +610,7 @@ impl World {
                 dest: req.dest,
                 created_tick: self.tick,
             });
-            let vehicle = Vehicle {
-                trip_id,
-                route,
-                route_pos: 0,
-                state,
-                lane: 0,
-                s: 0.0,
-                v: 0.0,
-                speed_factor,
-                created_tick: self.tick,
-                link_enter_tick: self.tick,
-                moved_tick: NOT_MOVED,
-            };
+            let vehicle = Vehicle::new(trip_id, req.origin, req.dest, route, state, speed_factor, self.tick);
             self.enqueue_at_origin(req.origin, vehicle);
         }
     }
@@ -479,6 +634,214 @@ impl World {
         }
         self.cost_epoch += 1;
         self.router.invalidate();
+    }
+
+    /// Step 1: commands of this tick, in acceptance order.
+    fn apply_commands(&mut self) {
+        let due: Vec<CommandKind> =
+            self.command_log.iter().filter(|c| c.tick == self.tick).map(|c| c.kind).collect();
+        for kind in due {
+            match kind {
+                CommandKind::CloseLink(l) => self.close_link(l),
+                CommandKind::OpenLink(l) => {
+                    if self.closed[l.index()] {
+                        self.closed[l.index()] = false;
+                        self.router.invalidate();
+                    }
+                }
+            }
+        }
+    }
+
+    fn close_link(&mut self, l: LinkId) {
+        if self.closed[l.index()] {
+            return;
+        }
+        self.closed[l.index()] = true;
+        self.router.invalidate();
+        for slot in 0..self.slots.len() as u32 {
+            let Some(v) = self.slots[slot as usize].as_mut() else { continue };
+            if v.without_route() || v.in_priority || !v.remaining().contains(&l) {
+                continue;
+            }
+            v.in_priority = true;
+            let trip = v.trip_id;
+            self.priority_queue.push_back((slot, trip));
+        }
+    }
+
+    /// Step 3(b): vehicles due for periodic reconsideration this tick.
+    fn enqueue_periodic(&mut self) {
+        let tick = self.tick;
+        for slot in 0..self.slots.len() as u32 {
+            let Some(v) = self.slots[slot as usize].as_mut() else { continue };
+            let eligible = match v.state {
+                Phase::WaitingAtOrigin => true,
+                Phase::OnLink => !v.stranded && v.route_pos + 1 < v.route.len(),
+                Phase::NoRoute => false,
+            };
+            if eligible
+                && !v.in_priority
+                && !v.in_periodic
+                && (tick + v.trip_id).is_multiple_of(REROUTE_PERIOD_TICKS)
+            {
+                v.in_periodic = true;
+                let trip = v.trip_id;
+                self.periodic_queue.push_back((slot, trip));
+            }
+        }
+    }
+
+    /// Step 3(c): NoRoute/stranded retries due this tick (outside the budget).
+    fn run_retries(&mut self) {
+        let tick = self.tick;
+        for slot in 0..self.slots.len() as u32 {
+            let due = self.slots[slot as usize].as_ref().is_some_and(|v| v.without_route() && v.next_retry_tick == tick);
+            if !due {
+                continue;
+            }
+            self.reroute_stats.retries_total += 1;
+            let (from, dest) = self.decision_point(slot);
+            match self.route_for(from, dest) {
+                Some((path, _)) => {
+                    self.assign_route(slot, path);
+                    let v = self.veh_mut(slot);
+                    if v.state == Phase::NoRoute {
+                        v.state = Phase::WaitingAtOrigin;
+                    }
+                    v.stranded = false;
+                    v.retries = 0;
+                }
+                None => {
+                    let v = self.veh_mut(slot);
+                    v.retries += 1;
+                    if v.retries >= NO_ROUTE_MAX_RETRIES {
+                        self.remove_unreachable(slot);
+                    } else {
+                        v.next_retry_tick = tick + NO_ROUTE_RETRY_TICKS;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Step 3(d): priority queue, then periodic FIFO, within the budget.
+    fn process_reroute_queues(&mut self) {
+        let mut used: u32 = 0;
+        while used < REROUTE_BUDGET_PER_TICK {
+            let (entry, priority) = match self.priority_queue.pop_front() {
+                Some(e) => (e, true),
+                None => match self.periodic_queue.pop_front() {
+                    Some(e) => (e, false),
+                    None => break,
+                },
+            };
+            let (slot, trip) = entry;
+            let Some(v) = self.slots[slot as usize].as_mut().filter(|v| v.trip_id == trip) else {
+                continue; // gone (completed/removed, slot reused)
+            };
+            if priority {
+                v.in_priority = false;
+            } else {
+                v.in_periodic = false;
+            }
+            let on_final_link = v.state == Phase::OnLink && v.route_pos + 1 == v.route.len();
+            if v.without_route() || on_final_link {
+                continue;
+            }
+            used += 1;
+            if priority {
+                self.priority_reroute(slot);
+            } else {
+                self.periodic_reroute(slot);
+            }
+        }
+        self.reroute_stats.budgeted_total += used as u64;
+        self.reroute_stats.max_budgeted_in_a_tick = self.reroute_stats.max_budgeted_in_a_tick.max(used);
+    }
+
+    /// Node to reroute from and the trip's destination.
+    fn decision_point(&self, slot: u32) -> (NodeId, NodeId) {
+        let v = self.veh(slot);
+        let from = match v.state {
+            Phase::OnLink => self.network.link(v.current_link()).to,
+            Phase::WaitingAtOrigin | Phase::NoRoute => v.origin,
+        };
+        (from, v.dest)
+    }
+
+    fn priority_reroute(&mut self, slot: u32) {
+        let (from, dest) = self.decision_point(slot);
+        match self.route_for(from, dest) {
+            Some((path, _)) => self.assign_route(slot, path),
+            None => self.enter_without_route(slot),
+        }
+    }
+
+    fn periodic_reroute(&mut self, slot: u32) {
+        let (from, dest) = self.decision_point(slot);
+        let Some((path, new_cost)) = self.route_for(from, dest) else { return };
+        let v = self.veh(slot);
+        let remaining = v.remaining();
+        let current = if remaining.iter().any(|l| self.closed[l.index()]) {
+            f64::INFINITY
+        } else {
+            remaining.iter().map(|&l| self.cost_keys[l.index()]).sum::<u64>() as f64 / 1000.0
+        };
+        if new_cost < SWITCH_RATIO * current && current - new_cost >= SWITCH_MIN_GAIN_S {
+            self.assign_route(slot, path);
+        }
+    }
+
+    /// Keep the driven prefix (incl. the current link) and append `path`.
+    /// Counts a switch only if the route vector changes.
+    fn assign_route(&mut self, slot: u32, path: Vec<LinkId>) {
+        let v = self.veh_mut(slot);
+        let mut route: Vec<LinkId> = match v.state {
+            Phase::OnLink => v.route[..=v.route_pos].to_vec(),
+            Phase::WaitingAtOrigin | Phase::NoRoute => Vec::new(),
+        };
+        route.extend(path);
+        if route != v.route {
+            v.route = route;
+            v.route_switches += 1;
+            self.reroute_stats.switches_total += 1;
+        }
+    }
+
+    /// Start a NoRoute (origin, route cleared) or stranded (link, route kept) episode.
+    fn enter_without_route(&mut self, slot: u32) {
+        let tick = self.tick;
+        let v = self.veh_mut(slot);
+        match v.state {
+            Phase::OnLink => v.stranded = true,
+            Phase::WaitingAtOrigin | Phase::NoRoute => {
+                v.state = Phase::NoRoute;
+                v.route.clear();
+                v.route_pos = 0;
+            }
+        }
+        v.retries = 0;
+        v.next_retry_tick = tick + NO_ROUTE_RETRY_TICKS;
+    }
+
+    /// Explicit removal after the last failed retry: not an exit, not a completion.
+    fn remove_unreachable(&mut self, slot: u32) {
+        let v = self.slots[slot as usize].take().expect("live vehicle slot");
+        match v.state {
+            Phase::OnLink => {
+                let q = &mut self.lanes[v.current_link().index()][v.lane as usize];
+                let i = q.iter().position(|&s| s == slot).expect("vehicle in its lane");
+                q.remove(i);
+            }
+            Phase::WaitingAtOrigin | Phase::NoRoute => {
+                let buf = self.origin_buffers.iter_mut().find(|b| b.contains(&slot)).expect("vehicle in a buffer");
+                let i = buf.iter().position(|&s| s == slot).expect("present");
+                buf.remove(i);
+            }
+        }
+        self.removed += 1;
+        self.free.push(slot);
     }
 
     fn record_exit(&mut self, link: LinkId, slot: u32) {
@@ -511,10 +874,14 @@ impl World {
 
     /// Advance one fixed tick.
     pub fn step(&mut self) {
+        self.apply_commands();
         self.spawn_demand();
         if self.tick > 0 && self.tick.is_multiple_of(COST_EPOCH_TICKS) {
             self.update_costs();
         }
+        self.enqueue_periodic();
+        self.run_retries();
+        self.process_reroute_queues();
         self.discharge_nodes();
         self.admit_origins();
         self.move_vehicles();
@@ -631,6 +998,23 @@ impl World {
             self.complete(slot);
             return Crossing::Completed;
         }
+        if veh.stranded {
+            return Crossing::None; // acts only on its retry schedule; blocks the lane
+        }
+
+        // Forced decision: the next link closed before this vehicle's reroute turn.
+        if self.closed[veh.route[veh.route_pos + 1].index()] {
+            self.reroute_stats.forced_total += 1;
+            let (from, dest) = self.decision_point(slot);
+            match self.route_for(from, dest) {
+                Some((path, _)) => self.assign_route(slot, path),
+                None => {
+                    self.enter_without_route(slot);
+                    return Crossing::None;
+                }
+            }
+        }
+        let veh = self.veh(slot);
 
         if self.credit[link.index()][lane] < 1.0 {
             return Crossing::None;
@@ -684,7 +1068,8 @@ impl World {
                     i += 1;
                     continue;
                 }
-                match self.choose_lane(first, 0.0) {
+                let lane = if self.closed[first.index()] { None } else { self.choose_lane(first, 0.0) };
+                match lane {
                     Some(lane) => {
                         self.origin_buffers[n].remove(i);
                         self.place_on_link(slot, first, lane, 0.0, 0.0);
@@ -747,7 +1132,7 @@ impl World {
             on_network,
             waiting_at_origin: buffered - no_route,
             no_route,
-            stranded: 0,
+            stranded: self.slots.iter().flatten().filter(|v| v.stranded).count() as u64,
             completed: self.completed,
             removed: self.removed,
         }
@@ -849,4 +1234,28 @@ enum Crossing {
 fn mean_travel_time<'a>(trips: impl Iterator<Item = &'a CompletedTrip>) -> Option<f64> {
     let times: Vec<f64> = trips.map(|c| (c.completed_tick - c.created_tick) as f64 * DT).collect();
     (!times.is_empty()).then(|| times.iter().sum::<f64>() / times.len() as f64)
+}
+
+/// 64-bit FNV-1a over little-endian words.
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+
+    fn u64(&mut self, x: u64) {
+        for b in x.to_le_bytes() {
+            self.0 ^= b as u64;
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+    }
+
+    fn f64(&mut self, x: f64) {
+        self.u64(x.to_bits());
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
 }
