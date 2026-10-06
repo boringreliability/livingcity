@@ -188,6 +188,9 @@ fn spawn_rejects_invalid_routes() {
     assert_eq!(w.counts().spawned, 1);
     assert_eq!(w.counts().waiting_at_origin, 1);
     assert_eq!(w.origin_buffer_len(a), 1);
+    // And the rejected attempts did not consume trip ids
+    w.step();
+    assert_eq!(w.link_vehicles(l_ac)[0].trip_id, 0);
 }
 
 // ─── 4 ────────────────────────────────────────────────────────────────────
@@ -956,9 +959,11 @@ fn origins_never_carry_through_traffic() {
     let j = b.node(300.0, 0.0);
     let z = b.zone(300.0, -50.0);
     let d = b.node(600.0, 0.0);
+    let e = b.node(900.0, 0.0);
     let sj = b.link(s, j, 13.9, 1);
     let jd = b.link(j, d, 13.9, 1);
     let (zj, jz) = b.two_way(z, j, 8.0, 1);
+    let de = b.link(d, e, 13.9, 1);
     let net = b.build().unwrap();
     // Then the network knows which nodes are zones
     assert!(net.is_zone(z) && !net.is_zone(j) && !net.is_zone(s));
@@ -976,12 +981,12 @@ fn origins_never_carry_through_traffic() {
     assert_eq!(w.counts().spawned, 3);
 
     // And zone traffic merges fairly with through traffic at j (round robin):
-    // with both saturated, each gets 40–60 % of jd's entries
+    // jd → de saturates the merge, and each feeder gets 40–60 % of jd's entries
     let mut win = (0, 0);
     for t in 0..2400u64 {
         if t % 2 == 0 {
-            w.spawn_with_route(vec![zj, jd]).unwrap();
-            w.spawn_with_route(vec![sj, jd]).unwrap();
+            w.spawn_with_route(vec![zj, jd, de]).unwrap();
+            w.spawn_with_route(vec![sj, jd, de]).unwrap();
         }
         if t == 600 {
             win = (w.link_exit_count(zj), w.link_exit_count(sj));
@@ -990,7 +995,13 @@ fn origins_never_carry_through_traffic() {
     }
     let fz = (w.link_exit_count(zj) - win.0) as f64;
     let fs = (w.link_exit_count(sj) - win.1) as f64;
-    assert!(fz + fs > 0.0);
+    // the merge is saturated (reference: 450 entries in the window)
+    assert!(fz + fs >= 405.0, "merge not saturated: {}", fz + fs);
     let share = fz / (fz + fs);
     assert!((0.4..=0.6).contains(&share), "zone vs through share {share:.2} ({fz} vs {fs})");
+
+    // And a zone is a working destination: the trip ending at z (trip 2) completed
+    assert_eq!(w.link_exit_count(jz), 1);
+    let trip2 = w.completed_log().iter().find(|c| c.trip_id == 2).expect("trip ending at zone never completed");
+    assert_eq!(trip2.completed_tick, 67);
 }

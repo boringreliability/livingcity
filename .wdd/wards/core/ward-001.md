@@ -52,7 +52,7 @@ All in `crates/sim-core/tests/core_001_physics.rs` (Given/When/Then comments).
 |---|-----------|----------|
 | 1 | `builder_computes_length_and_capacity` | Euclidean length, lane_cap = floor(len/7.5) (min 1), cap = lanes·lane_cap, sorted adjacency |
 | 2 | `builder_rejects_invalid_links` | unknown node, self-loop, < 10 m / NaN / ∞ length, zero / negative / NaN / ∞ speed, zero/too many lanes → specific `NetworkError` |
-| 3 | `spawn_rejects_invalid_routes` | empty, unknown link, non-contiguous route rejected; nothing counted as spawned |
+| 3 | `spawn_rejects_invalid_routes` | empty, unknown link, non-contiguous route rejected; nothing counted as spawned; rejected attempts consume no trip id |
 | 4 | `free_flow_vehicle_travel_time_matches_kinematics` | lone vehicle on a 1000 m, 10 m/s link completes within the analytic time ± 2 ticks; speed never exceeds the limit; per-tick displacement ≤ vmax·DT |
 | 5 | `vehicles_never_overlap_or_reorder` | heavy load on 1- and 3-lane links: every tick, consecutive vehicles in a lane keep `s_leader − s_follower ≥ 7.5 − 1e-3`, and `s` is non-decreasing per vehicle while on a link |
 | 6 | `storage_capacity_never_exceeded` | saturating demand: `link_count ≤ capacity` for every link, every tick |
@@ -68,7 +68,7 @@ All in `crates/sim-core/tests/core_001_physics.rs` (Given/When/Then comments).
 | 16 | `sink_completion_does_not_consume_credit` | free-flowing feed (asserted) into a 1-lane final link: completions exceed 1.3 × the credit rate |
 | 17 | `empty_lanes_bank_credit` | a lone cruising vehicle crosses a 10 m link without slowing below 5 m/s, travel exactly 152 ticks (credit banked while the lane was empty) |
 | 18 | `speed_limit_change_along_route` | 13.9 → 8.0 m/s route: never above the current link's limit; completes at tick 85 |
-| 20 | `origins_never_carry_through_traffic` | spawning at a junction with in-links → `OriginHasThroughTraffic`; route through a zone → `RouteThroughZone`; zone traffic merges with through traffic at 40–60 % |
+| 20 | `origins_never_carry_through_traffic` | spawning at a junction with in-links → `OriginHasThroughTraffic`; route through a zone → `RouteThroughZone`; zone traffic merges with saturated through traffic at 40–60 %; a trip ending at a zone completes (tick 67) |
 | 19 | `merging_moving_traffic_never_overlaps` | property test over 648 deterministic two-feeder merge configurations (incl. a 2-lane feeder) with moving entries: independent ≥ 7.5 m lane spacing check + invariants every tick (covers both `tail_guaranteed` guard clauses) |
 
 ## Must NOT
