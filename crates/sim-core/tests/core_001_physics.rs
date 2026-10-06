@@ -729,14 +729,16 @@ fn origin_admission_is_rate_limited_fifo_and_starts_at_rest() {
     let mut w2 = World::new(b.build().unwrap());
     w2.spawn_with_route(vec![short]).unwrap(); // X, trip 0
     w2.spawn_with_route(vec![short]).unwrap(); // Y, trip 1
-    w2.spawn_with_route(vec![wide]).unwrap(); // Z, trip 2
-    w2.spawn_with_route(vec![wide]).unwrap(); // Z2, trip 3
+    w2.spawn_with_route(vec![short]).unwrap(); // Y2, trip 2
+    w2.spawn_with_route(vec![wide]).unwrap(); // Z, trip 3
+    w2.spawn_with_route(vec![wide]).unwrap(); // Z2, trip 4
     step_checked(&mut w2);
-    // Then X enters, Y waits (blocked behind X), Z is not blocked by Y,
-    // and Z2 waits: the limit of 2 admissions is per origin, not per link
+    // Then X enters, Y and Y2 wait (blocked behind X, and skipped vehicles do
+    // not consume the budget), Z is not blocked by them, and Z2 waits: the
+    // limit of 2 admissions is per origin, not per link
     assert_eq!(w2.link_vehicles(short).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![0]);
-    assert_eq!(w2.link_vehicles(wide).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![2]);
-    assert_eq!(w2.origin_buffer_len(o), 2);
+    assert_eq!(w2.link_vehicles(wide).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![3]);
+    assert_eq!(w2.origin_buffer_len(o), 3);
 
     // Given two origins, each with its own 4-lane link and 3 waiting vehicles
     let mut b = NetworkBuilder::new();
@@ -759,6 +761,24 @@ fn origin_admission_is_rate_limited_fifo_and_starts_at_rest() {
         (w3.link_count(l1), w3.link_count(l2), w3.origin_buffer_len(o1), w3.origin_buffer_len(o2)),
         (2, 2, 1, 1)
     );
+
+    // Given three vehicles at an origin with a single 1-lane link
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let d = b.node(500.0, 0.0);
+    let l = b.link(o, d, 13.9, 1);
+    let mut w4 = World::new(b.build().unwrap());
+    for _ in 0..3 {
+        w4.spawn_with_route(vec![l]).unwrap();
+    }
+    // Then the second is admitted exactly when the first's *guaranteed* post-move
+    // position reaches 7.5 m: tick 5 (positions 0.5, 1.5, 3, 5 → 5 + 2.5)
+    for _ in 0..5 {
+        step_checked(&mut w4);
+    }
+    assert_eq!(w4.link_count(l), 1);
+    step_checked(&mut w4);
+    assert_eq!(w4.link_count(l), 2);
 }
 
 // ─── 16 ───────────────────────────────────────────────────────────────────
@@ -924,4 +944,53 @@ fn merging_moving_traffic_never_overlaps() {
     }
     }
     assert_eq!(configs, 648);
+}
+
+// ─── 20 ───────────────────────────────────────────────────────────────────
+#[test]
+fn origins_never_carry_through_traffic() {
+    // Given a junction j with an in-link, a zone z with a connector into j,
+    // and a plain source node s (no in-links)
+    let mut b = NetworkBuilder::new();
+    let s = b.node(0.0, 0.0);
+    let j = b.node(300.0, 0.0);
+    let z = b.zone(300.0, -50.0);
+    let d = b.node(600.0, 0.0);
+    let sj = b.link(s, j, 13.9, 1);
+    let jd = b.link(j, d, 13.9, 1);
+    let (zj, jz) = b.two_way(z, j, 8.0, 1);
+    let net = b.build().unwrap();
+    // Then the network knows which nodes are zones
+    assert!(net.is_zone(z) && !net.is_zone(j) && !net.is_zone(s));
+    let mut w = World::new(net);
+
+    use sim_core::SpawnError::*;
+    // When spawning at a junction that has in-links (through traffic), Then rejected
+    assert_eq!(w.spawn_with_route(vec![jd]), Err(OriginHasThroughTraffic(j)));
+    // When a route passes *through* a zone, Then rejected at the zone's position
+    assert_eq!(w.spawn_with_route(vec![sj, jz, zj, jd]), Err(RouteThroughZone { at: 2 }));
+    // And zones and source nodes are valid origins; ending in a zone is valid
+    assert!(w.spawn_with_route(vec![zj, jd]).is_ok());
+    assert!(w.spawn_with_route(vec![sj, jd]).is_ok());
+    assert!(w.spawn_with_route(vec![sj, jz]).is_ok());
+    assert_eq!(w.counts().spawned, 3);
+
+    // And zone traffic merges fairly with through traffic at j (round robin):
+    // with both saturated, each gets 40–60 % of jd's entries
+    let mut win = (0, 0);
+    for t in 0..2400u64 {
+        if t % 2 == 0 {
+            w.spawn_with_route(vec![zj, jd]).unwrap();
+            w.spawn_with_route(vec![sj, jd]).unwrap();
+        }
+        if t == 600 {
+            win = (w.link_exit_count(zj), w.link_exit_count(sj));
+        }
+        step_checked(&mut w);
+    }
+    let fz = (w.link_exit_count(zj) - win.0) as f64;
+    let fs = (w.link_exit_count(sj) - win.1) as f64;
+    assert!(fz + fs > 0.0);
+    let share = fz / (fz + fs);
+    assert!((0.4..=0.6).contains(&share), "zone vs through share {share:.2} ({fz} vs {fs})");
 }

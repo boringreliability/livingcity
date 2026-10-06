@@ -37,6 +37,11 @@ pub enum SpawnError {
     EmptyRoute,
     UnknownLink(LinkId),
     NonContiguousRoute { at: usize },
+    /// The origin has in-links and is not a zone: admission there would
+    /// compete unfairly with through traffic.
+    OriginHasThroughTraffic(NodeId),
+    /// `route[at].from` is a zone in the middle of the route.
+    RouteThroughZone { at: usize },
 }
 
 #[derive(Clone, Debug)]

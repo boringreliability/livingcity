@@ -59,6 +59,11 @@ impl NetworkBuilder {
         todo!()
     }
 
+    /// Zone centroid: trips may start and end here, but no route passes through it.
+    pub fn zone(&mut self, _x_m: f64, _y_m: f64) -> NodeId {
+        todo!()
+    }
+
     /// Link whose length is the Euclidean distance between its nodes.
     pub fn link(&mut self, _from: NodeId, _to: NodeId, _speed_limit_mps: f64, _lanes: u8) -> LinkId {
         todo!()
@@ -114,6 +119,10 @@ impl Network {
 
     /// Incoming links, ascending by id.
     pub fn in_links(&self, _node: NodeId) -> &[LinkId] {
+        todo!()
+    }
+
+    pub fn is_zone(&self, _node: NodeId) -> bool {
         todo!()
     }
 
