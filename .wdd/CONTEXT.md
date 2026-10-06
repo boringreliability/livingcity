@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-06, after core-002 completed (Gold approved, gold-1)
+2026-10-06, after core-003 completed (Gold approved, gold-1)
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). `main` holds only the initial commit.
@@ -9,7 +9,9 @@
 - **core-001 complete**: `crates/sim-core` (`network.rs`, `world.rs`, `params.rs`). 20 tests green, clippy clean. The Red gate took 8 rounds (contract bugs found: tail time level, origin-vs-through starvation → zones). Gold was approved in round 1, with exact reference values matched and a 180k-tick fuzz with no failures.
 - **core-002 complete**: `rng.rs`, `demand.rs`, `routing.rs` + World demand/costs/metrics. 44 tests green (20 + 24). The Red gate took 4 rounds (underflow, NoRoute-removal premise, untested router-uses-congestion, non-finite inputs). Gold was approved in round 1, with all exact reference values matched.
 - `crates/sim-core/clippy.toml` machine-checks the Must NOT rules (no transcendental functions, HashMap/HashSet or wall clock).
-- Next: core-003 (closures, rerouting, commands, determinism, `cities::three_bridges`). The contract's Closures section has been rewritten for it (stranded vehicles, decision points, budget/hysteresis).
+- **core-003 complete**: commands/closures, budgeted + staggered rerouting with hysteresis, forced decisions, NoRoute/stranded retries with removal, `state_hash`, `cities::three_bridges`, `bridge` example. 80 tests green (20 + 24 + 36). The Red gate took 7 rounds and was auto-approved under the user's convergence rule (see `.wdd/reviews/core-003-red-7-auto.md`). Gold was approved in round 1, and the differential run against an independent reference was identical over 10 scenarios.
+- **User decision (2026-10-06): convergence rule for gates.** From round 4 on, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved once the fix tests are incorporated. It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. (Not written into CLAUDE.md: the sandbox blocks self-modification of instructions; the user may add it.)
+- Next: core-004 (WASM worker bridge).
 
 ## Architecture Decisions Made
 | Decision | Rationale | Ward |
@@ -33,6 +35,8 @@
 ## Key Metrics
 | Metric | Value | Ward |
 |--------|-------|------|
+| Step, 20×20 grid, ~25–32k vehicles (release) | 0.195 ms median, 0.36 ms p95; closure burst of 40 links 8.7 ms | core-003 |
+| three_bridges: central closure → central 0/min within 1 min; N+S ~6 → ~40/min; mean tt 242 → 264 s | bridge example | core-003 |
 | Step incl. demand+routing, 20×20 grid, ~10.2k active (release) | 0.108 ms median, 0.245 ms p95, 0.32 ms epoch ticks | core-002 |
 | Step, 10×10 grid, ~2.9k active | 0.029 ms median, 0.051 ms p95 | core-002 |
 | Sim tick, 10k vehicles, 30×30 grid (release, M4 Pro) | 0.174 ms mean, 0.30 ms max | core-001 |
@@ -47,8 +51,11 @@
 - `check_invariants` does not yet check credit/rr ranges, slot uniqueness or route_pos.
 - Dense all-pairs grid demand gridlocks (10×10 at 120 vph per pair). Tune the demo city (epic city) and consider gridlock relief.
 - `World::shortest_route` builds a fresh tree per call (test/UI use only; internal routing uses the cache).
-- RouterCache must be invalidated on every key/usable change (epoch, close/open, restore). core-003 adds the closure filter.
+- RouterCache is invalidated on epoch, close and open. **Restore (epic timeline) must invalidate it too and must snapshot the reroute queues + their per-vehicle flags**, or `state_hash` diverges. The command log is the replay log.
+- Test city demand (1980 veh/h west→east vs. 3600 veh/h alternative capacity) makes closure queues mild. Epic city must calibrate demand so a closure visibly saturates the alternatives.
+- Explicit `spawn_with_route` routes that pass through their own destination get stranded (router returns None for from == dest). Demand routes never do this.
+- `apply_commands` scans the whole log each tick, and periodic enqueue/retries scan all slots (measured negligible).
 
 ## What Comes Next
-- core-003 Red: tests per `.wdd/wards/core/ward-003.md` (update the spec to the rewritten contract: stranded, counting) → Red gate.
-- Then core-004 (WASM worker bridge), core-005 (WebGL2 + React, first closure in the browser).
+- core-004 Red: `crates/sim-wasm`, `sim_core::frame`, `web/` (pnpm, Vite 8, React 19, Vitest 5, Playwright 1.63). Spec in `.wdd/wards/core/ward-004.md`.
+- Then core-005 (WebGL2 + React, first closure in the browser), then the **epic gate (human)**.

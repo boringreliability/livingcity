@@ -31,7 +31,7 @@
 
 ## Technology Stack
 - Rust (stable, edition 2021): simulation core + WASM (wasm-bindgen, wasm-pack)
-- TypeScript (strict) + React 18 + Vite: UI
+- TypeScript (strict) + React 19 + Vite 8: UI
 - WebGL2 (hand-written, instanced): renderer
 - Vitest (TS unit), Playwright (e2e in a real browser), cargo test (Rust)
 

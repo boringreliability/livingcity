@@ -14,7 +14,7 @@ Build the authoritative Rust traffic simulation (native-tested) and carry it all
 |------|------|--------|
 | core-001 | Road network, vehicles, queues and discharge | complete |
 | core-002 | Demand, routing and metrics | complete |
-| core-003 | Closures, rerouting, commands and determinism | planned |
+| core-003 | Closures, rerouting, commands and determinism | complete |
 | core-004 | WASM worker bridge | planned |
 | core-005 | First closure in the browser (integration ward) | planned |
 

@@ -835,7 +835,7 @@ impl World {
                 q.remove(i);
             }
             Phase::WaitingAtOrigin | Phase::NoRoute => {
-                let buf = self.origin_buffers.iter_mut().find(|b| b.contains(&slot)).expect("vehicle in a buffer");
+                let buf = &mut self.origin_buffers[v.origin.index()];
                 let i = buf.iter().position(|&s| s == slot).expect("present");
                 buf.remove(i);
             }

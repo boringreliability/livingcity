@@ -3,12 +3,12 @@ ward: 3
 revision: null
 name: "Closures, rerouting, commands and determinism"
 epic: "core"
-status: "gold"
+status: "complete"
 dependencies: ["core-002"]
 layer: "rust"
 estimated_tests: 36
 created: "2026-10-06"
-completed: null
+completed: "2026-10-06"
 ---
 # Ward core-003: Closures, rerouting, commands and determinism
 
