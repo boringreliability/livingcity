@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-003"]
 layer: "typescript"
-estimated_tests: 22
+estimated_tests: 30
 created: "2026-10-06"
 completed: null
 ---
@@ -41,15 +41,16 @@ Carry the Rust simulation into the browser without per-vehicle calls or per-fram
   - `report(ticks, elapsedMs)`;
   - `status()` gives `{ running, multiplier, targetTicksPerS, achievedTicksPerS, behind, executedTicks, simTimeS, backlogTicks }`.
   - `achievedTicksPerS` = ticks reported at times in `(now − 1 s, now]` per second.
-  - `behind` is true if **either** (a) the backlog was clamped at the cap within the last 1 s (a sticky event: wall time was dropped), **or** (b) at least 1 s has run since the last resume or speed change and achieved < 90 % of target.
+  - `behind` is **always false while paused**. While running it is true if **either** (a) the backlog was clamped at the cap within the last 1 s (a sticky event that expires 1 s after the last clamp), **or** (b) at least 1 s has run since the last start/resume or speed change and achieved < 90 % of target. This gives a 1 s grace after start, resume and speed changes.
   - `setSpeed` with a non-finite or ≤ 0 multiplier is ignored.
   - **No silent skipping:** sim time is always executed ticks × DT, never wall time.
 - `src/sim/host.ts`: `createSimHost(deps)` holds the worker logic without `self`:
-  - handles `ToWorker` and runs `iterate()` loops;
+  - handles `ToWorker`; each `iterate()` is exactly: `n = clock.plan()` → `sim.step(n)` if `n > 0` → `clock.report(n, ms)` → post a frame if `now − lastPost ≥ FRAME_INTERVAL_MS` (also when `n = 0`; the first frame after init is posted on the first iteration). Nothing is posted and nothing throws before init;
   - posts at most one frame per `FRAME_INTERVAL_MS` = 16 ms of wall time, **also while paused** (tick unchanged), so commands are visible immediately;
   - transfers `vehicles` (in the transfer list, never cloned);
   - reuses a returned buffer **only if its byteLength equals the next frame's exact size** (others are dropped);
-  - never throws: an unknown link in a command, a command before init, or a failing `createSim` posts `error{message}` (with the cause) and is otherwise ignored.
+  - never throws: an unknown link in a command, a command before init, or a failing `createSim` posts `error{message}` (with the cause) and is otherwise ignored;
+  - commands are scheduled at the sim's current tick and take effect in that tick's step 1 (core-003 determinism), so **a command issued while paused is applied at the first tick after resuming**. Paused frames show the unchanged state. The UI (core-005) shows a pending command optimistically until the frame confirms it.
   `src/sim/worker.ts` wires it to `self`. `src/sim/client.ts` is the typed UI-side wrapper.
 - `src/App.tsx`: a debug readout (tick, sim time, active, frame bytes, sim ms/tick median and p95, achieved vs. target speed, behind flag) and buttons "Close central bridge" / "Reopen" and a speed selector. It is replaced by the real UI in core-005.
 - Scripts: `build:wasm` (`wasm-pack build ../crates/sim-wasm --target web --out-dir ../../web/src/wasm`), `dev`, `build`, `test` (vitest run).
@@ -76,6 +77,13 @@ Carry the Rust simulation into the browser without per-vehicle calls or per-fram
 | 18 | `F6 pooled buffers never change frame size or content` (Vitest) | returned buffers of any size never change frame bytes vs. an unpooled host |
 | 19 | `F7 every frame is internally consistent…` (Vitest) | link stats = per-link counts from records; metrics tick/on_network/active split = frame; tick = executed ticks; simTimeS = tick × DT |
 | 20 | `F8 reopen restores the bridge` + `F9 the ready message describes three_bridges correctly` + `F10 bad input never throws…` (Vitest) | reopen works; ready values (coordinates, zones, lengths, speeds, landmarks) are right; errors are reported, not thrown |
+| 21 | `G1 a cap event is sticky for 1 s, then behind clears…` (Vitest) | behind after a stall; clears after > 1 s of keeping up |
+| 22 | `G2 no false behind during the first second…` (Vitest) | 1 s grace after start, speed change and resume |
+| 23 | `G3 a paused clock is never behind` (Vitest) | paused: no ticks, behind false |
+| 24 | `G5 setSpeed ignores non-finite and non-positive multipliers` (Vitest) | invalid speeds are ignored |
+| 25 | `G4 frames keep coming while paused…` (Vitest) | ≈ 1 frame/16 ms while paused at the same tick; a close issued while paused shows at the first resumed tick |
+| 26 | `G6 commands and iterations before init never throw…` (Vitest) | no throw, error posted, no frames before init |
+| 27 | `G8 a returned buffer that does not fit…` + `G7 lane uses all 8 bits` (Vitest) | wrong-size buffers are dropped (bounded pool); lane = bits 8..15 |
 | 11 | `frame payload is proportional` (Vitest) | `vehicles.byteLength == count × 16`; link stats length == number of links; no JSON in frame messages (structured-clone-safe typed arrays only) |
 
 ## Must NOT
