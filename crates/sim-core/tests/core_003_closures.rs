@@ -1483,6 +1483,7 @@ fn forced_decision_without_route_strands_at_the_stop_line() {
         assert!(i.stranded, "not stranded at tick {t}");
         assert_eq!(i.state, VehicleState::OnLink(zj));
         assert_eq!(i.route, vec![zj, a], "a stranded vehicle keeps its route");
+        assert_eq!(i.route_switches, 0, "a failed forced decision is not a switch");
         assert_eq!(i.no_route_retries as u64, (t - f) / NO_ROUTE_RETRY_TICKS, "retry schedule at tick {t}");
         assert!(w.link_vehicles(zj).iter().any(|v| v.trip_id == z0_trip));
         step_checked(&mut w);
@@ -1492,4 +1493,83 @@ fn forced_decision_without_route_strands_at_the_stop_line() {
     assert!(w.vehicle(z0).is_none(), "not removed exactly at f + 600");
     assert!(w.link_vehicles(zj).iter().all(|v| v.trip_id != z0_trip));
     assert_eq!(w.link_exit_count(zj), exits_zj, "a removal is not an exit");
+}
+
+
+
+// ─── 36 ──────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 7. Append to core_003_closures.rs (uses its helpers).
+#[test]
+fn forced_decision_reroutes_from_the_stop_line_node() {
+    // Given a vehicle on x→j bound for d through A (j→d), where x is a junction with a direct
+    // link x→d, and a 3000-vehicle backlog from y (low slots) also routed through A
+    let mut b = NetworkBuilder::new();
+    let o = b.zone(-300.0, 0.0);
+    let y = b.zone(0.0, -150.0);
+    let x = b.node(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let k = b.node(500.0, 600.0);
+    let d = b.node(1000.0, 0.0);
+    let ox = b.link(o, x, 11.1, 1);
+    let xj = b.link(x, j, 11.1, 1);
+    let yj = b.link(y, j, 11.1, 1);
+    let a = b.link(j, d, 13.9, 2);
+    let b1 = b.link(j, k, 13.9, 1);
+    let b2 = b.link(k, d, 13.9, 1);
+    let xd = b.link(x, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..3000 {
+        w.spawn_with_route(vec![yj, a]).unwrap();
+    }
+    let v = w.spawn_with_route(vec![ox, xj, a]).unwrap();
+    let trip = w.vehicle(v).unwrap().trip_id;
+    // When A closes while the vehicle is on x→j, so that it reaches the stop line at j before
+    // its priority turn (closure tick + 15)
+    while !matches!(w.vehicle(v).unwrap().state, VehicleState::OnLink(l) if l == xj) {
+        step_checked(&mut w);
+    }
+    let ct = w.tick() + 13;
+    w.schedule(close(a, ct)).unwrap();
+    // (premise: from x the best route now is the direct x→d, from j it is B1, B2)
+    let mut forced_at = None;
+    let mut on_b1_at = None;
+    while w.tick() < ct + 15 {
+        if w.tick() == ct + 1 {
+            assert_eq!(w.shortest_route(x, d).unwrap().0, vec![xd], "premise");
+            assert_eq!(w.shortest_route(j, d).unwrap().0, vec![b1, b2], "premise");
+        }
+        step_checked(&mut w);
+        let t = w.tick() - 1;
+        if forced_at.is_none() && w.reroute_stats().forced_total > 0 {
+            forced_at = Some(t);
+        }
+        if on_b1_at.is_none() && w.link_vehicles(b1).iter().any(|i| i.trip_id == trip) {
+            on_b1_at = Some(t);
+        }
+        // Then it never takes the shortcut x→d it has already passed, nor enters closed A
+        assert_eq!(w.link_count(xd), 0, "tick {t}");
+        assert!(w.link_vehicles(a).iter().all(|i| i.trip_id != trip), "tick {t}");
+    }
+    // And the forced decision at the stop line of x→j reroutes it from j (the current link's
+    // `to` node), keeping its driven links, and it crosses onto B1 in the same evaluation
+    // (exact under the contract; independent reference: closure tick 47, forced at tick 60)
+    assert_eq!(ct, 47);
+    assert_eq!(forced_at, Some(60));
+    assert_eq!(on_b1_at, Some(60));
+    let i = w.vehicle(v).unwrap();
+    assert_eq!(i.state, VehicleState::OnLink(b1));
+    assert_eq!(i.route, vec![ox, xj, b1, b2]);
+    assert_eq!(i.route_pos, 2);
+    assert_eq!(i.route_switches, 1);
+    assert_eq!(w.reroute_stats().forced_total, 1);
+    // And it completes its trip via B2, never using x→d
+    while w.vehicle(v).is_some() {
+        assert!(w.tick() < 1000, "trip not completed");
+        step_checked(&mut w);
+        assert_eq!(w.link_count(xd), 0);
+    }
+    assert!(w.completed_log().iter().any(|c| c.trip_id == trip));
+    assert_eq!(w.link_exit_count(xd), 0);
+    assert!(w.link_exit_count(b2) >= 1);
 }
