@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Road network, vehicles, queues and discharge"
 epic: "core"
-status: "red"
+status: "approved"
 dependencies: []
 layer: "rust"
 estimated_tests: 20
@@ -27,7 +27,7 @@ Create the Cargo workspace and the `sim-core` crate with the directed road netwo
   - `World::spawn_with_route(route: Vec<LinkId>) -> Result<VehicleId, SpawnError>`: validates a contiguous route and enqueues the vehicle in the origin buffer of `route[0].from` (state WaitingAtOrigin).
   - `World::step()`: one tick (steps 4–7; steps 1–3 are no-ops until later wards).
   - `World::tick()`, `World::counts() -> Counts { spawned, active, on_network, waiting_at_origin, completed, removed }`.
-  - `World::link_vehicles(LinkId) -> Vec<VehicleView { id, lane, s, v }>` (lane ascending, front-first within lane); `World::link_count(LinkId)`; `World::origin_buffer_len(NodeId)`; `World::link_exit_count(LinkId) -> u64` (cumulative vehicles that left the link by transfer or completion).
+  - `World::link_vehicles(LinkId) -> Vec<VehicleView { id, trip_id, lane, s, v }>` (lane ascending, front-first within lane); `World::link_count(LinkId)`; `World::origin_buffer_len(NodeId)`; `World::link_exit_count(LinkId) -> u64` (cumulative vehicles that left the link by transfer or completion).
   - `World::completed_log() -> &[CompletedTrip { trip_id, created_tick, completed_tick }]`.
   - `World::check_invariants() -> Result<(), String>`: conservation, ordering/spacing, capacity, no NaN. Tests call it every tick.
 - `World: Clone`. No `Rc`, no `HashMap` iteration, no wall clock.
@@ -68,8 +68,8 @@ All in `crates/sim-core/tests/core_001_physics.rs` (Given/When/Then comments).
 | 16 | `sink_completion_does_not_consume_credit` | free-flowing feed (asserted) into a 1-lane final link: completions exceed 1.3 × the credit rate |
 | 17 | `empty_lanes_bank_credit` | a lone cruising vehicle crosses a 10 m link without slowing below 5 m/s, travel exactly 152 ticks (credit banked while the lane was empty) |
 | 18 | `speed_limit_change_along_route` | 13.9 → 8.0 m/s route: never above the current link's limit; completes at tick 85 |
-| 20 | `origins_never_carry_through_traffic` | spawning at a junction with in-links → `OriginHasThroughTraffic`; route through a zone → `RouteThroughZone`; zone traffic merges with saturated through traffic at 40–60 %; a trip ending at a zone completes (tick 67) |
 | 19 | `merging_moving_traffic_never_overlaps` | property test over 648 deterministic two-feeder merge configurations (incl. a 2-lane feeder) with moving entries: independent ≥ 7.5 m lane spacing check + invariants every tick (covers both `tail_guaranteed` guard clauses) |
+| 20 | `origins_never_carry_through_traffic` | spawning at a junction with in-links → `OriginHasThroughTraffic`; route through a zone → `RouteThroughZone`; zone traffic merges with saturated through traffic at 40–60 %; a trip ending at a zone completes (tick 67) |
 
 ## Must NOT
 - No routing, demand, closures or RNG (later wards). No WASM/browser dependencies in `sim-core`.
