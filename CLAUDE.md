@@ -84,6 +84,14 @@ These cut across Rust core, worker and UI. Violating them breaks replay, branchi
 
 **City and demo**: a fixed, hand-designed network. A river splits the town with three crossings, plus residential areas, workplaces, a hospital and a limited-capacity alternative route. The demand pattern is fixed and reproducible. Calibrate the network so the effects are visible, but never script outcomes. A prominent "Close the main bridge" action is part of the demo.
 
+## Graphics roadmap and the sim/render boundary
+
+v1 is **2D**, and it should look like a finished little simulation product, not a prototype: good typography, nice water, clear bridges, and cars you can follow. Later versions: v2 character (vehicle types, distinct neighborhoods, visual explanation of consequences), v3 height (3D buildings, bridges, light/shadow, tilted camera on top of the *same* simulation), later still an experiment sandbox (drawing roads, signals, public transport). Build none of v2+ now. Just keep the door open:
+
+- **The simulation owns the road network and vehicles' positions *along* roads** (link id + offset in meters + lane). The network's nodes have world coordinates in meters (simulation data, since link lengths derive from them).
+- **No screen coordinates, cameras, colors or drawing code in Rust.** The renderer (TS/GPU) converts link + offset into world/screen positions, for example in the vertex shader from a link-geometry table.
+- Purely visual city data (river, building footprints, district labels, decor) lives on the render side, not in the sim core.
+
 ## UI / visual constraints
 
 - **The user is colorblind.** Never rely on red vs. green. Combine color with patterns, icons, line thickness, labels and movement. Closed roads need an unmistakable physical marker, and congestion must be visible through vehicle behavior, not only overlays.

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/sim-core"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[profile.release]
+debug = 1
+
+# Simulation tests run many thousands of ticks; keep them fast.
+[profile.test]
+opt-level = 2

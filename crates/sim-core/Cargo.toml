@@ -1,0 +1,8 @@
+[package]
+name = "sim-core"
+description = "Living City authoritative traffic simulation (pure Rust, no browser deps)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
