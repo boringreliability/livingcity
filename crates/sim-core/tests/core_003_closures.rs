@@ -1431,3 +1431,65 @@ fn noroute_retry_count_restarts_and_ignores_unrelated_commands() {
     assert!(ids.iter().all(|&id| w.vehicle(id).is_none()));
     assert_eq!(w.metrics().removed_unreachable, 16);
 }
+
+
+
+// ─── 35 ──────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 6. Append to core_003_closures.rs (uses its helpers,
+// including backlog_net from tests 17–26).
+#[test]
+fn forced_decision_without_route_strands_at_the_stop_line() {
+    // Given the backlog network with 3000 backlog vehicles from y and 10 vehicles from z,
+    // and A and B1 closing at the same tick, so that no route leads from j to d
+    let (net, [zj, yj, a, b1, b2]) = backlog_net();
+    let mut w = World::new(net);
+    for _ in 0..3000 {
+        w.spawn_with_route(vec![yj, a]).unwrap();
+    }
+    let zs: Vec<_> = (0..10).map(|_| w.spawn_with_route(vec![zj, a]).unwrap()).collect();
+    let ct = 25;
+    w.schedule(close(a, ct)).unwrap();
+    w.schedule(close(b1, ct)).unwrap();
+    for _ in 0..ct {
+        step_checked(&mut w);
+    }
+    assert_eq!(w.reroute_stats().forced_total, 0, "premise");
+    let z0 = zs[0];
+    let z0_trip = w.vehicle(z0).unwrap().trip_id;
+    let exits_zj = w.link_exit_count(zj);
+    // When the first z vehicle reaches the stop line before its priority turn (tick ct + 15)
+    let mut forced_at: Option<u64> = None;
+    while w.tick() < ct + 15 {
+        step_checked(&mut w);
+        if forced_at.is_none() && w.reroute_stats().forced_total > 0 {
+            forced_at = Some(w.tick() - 1);
+        }
+    }
+    let f = forced_at.expect("premise: a forced decision before the priority turn");
+    // (exact under the contract; same approach as test 17; independent reference: tick 33)
+    assert_eq!(f, 33);
+    // Then the failed forced decision strands it at once on its lane, the closed links stay
+    // empty, it takes no further forced decisions, and it retries on its own schedule from f:
+    // k failed retries after step f + 60k, removal exactly after step f + 600
+    let mut t = w.tick() - 1;
+    loop {
+        assert_eq!(w.link_count(a) + w.link_count(b1) + w.link_count(b2), 0, "a vehicle passed a closed link (tick {t})");
+        assert_eq!(w.reroute_stats().forced_total, 1, "stranded fronts take no forced decisions (tick {t})");
+        if t >= f + NO_ROUTE_RETRY_TICKS * NO_ROUTE_MAX_RETRIES as u64 {
+            break;
+        }
+        let i = w.vehicle(z0).unwrap_or_else(|| panic!("removed early at tick {t}"));
+        assert!(i.stranded, "not stranded at tick {t}");
+        assert_eq!(i.state, VehicleState::OnLink(zj));
+        assert_eq!(i.route, vec![zj, a], "a stranded vehicle keeps its route");
+        assert_eq!(i.no_route_retries as u64, (t - f) / NO_ROUTE_RETRY_TICKS, "retry schedule at tick {t}");
+        assert!(w.link_vehicles(zj).iter().any(|v| v.trip_id == z0_trip));
+        step_checked(&mut w);
+        t = w.tick() - 1;
+    }
+    assert_eq!(t, f + 600);
+    assert!(w.vehicle(z0).is_none(), "not removed exactly at f + 600");
+    assert!(w.link_vehicles(zj).iter().all(|v| v.trip_id != z0_trip));
+    assert_eq!(w.link_exit_count(zj), exits_zj, "a removal is not an exit");
+}
