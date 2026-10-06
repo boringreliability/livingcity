@@ -1,3 +1,5 @@
+import { FLAG_LANE_SHIFT, VEHICLE_RECORD_WORDS } from './protocol';
+
 /**
  * Accessors over a transferred vehicle buffer. The buffer keeps the protocol
  * layout (array of 4-word records), so it can be uploaded to the GPU as
@@ -16,6 +18,18 @@ export interface DecodedVehicles {
   lane(i: number): number;
 }
 
-export function decodeVehicles(_buffer: ArrayBuffer, _count: number): DecodedVehicles {
-  throw new Error('not implemented');
+export function decodeVehicles(buffer: ArrayBuffer, count: number): DecodedVehicles {
+  const words = new Uint32Array(buffer, 0, count * VEHICLE_RECORD_WORDS);
+  const floats = new Float32Array(buffer, 0, count * VEHICLE_RECORD_WORDS);
+  const at = (i: number, k: number) => i * VEHICLE_RECORD_WORDS + k;
+  return {
+    count,
+    words,
+    floats,
+    link: (i) => words[at(i, 0)]!,
+    s: (i) => floats[at(i, 1)]!,
+    v: (i) => floats[at(i, 2)]!,
+    flags: (i) => words[at(i, 3)]!,
+    lane: (i) => (words[at(i, 3)]! >>> FLAG_LANE_SHIFT) & 0xff,
+  };
 }

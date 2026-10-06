@@ -1150,6 +1150,19 @@ impl World {
         out
     }
 
+    /// Visit every on-network vehicle without allocating: links ascending →
+    /// lanes ascending → front first; `f(link, lane, s, v, stranded)`.
+    pub fn for_each_on_network(&self, mut f: impl FnMut(LinkId, u8, f64, f64, bool)) {
+        for (li, link) in self.lanes.iter().enumerate() {
+            for (lane, q) in link.iter().enumerate() {
+                for &slot in q {
+                    let v = self.veh(slot);
+                    f(LinkId(li as u32), lane as u8, v.s, v.v, v.stranded);
+                }
+            }
+        }
+    }
+
     pub fn link_count(&self, link: LinkId) -> u32 {
         self.lanes[link.index()].iter().map(|q| q.len() as u32).sum()
     }

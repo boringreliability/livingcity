@@ -3,7 +3,7 @@ ward: 4
 revision: null
 name: "WASM worker bridge"
 epic: "core"
-status: "approved"
+status: "gold"
 dependencies: ["core-003"]
 layer: "typescript"
 estimated_tests: 39
