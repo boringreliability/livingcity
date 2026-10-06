@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Road network, vehicles, queues and discharge"
 epic: "core"
-status: "approved"
+status: "gold"
 dependencies: []
 layer: "rust"
 estimated_tests: 20
