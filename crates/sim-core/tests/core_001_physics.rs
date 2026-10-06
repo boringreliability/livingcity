@@ -107,6 +107,19 @@ fn builder_rejects_invalid_links() {
         }),
         Err(NetworkError::InvalidSpeed { .. })
     ));
+    // Negative speed and NaN length
+    assert!(matches!(
+        build_with(|b, a, c| {
+            b.link(a, c, -5.0, 1);
+        }),
+        Err(NetworkError::InvalidSpeed { .. })
+    ));
+    assert!(matches!(
+        build_with(|b, a, c| {
+            b.link_with_length(a, c, f64::NAN, 10.0, 1);
+        }),
+        Err(NetworkError::TooShort { .. })
+    ));
     // Zero lanes and too many lanes
     assert!(matches!(
         build_with(|b, a, c| {
@@ -318,6 +331,7 @@ fn queue_spills_back_through_two_links() {
 
     let (mut t_l2_full, mut t_l1_full, mut t_origin) = (None, None, None);
     let mut l1_front_stopped_when_full = false;
+    let (mut ticks_after_l2_full, mut l2_full_ticks) = (0u32, 0u32);
     for t in 0..6000u64 {
         if t % 3 == 0 {
             w.spawn_with_route(vec![l1, l2, l3]).unwrap();
@@ -326,6 +340,12 @@ fn queue_spills_back_through_two_links() {
         step_checked(&mut w);
         if t_l2_full.is_none() && full(&w, l2) {
             t_l2_full = Some(t);
+        }
+        if t_l2_full.is_some() {
+            ticks_after_l2_full += 1;
+            if w.link_count(l2) as f64 >= 0.9 * w.network().capacity(l2) as f64 {
+                l2_full_ticks += 1;
+            }
         }
         if t_l1_full.is_none() && full(&w, l1) {
             t_l1_full = Some(t);
@@ -349,6 +369,9 @@ fn queue_spills_back_through_two_links() {
     assert!(a < b && b <= c, "spillback order wrong: L2 {a}, L1 {b}, origin {c}");
     // And the upstream front was stopped at its stop line (blocked, not free-flowing)
     assert!(l1_front_stopped_when_full);
+    // And the bottleneck stayed full (it is the binding constraint, not a start-up transient)
+    let frac = l2_full_ticks as f64 / ticks_after_l2_full as f64;
+    assert!(frac >= 0.9, "bottleneck only ≥90% full in {:.0}% of ticks", frac * 100.0);
 }
 
 // ─── 9 ────────────────────────────────────────────────────────────────────
@@ -404,7 +427,11 @@ fn conservation_holds_every_tick() {
     let cd = b.link(cn, d, 13.9, 1);
     let mut w = World::new(b.build().unwrap());
 
+    let mut clone_check: Option<World> = None;
     for t in 0..8000u64 {
+        if t == 1000 {
+            clone_check = Some(w.clone());
+        }
         if t < 1500 {
             if t % 3 == 0 {
                 w.spawn_with_route(vec![o1a, ab, bd]).unwrap();
@@ -426,11 +453,36 @@ fn conservation_holds_every_tick() {
         let on_links: u64 = w.network().links().iter().map(|l| w.link_count(l.id) as u64).sum();
         assert_eq!(c.on_network, on_links);
     }
-    // And eventually everyone arrives
+    // And eventually everyone arrives, each exactly once in the completion log
     let c = w.counts();
     assert!(c.spawned > 0);
     assert_eq!(c.completed, c.spawned);
     assert_eq!(c.active, 0);
+    let mut ids: Vec<u64> = w.completed_log().iter().map(|c| c.trip_id).collect();
+    assert_eq!(ids.len() as u64, c.completed);
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len() as u64, c.completed, "a trip completed twice");
+    assert_eq!(ids, (0..c.spawned).collect::<Vec<_>>());
+
+    // And a clone taken mid-run continues identically under the same inputs
+    let mut copy = clone_check.unwrap();
+    for t in 1000..8000u64 {
+        if t < 1500 {
+            if t % 3 == 0 {
+                copy.spawn_with_route(vec![o1a, ab, bd]).unwrap();
+            }
+            if t % 5 == 0 {
+                copy.spawn_with_route(vec![o1a, ac, cd]).unwrap();
+            }
+            if t % 7 == 0 {
+                copy.spawn_with_route(vec![o2a, ab, bd]).unwrap();
+            }
+        }
+        copy.step();
+    }
+    assert_eq!(copy.completed_log(), w.completed_log());
+    assert_eq!(copy.counts(), w.counts());
 }
 
 // ─── 11 ───────────────────────────────────────────────────────────────────
@@ -463,7 +515,9 @@ fn completion_logs_travel_time() {
     for c in &by_trip {
         let travel_s = (c.completed_tick - c.created_tick) as f64 * DT;
         assert!(travel_s >= 400.0 / 13.9, "{c:?} faster than free flow");
-        assert!(travel_s < 60.0, "{c:?} implausibly slow on an empty road");
+        // free-flow time + acceleration loss v/(2a) + 2 s discretization slack
+        let upper = 400.0 / 13.9 + 13.9 / (2.0 * 2.0) + 2.0;
+        assert!(travel_s <= upper, "{c:?} slower than {upper:.1} s on an empty road");
     }
     // And they left the network
     assert_eq!(w.counts().on_network, 0);
@@ -508,4 +562,149 @@ fn merge_shares_capacity_round_robin() {
     assert!(total >= 250.0, "merge not saturated: {total}");
     let share = f1 / total;
     assert!((0.4..=0.6).contains(&share), "unfair merge: share {share:.2} ({f1} vs {f2})");
+}
+
+// ─── 13 ───────────────────────────────────────────────────────────────────
+#[test]
+fn lane_credit_limits_moving_platoon() {
+    // Given free-flowing 3-lane traffic feeding a long 1-lane link L2, so
+    // vehicles reach L2's stop line *moving* and denser than 0.5 veh/s
+    // (start-up kinematics alone would not bind; only the credit can)
+    let (mut w, [l1, l2, l3], _) = bottleneck_chain(3, 500.0);
+    let mut exits_from_first: Vec<u64> = Vec::new();
+    for t in 0..1200u64 {
+        if t < 600 {
+            w.spawn_with_route(vec![l1, l2, l3]).unwrap();
+        }
+        step_checked(&mut w);
+        let e = w.link_exit_count(l2);
+        if !exits_from_first.is_empty() || e > 0 {
+            exits_from_first.push(e);
+        }
+    }
+    // When we look at L2's exits from its first exit onwards
+    assert!(exits_from_first.len() > 400, "L2 never discharged");
+    let base = exits_from_first[0] - 1; // exits before the first-exit tick
+    for (n, e) in exits_from_first.iter().enumerate() {
+        // Then at most the banked credit (1) plus 0.25 per tick ever crosses
+        let crossed = (e - base) as f64;
+        assert!(crossed <= 1.0 + 0.25 * n as f64 + 1e-9, "tick +{n}: {crossed} crossings exceed credit");
+    }
+    // And demand really exceeded the credit: L2 (cap 66) built a queue
+    assert!(w.link_count(l2) >= 10, "no queue formed on L2: {}", w.link_count(l2));
+}
+
+// ─── 14 ───────────────────────────────────────────────────────────────────
+#[test]
+fn lane_choice_prefers_most_room_and_vehicles_keep_lane() {
+    // Given four vehicles waiting to enter an empty 2-lane link
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(500.0, 0.0);
+    let d = b.node(1000.0, 0.0);
+    let l1 = b.link(o, a, 13.9, 2);
+    let l2 = b.link(a, d, 13.9, 2);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..4 {
+        w.spawn_with_route(vec![l1, l2]).unwrap();
+    }
+    // When they are admitted and drive
+    let mut lane_of: BTreeMap<(u64, LinkId), u8> = BTreeMap::new();
+    for _ in 0..200 {
+        step_checked(&mut w);
+        for l in [l1, l2] {
+            for v in w.link_vehicles(l) {
+                // Then a vehicle never changes lane while on a link
+                if let Some(prev) = lane_of.insert((v.trip_id, l), v.lane) {
+                    assert_eq!(prev, v.lane, "trip {} changed lane on {l:?}", v.trip_id);
+                }
+            }
+        }
+    }
+    // And entry alternates: empty lanes tie → lane 0, then the empty lane 1,
+    // then the lane whose tail is furthest ahead (tie → lowest)
+    let lanes: Vec<u8> = (0..4).map(|trip| lane_of[&(trip, l1)]).collect();
+    assert_eq!(lanes, vec![0, 1, 0, 1]);
+}
+
+// ─── 15 ───────────────────────────────────────────────────────────────────
+#[test]
+fn origin_admission_is_rate_limited_fifo_and_starts_at_rest() {
+    // Given an origin with a 4-lane link and ten waiting vehicles
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(500.0, 0.0);
+    let wide = b.link(o, a, 13.9, 4);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..10 {
+        w.spawn_with_route(vec![wide]).unwrap(); // trips 0..9
+    }
+
+    // When one tick runs, Then at most 2 are admitted, in FIFO order, at rest at s = 0
+    step_checked(&mut w);
+    let on = w.link_vehicles(wide);
+    assert_eq!(on.len(), 2);
+    let mut trips: Vec<u64> = on.iter().map(|v| v.trip_id).collect();
+    trips.sort_unstable();
+    assert_eq!(trips, vec![0, 1]);
+    assert!(on.iter().all(|v| v.s == 0.0 && v.v == 0.0));
+    assert_eq!(w.origin_buffer_len(o), 8);
+
+    // And never more than 2 per tick afterwards, always the oldest waiting trips
+    let mut prev = 2u64;
+    for _ in 0..60 {
+        step_checked(&mut w);
+        let admitted = 10 - w.origin_buffer_len(o) as u64;
+        assert!(admitted - prev <= 2);
+        prev = admitted;
+        let mut seen: Vec<u64> = w.link_vehicles(wide).iter().map(|v| v.trip_id).collect();
+        seen.extend(w.completed_log().iter().map(|c| c.trip_id));
+        seen.sort_unstable();
+        assert_eq!(seen, (0..admitted).collect::<Vec<_>>(), "admission not FIFO");
+    }
+
+    // Given a blocked first link: X and Y want `short` (lane capacity 1), Z wants `wide`
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(500.0, 0.0);
+    let s = b.node(0.0, 10.0);
+    let wide = b.link(o, a, 13.9, 4);
+    let short = b.link(o, s, 13.9, 1);
+    let mut w2 = World::new(b.build().unwrap());
+    w2.spawn_with_route(vec![short]).unwrap(); // X, trip 0
+    w2.spawn_with_route(vec![short]).unwrap(); // Y, trip 1
+    w2.spawn_with_route(vec![wide]).unwrap(); // Z, trip 2
+    step_checked(&mut w2);
+    // Then X enters, Y waits (blocked behind X), and Z is not blocked by Y
+    assert_eq!(w2.link_vehicles(short).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![0]);
+    assert_eq!(w2.link_vehicles(wide).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![2]);
+    assert_eq!(w2.origin_buffer_len(o), 1);
+}
+
+// ─── 16 ───────────────────────────────────────────────────────────────────
+#[test]
+fn sink_completion_does_not_consume_credit() {
+    // Given free-flowing 3-lane traffic into a 1-lane *final* link
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(500.0, 0.0);
+    let d = b.node(1000.0, 0.0);
+    let l1 = b.link(o, a, 13.9, 3);
+    let l2 = b.link(a, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    let mut start = 0;
+    for t in 0..1000u64 {
+        if t < 800 {
+            w.spawn_with_route(vec![l1, l2]).unwrap();
+        }
+        if t == 300 {
+            start = w.counts().completed;
+        }
+        step_checked(&mut w);
+    }
+    // When we count completions at the end of L2 over ticks 300..1000 (350 s)
+    let done = (w.counts().completed - start) as f64;
+    // Then they exceed what a credit-limited (0.5 veh/s) exit would allow
+    let credit_limited = SAT_FLOW_PER_LANE * 700.0 * DT;
+    assert!(done > 1.3 * credit_limited, "completions {done} look credit-limited (≤ {credit_limited})");
 }

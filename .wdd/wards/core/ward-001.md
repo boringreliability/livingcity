@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: []
 layer: "rust"
-estimated_tests: 12
+estimated_tests: 16
 created: "2026-10-06"
 completed: null
 ---
@@ -61,6 +61,10 @@ All in `crates/sim-core/tests/core_001_physics.rs` (Given/When/Then comments).
 | 10 | `conservation_holds_every_tick` | `spawned == active + completed + removed` and `active == on_network + waiting_at_origin` every tick of a mixed scenario |
 | 11 | `completion_logs_travel_time` | completed trips are logged with correct created/completed ticks, and they leave the network |
 | 12 | `merge_shares_capacity_round_robin` | two saturated feeders into one link: each gets 40–60 % of the merged flow over 10 minutes |
+| 13 | `lane_credit_limits_moving_platoon` | moving traffic denser than 0.5 veh/s at a 1-lane stop line: from the first exit, crossings ≤ 1 + 0.25·n over n ticks (credit cap 1.0, 0.25/tick) |
+| 14 | `lane_choice_prefers_most_room_and_vehicles_keep_lane` | entry into an empty 2-lane link alternates 0,1,0,1 per the lane-choice rule; no lane changes on a link |
+| 15 | `origin_admission_is_rate_limited_fifo_and_starts_at_rest` | ≤ 2 admissions per origin per tick, FIFO, at s = 0 and v = 0; a blocked first link blocks only later vehicles for the same link |
+| 16 | `sink_completion_does_not_consume_credit` | completions at the end of a 1-lane final link exceed 1.3 × the credit rate |
 
 ## Must NOT
 - No routing, demand, closures or RNG (later wards). No WASM/browser dependencies in `sim-core`.
@@ -81,11 +85,11 @@ cargo build -p sim-core --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core --test core_001_physics`
-   Expected: `test result: ok. 12 passed`
+   Expected: `test result: ok. 16 passed`
 2. Run: `cargo run -p sim-core --example bottleneck`
    Verify: the printed table (every 30 s sim time) shows the bottleneck link reaching its capacity first, then the upstream link filling, then the origin buffer growing. Discharged count per minute ≈ 30 for the 1-lane bottleneck.
 ### Pass criteria
-- [ ] All 12 tests pass
+- [ ] All 16 tests pass
 - [ ] Bottleneck example output shows spillback order: bottleneck → upstream → origin
 - [ ] `cargo clippy -p sim-core -- -D warnings` clean
 
