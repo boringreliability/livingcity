@@ -782,6 +782,8 @@ fn backlog_forced_decision_never_enters_closed_link() {
     assert!(s.forced_total >= 1, "no forced decision: {s:?}");
     let t = first_z_on_b1.expect("z vehicle reached B1");
     assert!(t < close_tick + 15, "waited at the closed stop line until its priority pass (tick {t})");
+    // (exact under the contract; independent reference: tick 33)
+    assert_eq!(t, 33);
     assert!(s.max_budgeted_in_a_tick <= REROUTE_BUDGET_PER_TICK);
 }
 
@@ -1032,3 +1034,136 @@ fn priority_drains_exactly_at_budget() {
     }
 }
 
+// ─── 27–30 ────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 2. Append to core_003_closures.rs (uses its helpers).
+
+/// zone z ─L0 (3000 m)→ p ─pj→ j, then j → m over A (direct) or B1, B2 (via k), then m ─Q→ d.
+/// Returns (network, [l0, pj, a, b1, b2, q]).
+fn split_net(a_len: f64, b_dy: f64, q_len: f64) -> (sim_core::Network, [LinkId; 6]) {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-3150.0, 0.0);
+    let p = b.node(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let k = b.node(a_len / 2.0, b_dy);
+    let m = b.node(a_len, 0.0);
+    let d = b.node(a_len + q_len, 0.0);
+    let l0 = b.link(z, p, 11.1, 2);
+    let pj = b.link(p, j, 11.1, 2);
+    let a = b.link(j, m, 13.9, 2);
+    let b1 = b.link(j, k, 13.9, 1);
+    let b2 = b.link(k, m, 13.9, 1);
+    let q = b.link(m, d, 11.1, 1);
+    (b.build().unwrap(), [l0, pj, a, b1, b2, q])
+}
+
+// ─── 27 ──────────────────────────────────────────────────────────────────
+#[test]
+fn periodic_reconsideration_reaches_vehicles_on_links() {
+    // Given 20 vehicles driving on L0 (270 s long) with routes over the slow B branch,
+    // while A is clearly better (A ≈ 73 s vs B ≈ 116 s, Q short)
+    let (net, [l0, pj, a, b1, b2, q]) = split_net(1000.0, 600.0, 100.0);
+    let mut w = World::new(net);
+    let ids: Vec<_> = (0..20).map(|_| w.spawn_with_route(vec![l0, pj, b1, b2, q]).unwrap()).collect();
+    // When their periodic due ticks (240 − trip_id) pass while they are on L0
+    for _ in 0..260 {
+        step_checked(&mut w);
+    }
+    // Then every one of them switched once, from L0's end, keeping L0 and pj
+    for id in ids {
+        let i = w.vehicle(id).unwrap();
+        assert_eq!(i.state, VehicleState::OnLink(l0), "premise: still on L0");
+        assert_eq!(i.route, vec![l0, pj, a, q], "trip {} not reconsidered en route", i.trip_id);
+        assert_eq!(i.route_switches, 1);
+    }
+}
+
+// ─── 28 ──────────────────────────────────────────────────────────────────
+#[test]
+fn shortest_route_respects_closures() {
+    let c = city();
+    let lm = c.landmarks;
+    let (west, east) = (c.zones[1].node, c.zones[4].node); // Old Town → Harbor Works
+    let mut w = world(&c);
+    // Given the open city, the best Old Town → Harbor Works route uses the central bridge
+    let (r0, _) = w.shortest_route(west, east).unwrap();
+    assert!(r0.contains(&lm.central_bridge[0]));
+    // When the central bridge closes, Then the route avoids it
+    w.schedule(close(lm.central_bridge[0], 0)).unwrap();
+    step_checked(&mut w);
+    let (r1, _) = w.shortest_route(west, east).unwrap();
+    assert!(!r1.contains(&lm.central_bridge[0]), "shortest_route ignores the closure: {r1:?}");
+    // When every west→east bridge link is closed, Then there is no route
+    let now = w.tick();
+    w.schedule(close(lm.north_bridge[0], now)).unwrap();
+    w.schedule(close(lm.south_bridge[0], now)).unwrap();
+    step_checked(&mut w);
+    assert!(w.shortest_route(west, east).is_none());
+    // And the other direction is unaffected
+    assert!(w.shortest_route(east, west).is_some());
+}
+
+// ─── 29 ──────────────────────────────────────────────────────────────────
+#[test]
+fn hysteresis_requires_both_conditions() {
+    // Case 1: saves ≥ 20 s but new ≥ 0.85 × current (a long common tail Q after the split):
+    // current ≈ 116.4 + 272.3, new ≈ 72.9 + 272.3 → ratio ≈ 0.89, gain ≈ 43 s ⇒ no switch
+    // Case 2: ratio < 0.85 but saves < 20 s (a short split):
+    // current ≈ 22.0 + 11.0, new ≈ 11.8 + 11.0 → ratio ≈ 0.69, gain ≈ 10 s ⇒ no switch
+    for (a_len, b_dy, q_len) in [(1000.0, 600.0, 3000.0), (150.0, 100.0, 100.0)] {
+        let (net, [l0, pj, _a, b1, b2, q]) = split_net(a_len, b_dy, q_len);
+        let mut w = World::new(net);
+        let ids: Vec<_> = (0..20).map(|_| w.spawn_with_route(vec![l0, pj, b1, b2, q]).unwrap()).collect();
+        for _ in 0..260 {
+            step_checked(&mut w);
+        }
+        for id in ids {
+            let i = w.vehicle(id).unwrap();
+            assert_eq!(i.state, VehicleState::OnLink(l0), "premise: still on L0");
+            assert_eq!(i.route, vec![l0, pj, b1, b2, q], "case {a_len}: switched with only one condition met");
+            assert_eq!(i.route_switches, 0);
+        }
+        assert_eq!(w.reroute_stats().switches_total, 0);
+        assert!(w.reroute_stats().budgeted_total >= 20, "premise: all were reconsidered");
+    }
+}
+
+// ─── 30 ──────────────────────────────────────────────────────────────────
+#[test]
+fn retry_stats_count_attempts_outside_the_budget() {
+    // Given the test-16 corridor: L2 closes at ct and reopens at ct + 90
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let a = b.node(300.0, 0.0);
+    let d = b.node(600.0, 0.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let l1 = b.link(j, a, 13.9, 1);
+    let l2 = b.link(a, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..12 {
+        w.spawn_with_route(vec![zj, l1, l2]).unwrap();
+    }
+    for _ in 0..80 {
+        step_checked(&mut w);
+    }
+    let ct = w.tick();
+    w.schedule(close(l2, ct)).unwrap();
+    w.schedule(open(l2, ct + 90)).unwrap();
+    step_checked(&mut w);
+    let n = w.metrics().stranded + w.metrics().no_route;
+    assert!(n >= 3, "premise");
+    while w.tick() < ct + 120 {
+        step_checked(&mut w);
+    }
+    let before = w.reroute_stats();
+    // When the successful retry happens (ct + 120; no periodic reroute is due at that tick)
+    step_checked(&mut w);
+    let after = w.reroute_stats();
+    // Then retries_total counts attempts (failed at ct + 60, successful at ct + 120) ...
+    assert_eq!(before.retries_total, n);
+    assert_eq!(after.retries_total, 2 * n, "retries_total must count successful attempts too");
+    // ... and retries spend no budget
+    assert_eq!(after.budgeted_total, before.budgeted_total, "retries consumed reroute budget");
+    assert_eq!(w.metrics().stranded + w.metrics().no_route, 0);
+}
