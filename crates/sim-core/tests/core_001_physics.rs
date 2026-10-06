@@ -339,7 +339,7 @@ fn discharge_rate_bounded_by_saturation_flow() {
         let max = lanes as f64 * SAT_FLOW_PER_LANE * t_s;
         assert!(passed <= max + lanes as f64, "lanes={lanes}: {passed} > {max}");
         assert!(passed >= 0.9 * max, "lanes={lanes}: {passed} < 90% of {max}");
-        // And L1 was still queued at the end (the window was saturated)
+        // And demand still exceeded supply at the end (origin buffer non-empty)
         assert!(w.origin_buffer_len(o) > 0);
     }
 }
@@ -737,6 +737,28 @@ fn origin_admission_is_rate_limited_fifo_and_starts_at_rest() {
     assert_eq!(w2.link_vehicles(short).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![0]);
     assert_eq!(w2.link_vehicles(wide).iter().map(|v| v.trip_id).collect::<Vec<_>>(), vec![2]);
     assert_eq!(w2.origin_buffer_len(o), 2);
+
+    // Given two origins, each with its own 4-lane link and 3 waiting vehicles
+    let mut b = NetworkBuilder::new();
+    let o1 = b.node(0.0, 0.0);
+    let d1 = b.node(500.0, 0.0);
+    let o2 = b.node(0.0, 100.0);
+    let d2 = b.node(500.0, 100.0);
+    let l1 = b.link(o1, d1, 13.9, 4);
+    let l2 = b.link(o2, d2, 13.9, 4);
+    let mut w3 = World::new(b.build().unwrap());
+    for _ in 0..3 {
+        w3.spawn_with_route(vec![l1]).unwrap();
+    }
+    for _ in 0..3 {
+        w3.spawn_with_route(vec![l2]).unwrap();
+    }
+    step_checked(&mut w3);
+    // Then each origin admits its own 2 (the budget is not shared across origins)
+    assert_eq!(
+        (w3.link_count(l1), w3.link_count(l2), w3.origin_buffer_len(o1), w3.origin_buffer_len(o2)),
+        (2, 2, 1, 1)
+    );
 }
 
 // ─── 16 ───────────────────────────────────────────────────────────────────
@@ -858,6 +880,7 @@ fn merging_moving_traffic_never_overlaps() {
     // the merge link *moving* (not only from standstill), so downstream tails
     // are sometimes already moved this tick or limited by their own leader
     let mut configs = 0;
+    for &lanes_a in &[1u8, 2u8] {
     for &len_a in &[100.0, 200.0, 300.0] {
         for &len_b in &[100.0, 205.0, 300.0] {
             for &len_m in &[30.0, 60.0] {
@@ -871,7 +894,7 @@ fn merging_moving_traffic_never_overlaps() {
                             let ob = b.node(len_a, len_b);
                             let x = b.node(len_a + len_m, 0.0);
                             let y = b.node(len_a + len_m + 500.0, 0.0);
-                            let la = b.link(oa, m, 13.9, 1);
+                            let la = b.link(oa, m, 13.9, lanes_a);
                             let lb = b.link(ob, m, 13.9, 1);
                             let lm = b.link(m, x, 13.9, lanes_m);
                             let ly = b.link(x, y, 13.9, 3);
@@ -887,7 +910,7 @@ fn merging_moving_traffic_never_overlaps() {
                                 }
                                 w.step();
                                 // Then no two vehicles in a lane are ever closer than 7.5 m
-                                let ctx = format!("A={len_a} B={len_b} M={len_m} lanes={lanes_m} pa={pa} pb={pb} t={t}");
+                                let ctx = format!("lanesA={lanes_a} A={len_a} B={len_b} M={len_m} lanes={lanes_m} pa={pa} pb={pb} t={t}");
                                 assert_lane_spacing(&w, &links, &ctx);
                                 if let Err(e) = w.check_invariants() {
                                     panic!("{ctx}: {e}");
@@ -899,5 +922,6 @@ fn merging_moving_traffic_never_overlaps() {
             }
         }
     }
-    assert_eq!(configs, 324);
+    }
+    assert_eq!(configs, 648);
 }

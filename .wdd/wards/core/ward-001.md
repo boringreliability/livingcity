@@ -63,11 +63,11 @@ All in `crates/sim-core/tests/core_001_physics.rs` (Given/When/Then comments).
 | 12 | `merge_shares_capacity_round_robin` | two saturated feeders into one link, plus a third in-link whose trips end at the merge node: each feeder gets 40–60 % over 10 minutes (completions don't advance `rr_next`) |
 | 13 | `lane_credit_limits_moving_platoon` | moving traffic denser than 0.5 veh/s at a 1-lane stop line: from the first exit, crossings ≤ 1 + 0.25·n over n ticks (credit cap 1.0, 0.25/tick) |
 | 14 | `lane_choice_prefers_most_room_and_vehicles_keep_lane` | asymmetric arrivals (ticks 0,0,5,12) give lanes 0,1,0,1, which distinguishes "tail furthest ahead" from "lowest feasible lane"; no lane changes (also checked under congestion in test 5) |
-| 15 | `origin_admission_is_rate_limited_fifo_and_starts_at_rest` | ≤ 2 admissions per **origin** (not per link) per tick, FIFO, at s = 0 and v = 0; a blocked first link blocks only later vehicles for the same link |
+| 15 | `origin_admission_is_rate_limited_fifo_and_starts_at_rest` | ≤ 2 admissions per **origin** (not per link, not shared across origins) per tick, FIFO, at s = 0 and v = 0; a blocked first link blocks only later vehicles for the same link |
 | 16 | `sink_completion_does_not_consume_credit` | free-flowing feed (asserted) into a 1-lane final link: completions exceed 1.3 × the credit rate |
 | 17 | `empty_lanes_bank_credit` | a lone cruising vehicle crosses a 10 m link without slowing below 5 m/s, travel exactly 152 ticks (credit banked while the lane was empty) |
 | 18 | `speed_limit_change_along_route` | 13.9 → 8.0 m/s route: never above the current link's limit; completes at tick 85 |
-| 19 | `merging_moving_traffic_never_overlaps` | property test over 324 deterministic two-feeder merge configurations with moving entries: independent ≥ 7.5 m lane spacing check + invariants every tick (covers both `tail_guaranteed` guard clauses) |
+| 19 | `merging_moving_traffic_never_overlaps` | property test over 648 deterministic two-feeder merge configurations (incl. a 2-lane feeder) with moving entries: independent ≥ 7.5 m lane spacing check + invariants every tick (covers both `tail_guaranteed` guard clauses) |
 
 ## Must NOT
 - No routing, demand, closures or RNG (later wards). No WASM/browser dependencies in `sim-core`.
