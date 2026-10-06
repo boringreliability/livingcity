@@ -1065,7 +1065,7 @@ fn periodic_reconsideration_reaches_vehicles_on_links() {
     let (net, [l0, pj, a, b1, b2, q]) = split_net(1000.0, 600.0, 100.0);
     let mut w = World::new(net);
     let ids: Vec<_> = (0..20).map(|_| w.spawn_with_route(vec![l0, pj, b1, b2, q]).unwrap()).collect();
-    // When their periodic due ticks (240 − trip_id) pass while they are on L0
+    // When their periodic due ticks ((t + trip_id) % 240 == 0, i.e. 240 − trip_id, or 0 and 240 for trip 0) pass while they are on L0
     for _ in 0..260 {
         step_checked(&mut w);
     }
@@ -1166,4 +1166,118 @@ fn retry_stats_count_attempts_outside_the_budget() {
     // ... and retries spend no budget
     assert_eq!(after.budgeted_total, before.budgeted_total, "retries consumed reroute budget");
     assert_eq!(w.metrics().stranded + w.metrics().no_route, 0);
+}
+
+
+// ─── 31–32 ────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 3. Append to core_003_closures.rs (uses its helpers,
+// including `split_net` from tests 27–30).
+
+// ─── 31 ──────────────────────────────────────────────────────────────────
+#[test]
+fn reopen_is_picked_up_by_staggered_periodic_reconsideration() {
+    // Given 20 vehicles driving on L0 (270 s long) towards the split, A clearly better than B
+    let (net, [l0, pj, a, b1, b2, q]) = split_net(1000.0, 600.0, 100.0);
+    let mut w = World::new(net);
+    let ids: Vec<_> = (0..20).map(|_| w.spawn_with_route(vec![l0, pj, a, q]).unwrap()).collect();
+    while w.vehicle_ids().iter().any(|&id| w.vehicle(id).unwrap().state == VehicleState::WaitingAtOrigin) {
+        step_checked(&mut w);
+    }
+    assert!(w.tick() <= 50, "premise: admitted by tick 50 (tick {})", w.tick());
+    // When A closes at tick 50 (priority reroute onto B) and reopens at tick 60
+    w.schedule(close(a, 50)).unwrap();
+    w.schedule(open(a, 60)).unwrap();
+    let mut back_on_a: Vec<Option<u64>> = vec![None; ids.len()];
+    let mut budgeted_before_open = 0;
+    while w.tick() < 262 {
+        let t = w.tick();
+        if t == 60 {
+            budgeted_before_open = w.reroute_stats().budgeted_total;
+        }
+        step_checked(&mut w);
+        if t == 60 {
+            // Then the reopening itself forces nothing: no reroute, no switch, no budget
+            assert_eq!(w.reroute_stats().budgeted_total, budgeted_before_open, "OpenLink forced reroutes");
+            assert_eq!(w.reroute_stats().switches_total, 20);
+        }
+        for (k, &id) in ids.iter().enumerate() {
+            let i = w.vehicle(id).unwrap();
+            assert_eq!(i.state, VehicleState::OnLink(l0), "premise: still on L0");
+            if t == 55 {
+                assert_eq!(i.route, vec![l0, pj, b1, b2, q], "premise: priority reroute onto B");
+            }
+            if i.route == vec![l0, pj, a, q] && t > 50 && back_on_a[k].is_none() {
+                back_on_a[k] = Some(t);
+            }
+        }
+    }
+    // And each vehicle returns to A exactly at its own staggered due tick (t + trip_id) % 240 == 0
+    for (k, &id) in ids.iter().enumerate() {
+        let i = w.vehicle(id).unwrap();
+        let t = back_on_a[k].unwrap_or_else(|| panic!("trip {} never returned to A", i.trip_id));
+        assert_eq!((t + i.trip_id) % sim_core::params::REROUTE_PERIOD_TICKS, 0, "trip {} switched at tick {t}", i.trip_id);
+        assert!(t > 60, "trip {} switched before the reopening (tick {t})", i.trip_id);
+        assert_eq!(i.route_switches, 2);
+    }
+    // And the returns are spread over distinct ticks (staggered), not one wave
+    let distinct: BTreeSet<u64> = back_on_a.iter().map(|t| t.unwrap()).collect();
+    assert_eq!(distinct.len(), ids.len());
+}
+
+// ─── 32 ──────────────────────────────────────────────────────────────────
+#[test]
+fn stranded_keeps_route_and_noroute_route_is_empty() {
+    // Given the test-16 corridor with 12 vehicles driving and 3 still waiting at the origin
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let a = b.node(300.0, 0.0);
+    let d = b.node(600.0, 0.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let l1 = b.link(j, a, 13.9, 1);
+    let l2 = b.link(a, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..12 {
+        w.spawn_with_route(vec![zj, l1, l2]).unwrap();
+    }
+    for _ in 0..80 {
+        step_checked(&mut w);
+    }
+    let late: Vec<_> = (0..3).map(|_| w.spawn_with_route(vec![zj, l1, l2]).unwrap()).collect();
+    // When L2 (the only way on) closes now and reopens 90 ticks later
+    let ct = w.tick();
+    w.schedule(close(l2, ct)).unwrap();
+    w.schedule(open(l2, ct + 90)).unwrap();
+    step_checked(&mut w);
+    // Then stranded vehicles keep their old route, and NoRoute vehicles at the origin have an empty route
+    let stranded: Vec<_> = w.vehicle_ids().into_iter().filter(|&id| w.vehicle(id).unwrap().stranded).collect();
+    assert!(stranded.len() >= 3, "premise");
+    for &id in &stranded {
+        let i = w.vehicle(id).unwrap();
+        assert_eq!(i.route, vec![zj, l1, l2], "stranded trip {} lost its route", i.trip_id);
+    }
+    for &id in &late {
+        let i = w.vehicle(id).unwrap();
+        assert_eq!(i.state, VehicleState::NoRoute);
+        assert!(i.route.is_empty(), "NoRoute trip {} has route {:?}", i.trip_id, i.route);
+    }
+    // And after the successful retry (ct + 120) a switch is counted only where the route vector changed:
+    // stranded vehicles resume the same route (0 switches), NoRoute vehicles go from [] to a route (1)
+    while w.tick() <= ct + 120 {
+        step_checked(&mut w);
+    }
+    for &id in &stranded {
+        let i = w.vehicle(id).unwrap();
+        assert!(!i.stranded);
+        assert_eq!(i.route, vec![zj, l1, l2]);
+        assert_eq!(i.route_switches, 0, "trip {}: unchanged route counted as a switch", i.trip_id);
+    }
+    for &id in &late {
+        let i = w.vehicle(id).unwrap();
+        assert!(!matches!(i.state, VehicleState::NoRoute), "not resumed on the successful retry");
+        assert_eq!(i.route, vec![zj, l1, l2]);
+        assert_eq!(i.route_switches, 1, "trip {}: [] → route not counted", i.trip_id);
+    }
+    assert_eq!(w.reroute_stats().switches_total, 3);
 }
