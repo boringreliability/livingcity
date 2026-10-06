@@ -3,10 +3,10 @@ ward: 4
 revision: null
 name: "WASM worker bridge"
 epic: "core"
-status: "red"
+status: "approved"
 dependencies: ["core-003"]
 layer: "typescript"
-estimated_tests: 35
+estimated_tests: 39
 created: "2026-10-06"
 completed: null
 ---
@@ -41,7 +41,7 @@ Carry the Rust simulation into the browser without per-vehicle calls or per-fram
   - `report(ticks, elapsedMs)`;
   - `status()` gives `{ running, multiplier, targetTicksPerS, achievedTicksPerS, behind, executedTicks, simTimeS, backlogTicks }`.
   - `achievedTicksPerS` = ticks reported at times in `(now − 1 s, now]` per second.
-  - `behind` is **always false while paused**. While running it is true if **either** (a) the backlog was clamped at the cap within the last 1 s (a sticky event that expires 1 s after the last clamp), **or** (b) at least 1 s has run since the last start/resume or speed change and achieved < 90 % of target. This gives a 1 s grace after start, resume and speed changes. The grace applies **only to (b)**: a cap clamp is always reported. A clamp caused only by lowering the speed (the existing backlog exceeds the new, smaller cap) is not a cap event. `setSpeed` first credits the wall time elapsed since the last plan at the old speed, then switches. The grace for the first start counts from `setRunning(true)`, not from construction.
+  - `behind` is **always false while paused**. While running it is true if **either** (a) the backlog was clamped at the cap within the last 1 s (a sticky event that expires 1 s after the last clamp), **or** (b) at least 1 s has run since the last start/resume or speed change and achieved < 90 % of target. This gives a 1 s grace after start, resume and speed changes. The grace applies **only to (b)**: a cap clamp is always reported. `setSpeed` first credits the wall time elapsed since the last plan or speed change at the **old** speed (clamping at the old cap: such a clamp **is** a cap event), then switches. If the backlog then exceeds the new, smaller cap, it is clamped to the new cap at once. That clamp is **not** a cap event, and (user decision 2026-10-06, option ii) **no clamp is a cap event until a plan has left the backlog below the new cap**, so lowering the speed never makes `behind` blink. Real cap events after that point are reported as usual. `setRunning(true)` while already running is a no-op (no grace reset). The grace for the first start counts from `setRunning(true)`, not from construction.
   - `setSpeed` with a non-finite or ≤ 0 multiplier is ignored.
   - **No silent skipping:** sim time is always executed ticks × DT, never wall time.
 - `src/sim/host.ts`: `createSimHost(deps)` holds the worker logic without `self`:
@@ -89,6 +89,10 @@ Carry the Rust simulation into the browser without per-vehicle calls or per-fram
 | 30 | `G10 frames stay >= 16 ms apart with a jittered loop and after a stall` (Vitest) | `lastPost = now`: every gap ≥ 16 ms, no burst after a stall, ~60 fps after it |
 | 31 | `G4b paused frames show the unchanged state…` (Vitest) | a close issued while paused is not in `closed` until resumed |
 | 32 | `G6b iterating before init posts nothing at all` (Vitest) | no frames/errors from `iterate()` before init |
+| 33 | `G11 lowering the speed clamps the backlog to the new cap at once…` (Vitest) | 60× → 1× while behind: the backlog is clamped to the 1× cap at once; the old backlog is not worked off |
+| 34 | `G12 a cap clamp is reported even inside the grace period…` (Vitest) | a stall clamp during a speed change is behind at once and for 1 s |
+| 35 | `G13 setSpeed credits the time since the last plan at the old speed` (Vitest) | 200 ms at 1× = 0.4 ticks; 200 ms at 60× = 24 ticks, clamped to the 1× cap |
+| 36 | `G11b lowering the speed while lagging shows no behind…` (Vitest) | option (ii): no blink after lowering the speed |
 | 11 | `frame payload is proportional` (Vitest) | `vehicles.byteLength == count × 16`; link stats length == number of links; no JSON in frame messages (structured-clone-safe typed arrays only) |
 
 ## Must NOT
