@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 
+use crate::demand::{DemandError, DemandModel};
 use crate::network::{LinkId, Network, NodeId};
 use crate::params::{
     ACCEL, DT, JAM_SPACING, LANE_CREDIT_CAP, LANE_CREDIT_PER_TICK, ORIGIN_ADMIT_PER_TICK,
@@ -27,6 +28,7 @@ pub struct Counts {
     pub active: u64,
     pub on_network: u64,
     pub waiting_at_origin: u64,
+    pub no_route: u64,
     pub completed: u64,
     pub removed: u64,
 }
@@ -36,6 +38,65 @@ pub struct CompletedTrip {
     pub trip_id: u64,
     pub created_tick: u64,
     pub completed_tick: u64,
+}
+
+/// A demand-generated trip (explicit spawns are not demand).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeneratedTrip {
+    pub trip_id: u64,
+    pub flow_index: usize,
+    pub origin: NodeId,
+    pub dest: NodeId,
+    pub created_tick: u64,
+}
+
+/// Everything needed to build a world that runs by itself.
+#[derive(Clone, Debug)]
+pub struct Scenario {
+    pub network: Network,
+    pub demand: DemandModel,
+    pub demand_seed: u64,
+    pub behavior_seed: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VehicleState {
+    WaitingAtOrigin,
+    OnLink(LinkId),
+    NoRoute,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VehicleInfo {
+    pub trip_id: u64,
+    pub route: Vec<LinkId>,
+    pub route_pos: usize,
+    pub state: VehicleState,
+    pub speed_factor: f64,
+    pub lane: u8,
+    pub s: f64,
+    pub v: f64,
+    pub created_tick: u64,
+}
+
+/// The metric set shown in the UI; definitions in the model contract.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Metrics {
+    pub tick: u64,
+    pub sim_time_s: f64,
+    pub trips_generated: u64,
+    pub spawned: u64,
+    pub active: u64,
+    pub on_network: u64,
+    pub waiting_at_origin: u64,
+    pub no_route: u64,
+    pub queued: u64,
+    pub completed: u64,
+    pub removed_unreachable: u64,
+    pub unreachable: u64,
+    pub mean_travel_time_s: Option<f64>,
+    pub incomplete: u64,
+    pub mean_incomplete_age_s: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,7 +112,7 @@ pub enum SpawnError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VehicleState {
+enum Phase {
     WaitingAtOrigin,
     OnLink,
 }
@@ -61,7 +122,7 @@ struct Vehicle {
     trip_id: u64,
     route: Vec<LinkId>,
     route_pos: usize,
-    state: VehicleState,
+    state: Phase,
     lane: u8,
     s: f64,
     v: f64,
@@ -133,6 +194,46 @@ impl World {
         &self.network
     }
 
+    pub fn from_scenario(_scenario: Scenario) -> Result<World, DemandError> {
+        todo!()
+    }
+
+    pub fn generated_trips(&self) -> &[GeneratedTrip] {
+        todo!()
+    }
+
+    /// Current smoothed cost of a link (s); changes only at epoch boundaries.
+    pub fn link_cost(&self, _link: LinkId) -> f64 {
+        todo!()
+    }
+
+    pub fn cost_epoch(&self) -> u64 {
+        todo!()
+    }
+
+    /// Best route under current costs and its cost (s), or None if unreachable.
+    pub fn shortest_route(&self, _from: NodeId, _to: NodeId) -> Option<(Vec<LinkId>, f64)> {
+        todo!()
+    }
+
+    pub fn vehicle(&self, _id: VehicleId) -> Option<VehicleInfo> {
+        todo!()
+    }
+
+    /// Live vehicles, ascending.
+    pub fn vehicle_ids(&self) -> Vec<VehicleId> {
+        todo!()
+    }
+
+    pub fn metrics(&self) -> Metrics {
+        todo!()
+    }
+
+    /// Mean travel time (s) of trips with `completed_tick` in `[from_tick, to_tick)`.
+    pub fn mean_travel_time_s_between(&self, _from_tick: u64, _to_tick: u64) -> Option<f64> {
+        todo!()
+    }
+
     pub fn tick(&self) -> u64 {
         self.tick
     }
@@ -146,7 +247,7 @@ impl World {
             trip_id: self.next_trip_id,
             route,
             route_pos: 0,
-            state: VehicleState::WaitingAtOrigin,
+            state: Phase::WaitingAtOrigin,
             lane: 0,
             s: 0.0,
             v: 0.0,
@@ -253,7 +354,7 @@ impl World {
     fn place_on_link(&mut self, slot: u32, link: LinkId, lane: u8, s: f64, v: f64) {
         let tick = self.tick;
         let veh = self.veh_mut(slot);
-        veh.state = VehicleState::OnLink;
+        veh.state = Phase::OnLink;
         veh.lane = lane;
         veh.s = s;
         veh.v = v;
@@ -414,6 +515,7 @@ impl World {
             active: on_network + waiting,
             on_network,
             waiting_at_origin: waiting,
+            no_route: 0,
             completed: self.completed,
             removed: self.removed,
         }
@@ -469,7 +571,7 @@ impl World {
                     let v = self.slots[slot as usize]
                         .as_ref()
                         .ok_or_else(|| format!("{:?} lane {lane} holds freed slot {slot}", link.id))?;
-                    if v.state != VehicleState::OnLink || v.current_link() != link.id || v.lane as usize != lane {
+                    if v.state != Phase::OnLink || v.current_link() != link.id || v.lane as usize != lane {
                         return Err(format!("slot {slot} misplaced on {:?} lane {lane}", link.id));
                     }
                     if !(v.s.is_finite() && v.v.is_finite()) {
@@ -495,7 +597,7 @@ impl World {
                 let v = self.slots[slot as usize]
                     .as_ref()
                     .ok_or_else(|| format!("origin {n} holds freed slot {slot}"))?;
-                if v.state != VehicleState::WaitingAtOrigin {
+                if v.state != Phase::WaitingAtOrigin {
                     return Err(format!("slot {slot} in origin buffer but not waiting"));
                 }
             }

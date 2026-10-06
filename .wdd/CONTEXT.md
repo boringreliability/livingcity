@@ -44,4 +44,4 @@
 
 ## What Comes Next
 - core-002 Red: write tests per `.wdd/wards/core/ward-002.md` → Red gate.
-- Then core-002 Gold, and after it core-003 (demand/routing/metrics), core-003 (closures/commands/determinism + three_bridges city), core-004 (WASM worker bridge), core-005 (WebGL2 + React, first closure in the browser).
+- Then core-002 Gold, and after it core-003 (closures/commands/determinism + three_bridges city), core-004 (WASM worker bridge), core-005 (WebGL2 + React, first closure in the browser).

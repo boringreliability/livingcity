@@ -68,14 +68,21 @@ This is a deliberately simplified, coherent mesoscopic/microscopic hybrid. It is
 Queue spillback emerges from rule 4: a full downstream link stops the front vehicle, followers stack at `JAM_SPACING`, the link fills, and its upstream feeder then cannot discharge.
 
 ### Demand (`sim_core::demand`)
-- `DemandModel { flows: Vec<OdFlow { origin, dest, veh_per_hour }>, profile: piecewise-linear multiplier over sim seconds }`.
-- For tick `t`, flow `i`: `expected = veh_per_hour/3600 × DT × profile(t)`. Count = `floor(expected)` + Bernoulli(`frac(expected)`), with the uniform drawn from a **counter-based** generator `splitmix64(mix(demand_seed, t, i))`. No transcendental functions, so it is bit-identical native vs. WASM.
+- `DemandModel { flows: Vec<OdFlow { origin, dest, veh_per_hour }>, profile: Profile }`. A flow's origin must be a zone or a source node, `origin != dest`, and `veh_per_hour` is finite and ≥ 0 (`DemandModel::validate`).
+- `Profile`: points `(sim_s, multiplier)` with strictly increasing times and finite multipliers ≥ 0. Empty means constant 1.0. Before the first point it takes the first multiplier, after the last the last, and in between `m0 + (m1 − m0) × (t − t0) / (t1 − t0)`. It is evaluated at **sim seconds** `t = tick × DT`.
+- For tick `t`, flow `i`: `expected = veh_per_hour / 3600.0 * DT * profile(t × DT)`. Count = `floor(expected)` + (1 if `unit_f64(splitmix64(mix3(demand_seed, t, i))) < expected − floor(expected)`). The requests come out in flow order, then copy index.
+- RNG primitives (`sim_core::rng`): `splitmix64(x)` (standard: `z = x + 0x9E3779B97F4A7C15; z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9; z = (z ^ (z >> 27)) * 0x94D049BB133111EB; z ^ (z >> 31)`, wrapping), `mix3(a, b, c) = splitmix64(splitmix64(splitmix64(a) ^ b) ^ c)`, `unit_f64(x) = (x >> 11) as f64 × 2⁻⁵³`. `BehaviorRng { state }`: `next_u64` does `state += 0x9E3779B97F4A7C15` and returns the splitmix64 output mix of the new state. No transcendental functions anywhere, so native ≡ WASM bit for bit.
 - Demand is therefore a pure function of `(model, demand_seed, tick)` and **cannot be affected by world state or interventions**. Trip IDs are assigned in generation order, so they are identical across branches.
-- Behavior randomness (`speed_factor`, etc.) comes from a separate stateful `behavior_rng` stored in `World`.
+- Behavior randomness comes from a separate stateful `BehaviorRng` stored in `World`, seeded by `behavior_seed`. Each demand vehicle draws `speed_factor = 0.9 + 0.2 × next_f64()` at spawn. Explicit `spawn_with_route` vehicles keep `speed_factor = 1.0` and draw nothing.
 
 ### Routing (`sim_core::routing`)
-- Link cost (seconds) = `max(free_flow, smoothed)`, where `free_flow = length / vmax + 1 / (lanes × SAT_FLOW_PER_LANE)`. At each epoch: `observed = max(mean traversal time of vehicles that left the link this epoch (if any), queue_term)`, with `queue_term = vehicles on link / (lanes × SAT_FLOW_PER_LANE) + length / vmax`. `smoothed ← α × observed + (1 − α) × smoothed`. A closed link has infinite cost (excluded).
-- Router: reverse Dijkstra from each destination over current costs, with integer-millisecond keys and tie-break on lower link ID. Shortest-path trees are cached per `(dest, cost_epoch)`. The cache is a **pure function of snapshot state** (costs + closure set + epoch), so restore can drop it and rebuild deterministically.
+- Link cost (seconds) = `max(free_flow, smoothed)`, where `free_flow = length / vmax + 1.0 / (lanes × SAT_FLOW_PER_LANE)` and `smoothed` starts at `free_flow`.
+- Every exit from a link (transfer or completion) adds `(tick − link_enter_tick) × DT` to that link's epoch accumulator (sum + count).
+- In tick step 3, when `tick > 0 && tick % COST_EPOCH_TICKS == 0`, for every link: `queue_term = length / vmax + queued_on_link / (lanes × SAT_FLOW_PER_LANE)`, where `queued_on_link` counts vehicles on the link with `v < QUEUED_SPEED` (state as left by the previous tick). `observed = max(sum / count, queue_term)` if count > 0, else `queue_term`. Then `smoothed = COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * smoothed`, the accumulators reset, and after all links `cost_epoch += 1`.
+- **Only queued vehicles count in `queue_term`.** Counting all vehicles would make a busy free-flowing road look congested (a 100 s road at 0.5 veh/s holds ≈ 50 moving vehicles, which would double its cost), and routing would shun main roads for no reason.
+- A closed link has infinite cost (excluded, core-003).
+- **Router**: for destination `d`, Dijkstra over **reversed** links on integer keys `key(l) = (cost(l) × 1000).round() as u64` gives `dist_ms[u]`. Node `u ≠ d` is only expanded (its in-links relaxed) if `u` is not a zone, so no path passes through a zone (origin and destination may be zones). Next hop of `u` = the out-link `l` (ascending id; skip links whose `to` is a non-destination zone) minimizing `key(l) + dist_ms[l.to]`, where strictly smaller wins, so ties go to the lower link id. The route is built by following next hops. Its reported cost is `dist_ms[origin] as f64 / 1000.0`.
+- Trees (`dist_ms`, `next_hop`) are cached per destination and dropped when `cost_epoch` changes (and on closure changes). The cache is a **pure function of snapshot state** (costs + closure set + epoch), so restore can drop it and rebuild deterministically. It is excluded from `state_hash`.
 - A route is computed at spawn (from the origin), at periodic reconsideration and when forced. A vehicle is always committed to its current link: new routes start at the current link's `to` node (a **valid decision point**). A waiting origin vehicle routes from its origin.
 
 ### Closures and rerouting
@@ -91,12 +98,12 @@ Queue spillback emerges from rule 4: a full downstream link stops the front vehi
 - `World` is plain data: `Clone`, no `Rc`, no globals, no wall clock. This prepares snapshots (epic `timeline`).
 
 ### Metrics (definitions shown in UI later)
-- **Active** = on network + waiting at origin + NoRoute (spawned, not yet finished).
+- **Active** = on network + waiting at origin + NoRoute (spawned, not yet finished). A NoRoute vehicle in an origin buffer counts as NoRoute, not as waiting.
 - **Queued** = vehicles **on the network** with `v < QUEUED_SPEED` (2 m/s ≈ 7 km/h), i.e. stopped or crawling.
 - **Completed**, plus a trip log `(trip_id, created_tick, completed_tick)`. **Mean travel time** = mean of `(completed − created) × DT` over a chosen window (default: since start). Waiting at the origin counts as travel time.
 - **Unreachable** = `removed_unreachable` + currently `NoRoute`.
 - **Incomplete** = active trips with their current age (for fair comparisons).
-- Conservation: `trips_generated == active + completed + removed` **at every tick**.
+- Conservation: `spawned == active + completed + removed` **at every tick** (`spawned` = demand trips + explicit spawns; `trips_generated` = demand trips only).
 
 ### Frame / boundary format (core-004)
 - Per vehicle, 16 bytes: `link_id: u32`, `s: f32` (m), `v: f32` (m/s), `flags: u32` (bit0 queued, bit1 on closed link, bit2 NoRoute, bits 8..15 lane index). There are **no x/y or screen coordinates from Rust**. The renderer maps link + s → world → screen.
