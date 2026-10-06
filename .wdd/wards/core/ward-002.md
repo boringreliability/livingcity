@@ -3,7 +3,7 @@ ward: 2
 revision: null
 name: "Demand, routing and metrics"
 epic: "core"
-status: "approved"
+status: "gold"
 dependencies: ["core-001"]
 layer: "rust"
 estimated_tests: 24

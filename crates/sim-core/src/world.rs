@@ -3,11 +3,14 @@
 
 use std::collections::VecDeque;
 
-use crate::demand::{DemandError, DemandModel};
+use crate::demand::{trips_at, DemandError, DemandModel};
 use crate::network::{LinkId, Network, NodeId};
 use crate::params::{
-    ACCEL, DT, JAM_SPACING, LANE_CREDIT_CAP, LANE_CREDIT_PER_TICK, ORIGIN_ADMIT_PER_TICK,
+    ACCEL, COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, JAM_SPACING, LANE_CREDIT_CAP, LANE_CREDIT_PER_TICK,
+    ORIGIN_ADMIT_PER_TICK, QUEUED_SPEED, SAT_FLOW_PER_LANE,
 };
+use crate::rng::BehaviorRng;
+use crate::routing::{cost_key, free_flow_cost, RouterCache, Tree};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VehicleId(pub u32);
@@ -115,6 +118,8 @@ pub enum SpawnError {
 enum Phase {
     WaitingAtOrigin,
     OnLink,
+    /// No route exists; waits in place (retry/removal: core-003).
+    NoRoute,
 }
 
 #[derive(Clone, Debug)]
@@ -158,12 +163,36 @@ pub struct World {
     completed: u64,
     removed: u64,
     completed_log: Vec<CompletedTrip>,
+    demand: DemandModel,
+    demand_seed: u64,
+    behavior_rng: BehaviorRng,
+    generated: Vec<GeneratedTrip>,
+    free_flow: Vec<f64>,
+    /// Current link cost (s), ≥ free flow; changes only at epoch boundaries.
+    smoothed: Vec<f64>,
+    cost_keys: Vec<u64>,
+    exit_time_sum: Vec<f64>,
+    exit_time_n: Vec<u64>,
+    cost_epoch: u64,
+    /// Derived from costs + epoch (+ closures); rebuildable, not sim state.
+    router: RouterCache,
 }
 
 const NOT_MOVED: u64 = u64::MAX;
 
 impl World {
     pub fn new(network: Network) -> Self {
+        Self::from_parts(network, DemandModel::default(), 0, 0)
+    }
+
+    pub fn from_scenario(scenario: Scenario) -> Result<World, DemandError> {
+        scenario.demand.validate(&scenario.network)?;
+        Ok(Self::from_parts(scenario.network, scenario.demand, scenario.demand_seed, scenario.behavior_seed))
+    }
+
+    fn from_parts(network: Network, demand: DemandModel, demand_seed: u64, behavior_seed: u64) -> Self {
+        let free_flow: Vec<f64> = network.links().iter().map(free_flow_cost).collect();
+        let cost_keys = free_flow.iter().map(|&c| cost_key(c)).collect();
         let lanes = network
             .links()
             .iter()
@@ -187,6 +216,17 @@ impl World {
             completed: 0,
             removed: 0,
             completed_log: Vec::new(),
+            demand,
+            demand_seed,
+            behavior_rng: BehaviorRng::new(behavior_seed),
+            generated: Vec::new(),
+            smoothed: free_flow.clone(),
+            free_flow,
+            cost_keys,
+            exit_time_sum: vec![0.0; n_links],
+            exit_time_n: vec![0; n_links],
+            cost_epoch: 0,
+            router: RouterCache::default(),
         }
     }
 
@@ -194,44 +234,99 @@ impl World {
         &self.network
     }
 
-    pub fn from_scenario(_scenario: Scenario) -> Result<World, DemandError> {
-        todo!()
-    }
-
     pub fn generated_trips(&self) -> &[GeneratedTrip] {
-        todo!()
+        &self.generated
     }
 
     /// Current smoothed cost of a link (s); changes only at epoch boundaries.
-    pub fn link_cost(&self, _link: LinkId) -> f64 {
-        todo!()
+    pub fn link_cost(&self, link: LinkId) -> f64 {
+        self.smoothed[link.index()]
     }
 
     pub fn cost_epoch(&self) -> u64 {
-        todo!()
+        self.cost_epoch
     }
 
     /// Best route under current costs and its cost (s), or None if unreachable.
-    pub fn shortest_route(&self, _from: NodeId, _to: NodeId) -> Option<(Vec<LinkId>, f64)> {
-        todo!()
+    pub fn shortest_route(&self, from: NodeId, to: NodeId) -> Option<(Vec<LinkId>, f64)> {
+        let n = self.network.nodes().len();
+        if from.index() >= n || to.index() >= n {
+            return None;
+        }
+        Tree::build(&self.network, &self.cost_keys, |_| true, to).route(&self.network, from)
     }
 
-    pub fn vehicle(&self, _id: VehicleId) -> Option<VehicleInfo> {
-        todo!()
+    /// Route via the per-epoch cache (same result as `shortest_route`).
+    fn route_for(&mut self, from: NodeId, to: NodeId) -> Option<(Vec<LinkId>, f64)> {
+        let (net, keys) = (&self.network, &self.cost_keys);
+        self.router.tree(net, keys, |_| true, self.cost_epoch, to).route(net, from)
+    }
+
+    pub fn vehicle(&self, id: VehicleId) -> Option<VehicleInfo> {
+        let v = self.slots.get(id.0 as usize)?.as_ref()?;
+        let state = match v.state {
+            Phase::WaitingAtOrigin => VehicleState::WaitingAtOrigin,
+            Phase::OnLink => VehicleState::OnLink(v.current_link()),
+            Phase::NoRoute => VehicleState::NoRoute,
+        };
+        Some(VehicleInfo {
+            trip_id: v.trip_id,
+            route: v.route.clone(),
+            route_pos: v.route_pos,
+            state,
+            speed_factor: v.speed_factor,
+            lane: v.lane,
+            s: v.s,
+            v: v.v,
+            created_tick: v.created_tick,
+        })
     }
 
     /// Live vehicles, ascending.
     pub fn vehicle_ids(&self) -> Vec<VehicleId> {
-        todo!()
+        (0..self.slots.len() as u32).filter(|&s| self.slots[s as usize].is_some()).map(VehicleId).collect()
     }
 
     pub fn metrics(&self) -> Metrics {
-        todo!()
+        let c = self.counts();
+        let queued = self
+            .lanes
+            .iter()
+            .flatten()
+            .flatten()
+            .filter(|&&slot| self.veh(slot).v < QUEUED_SPEED)
+            .count() as u64;
+        let ages: Vec<f64> = self
+            .slots
+            .iter()
+            .flatten()
+            .map(|v| (self.tick - v.created_tick) as f64 * DT)
+            .collect();
+        let mean_incomplete_age_s = (!ages.is_empty()).then(|| ages.iter().sum::<f64>() / ages.len() as f64);
+        Metrics {
+            tick: self.tick,
+            sim_time_s: self.tick as f64 * DT,
+            trips_generated: self.generated.len() as u64,
+            spawned: c.spawned,
+            active: c.active,
+            on_network: c.on_network,
+            waiting_at_origin: c.waiting_at_origin,
+            no_route: c.no_route,
+            queued,
+            completed: c.completed,
+            removed_unreachable: c.removed,
+            unreachable: c.no_route + c.removed,
+            mean_travel_time_s: mean_travel_time(self.completed_log.iter()),
+            incomplete: c.active,
+            mean_incomplete_age_s,
+        }
     }
 
     /// Mean travel time (s) of trips with `completed_tick` in `[from_tick, to_tick)`.
-    pub fn mean_travel_time_s_between(&self, _from_tick: u64, _to_tick: u64) -> Option<f64> {
-        todo!()
+    pub fn mean_travel_time_s_between(&self, from_tick: u64, to_tick: u64) -> Option<f64> {
+        mean_travel_time(
+            self.completed_log.iter().filter(|c| c.completed_tick >= from_tick && c.completed_tick < to_tick),
+        )
     }
 
     pub fn tick(&self) -> u64 {
@@ -256,6 +351,13 @@ impl World {
             link_enter_tick: self.tick,
             moved_tick: NOT_MOVED,
         };
+        Ok(self.enqueue_at_origin(origin, vehicle))
+    }
+
+    /// Takes the next trip id, stores the vehicle (LIFO slot reuse) and
+    /// appends it to its origin buffer.
+    fn enqueue_at_origin(&mut self, origin: NodeId, vehicle: Vehicle) -> VehicleId {
+        debug_assert_eq!(vehicle.trip_id, self.next_trip_id);
         self.next_trip_id += 1;
         self.spawned += 1;
         let slot = match self.free.pop() {
@@ -269,7 +371,68 @@ impl World {
             }
         };
         self.origin_buffers[origin.index()].push_back(slot);
-        Ok(VehicleId(slot))
+        VehicleId(slot)
+    }
+
+    /// Step 2: this tick's demand, routed under the costs in force now.
+    fn spawn_demand(&mut self) {
+        for req in trips_at(&self.demand, self.demand_seed, self.tick) {
+            let speed_factor = 0.9 + 0.2 * self.behavior_rng.next_f64();
+            let (route, state) = match self.route_for(req.origin, req.dest) {
+                Some((route, _)) => (route, Phase::WaitingAtOrigin),
+                None => (Vec::new(), Phase::NoRoute),
+            };
+            let trip_id = self.next_trip_id;
+            self.generated.push(GeneratedTrip {
+                trip_id,
+                flow_index: req.flow_index,
+                origin: req.origin,
+                dest: req.dest,
+                created_tick: self.tick,
+            });
+            let vehicle = Vehicle {
+                trip_id,
+                route,
+                route_pos: 0,
+                state,
+                lane: 0,
+                s: 0.0,
+                v: 0.0,
+                speed_factor,
+                created_tick: self.tick,
+                link_enter_tick: self.tick,
+                moved_tick: NOT_MOVED,
+            };
+            self.enqueue_at_origin(req.origin, vehicle);
+        }
+    }
+
+    /// Step 3 at epoch boundaries: EMA link-cost update (see the contract).
+    fn update_costs(&mut self) {
+        for (l, link) in self.network.links().iter().enumerate() {
+            let queued = self.lanes[l].iter().flatten().filter(|&&s| self.veh(s).v < QUEUED_SPEED).count();
+            let queue_term = link.length_m / link.speed_limit_mps
+                + queued as f64 / (link.lanes as f64 * SAT_FLOW_PER_LANE);
+            let observed = if self.exit_time_n[l] > 0 {
+                (self.exit_time_sum[l] / self.exit_time_n[l] as f64).max(queue_term)
+            } else {
+                queue_term
+            };
+            self.smoothed[l] =
+                self.free_flow[l].max(COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * self.smoothed[l]);
+            self.cost_keys[l] = cost_key(self.smoothed[l]);
+            self.exit_time_sum[l] = 0.0;
+            self.exit_time_n[l] = 0;
+        }
+        self.cost_epoch += 1;
+        self.router.invalidate();
+    }
+
+    fn record_exit(&mut self, link: LinkId, slot: u32) {
+        let enter = self.veh(slot).link_enter_tick;
+        self.exit_count[link.index()] += 1;
+        self.exit_time_sum[link.index()] += (self.tick - enter) as f64 * DT;
+        self.exit_time_n[link.index()] += 1;
     }
 
     fn validate_route(&self, route: &[LinkId]) -> Result<(), SpawnError> {
@@ -295,6 +458,10 @@ impl World {
 
     /// Advance one fixed tick.
     pub fn step(&mut self) {
+        self.spawn_demand();
+        if self.tick > 0 && self.tick.is_multiple_of(COST_EPOCH_TICKS) {
+            self.update_costs();
+        }
         self.discharge_nodes();
         self.admit_origins();
         self.move_vehicles();
@@ -407,7 +574,7 @@ impl World {
 
         if veh.route_pos + 1 == veh.route.len() {
             self.lanes[link.index()][lane].pop_front();
-            self.exit_count[link.index()] += 1;
+            self.record_exit(link, slot);
             self.complete(slot);
             return Crossing::Completed;
         }
@@ -425,7 +592,7 @@ impl World {
 
         self.credit[link.index()][lane] -= 1.0;
         self.lanes[link.index()][lane].pop_front();
-        self.exit_count[link.index()] += 1;
+        self.record_exit(link, slot);
         self.veh_mut(slot).route_pos += 1;
         self.place_on_link(slot, next, next_lane, entry_s, v_entry);
         Crossing::Transferred
@@ -454,6 +621,10 @@ impl World {
             let mut i = 0;
             while i < self.origin_buffers[n].len() && admitted < ORIGIN_ADMIT_PER_TICK {
                 let slot = self.origin_buffers[n][i];
+                if self.veh(slot).state == Phase::NoRoute {
+                    i += 1;
+                    continue;
+                }
                 let first = self.veh(slot).route[0];
                 if blocked.contains(&first) {
                     i += 1;
@@ -509,13 +680,19 @@ impl World {
 
     pub fn counts(&self) -> Counts {
         let on_network: u64 = self.lanes.iter().flatten().map(|q| q.len() as u64).sum();
-        let waiting: u64 = self.origin_buffers.iter().map(|b| b.len() as u64).sum();
+        let buffered: u64 = self.origin_buffers.iter().map(|b| b.len() as u64).sum();
+        let no_route = self
+            .origin_buffers
+            .iter()
+            .flatten()
+            .filter(|&&slot| self.veh(slot).state == Phase::NoRoute)
+            .count() as u64;
         Counts {
             spawned: self.spawned,
-            active: on_network + waiting,
+            active: on_network + buffered,
             on_network,
-            waiting_at_origin: waiting,
-            no_route: 0,
+            waiting_at_origin: buffered - no_route,
+            no_route,
             completed: self.completed,
             removed: self.removed,
         }
@@ -597,8 +774,8 @@ impl World {
                 let v = self.slots[slot as usize]
                     .as_ref()
                     .ok_or_else(|| format!("origin {n} holds freed slot {slot}"))?;
-                if v.state != Phase::WaitingAtOrigin {
-                    return Err(format!("slot {slot} in origin buffer but not waiting"));
+                if v.state == Phase::OnLink {
+                    return Err(format!("slot {slot} in origin buffer but on a link"));
                 }
             }
         }
@@ -611,4 +788,10 @@ enum Crossing {
     None,
     Completed,
     Transferred,
+}
+
+/// Mean of `(completed − created) × DT`, summed in iteration order.
+fn mean_travel_time<'a>(trips: impl Iterator<Item = &'a CompletedTrip>) -> Option<f64> {
+    let times: Vec<f64> = trips.map(|c| (c.completed_tick - c.created_tick) as f64 * DT).collect();
+    (!times.is_empty()).then(|| times.iter().sum::<f64>() / times.len() as f64)
 }
