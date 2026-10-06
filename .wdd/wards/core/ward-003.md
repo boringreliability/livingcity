@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-002"]
 layer: "rust"
-estimated_tests: 32
+estimated_tests: 33
 created: "2026-10-06"
 completed: null
 ---
@@ -77,6 +77,7 @@ All in `crates/sim-core/tests/core_003_closures.rs`. "Close the central bridge" 
 | 29 | `hysteresis_requires_both_conditions` | no switch when only the ratio or only the ≥ 20 s gain condition holds |
 | 30 | `retry_stats_count_attempts_outside_the_budget` | `retries_total` counts failed and successful attempts; retries spend no budget |
 | 31 | `reopen_is_picked_up_by_staggered_periodic_reconsideration` | reopening forces nothing; vehicles return to the reopened link exactly at their own staggered due ticks, on distinct ticks |
+| 33 | `retry_count_restarts_for_each_stranding` | a second stranding after a successful retry starts a fresh count (0, then k at S+60k) and is removed exactly at S+600 |
 | 32 | `stranded_keeps_route_and_noroute_route_is_empty` | stranded vehicles keep their route and resume it with 0 switches; NoRoute vehicles have an empty route and count 1 switch on resuming |
 
 ## Must NOT
@@ -95,13 +96,13 @@ cargo build -p sim-core --examples --release
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core_001 20, core_002 24, core_003 32 pass.
+   Expected: core_001 20, core_002 24, core_003 33 pass.
 2. Run: `cargo run -p sim-core --release --example bridge`
    Verify: before closure the central bridge carries the most west→east exits per minute. After closure its exits drop to 0 within about a minute, north/south exits rise, queued rises near the alternative crossings, and `unreachable` stays 0.
 3. Run it twice and `diff` the outputs.
    Expected: identical.
 ### Pass criteria
-- [ ] 76 tests green, clippy clean
+- [ ] 77 tests green, clippy clean
 - [ ] Bridge example shows emergent rerouting and queue growth
 - [ ] Deterministic output
 

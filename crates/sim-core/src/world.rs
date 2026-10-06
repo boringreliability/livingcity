@@ -84,7 +84,7 @@ pub struct VehicleInfo {
     pub created_tick: u64,
     /// On a link without a route (all ways on are closed); retrying.
     pub stranded: bool,
-    /// Failed NoRoute/stranded retries so far.
+    /// Failed retries of the current NoRoute/stranded episode (0 on entry; reset by a successful retry).
     pub no_route_retries: u32,
     /// Route changes after spawn (any cause).
     pub route_switches: u32,

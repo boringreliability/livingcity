@@ -1281,3 +1281,74 @@ fn stranded_keeps_route_and_noroute_route_is_empty() {
     }
     assert_eq!(w.reroute_stats().switches_total, 3);
 }
+
+
+
+// ─── 33 ──────────────────────────────────────────────────────────────────
+// Proposed and verified against an independent reference by the core-003
+// Red reviewer, round 4. Append to core_003_closures.rs (uses its helpers).
+#[test]
+fn retry_count_restarts_for_each_stranding() {
+    // Given a corridor with a long L1, vehicles driving on the connector and L1
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-150.0, 0.0);
+    let j = b.node(0.0, 0.0);
+    let a = b.node(1500.0, 0.0);
+    let d = b.node(1800.0, 0.0);
+    let zj = b.link(z, j, 11.1, 1);
+    let l1 = b.link(j, a, 13.9, 1);
+    let l2 = b.link(a, d, 13.9, 1);
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..6 {
+        w.spawn_with_route(vec![zj, l1, l2]).unwrap();
+    }
+    for _ in 0..40 {
+        step_checked(&mut w);
+    }
+    // When L2 closes (stranding them), reopens (successful retry at ct + 120), and closes again at ct + 150
+    let ct = w.tick();
+    w.schedule(close(l2, ct)).unwrap();
+    w.schedule(open(l2, ct + 90)).unwrap();
+    w.schedule(close(l2, ct + 150)).unwrap();
+    let ids = w.vehicle_ids();
+    assert_eq!(ids.len(), 6, "premise");
+    while w.tick() <= ct + 150 {
+        step_checked(&mut w);
+        let t = w.tick() - 1;
+        for &id in &ids {
+            let i = w.vehicle(id).unwrap();
+            assert!(!matches!(i.state, VehicleState::OnLink(l) if l == l2), "premise: nobody reaches L2 (tick {t})");
+            if t == ct + 60 {
+                assert!(i.stranded);
+                assert_eq!(i.no_route_retries, 1, "premise: first stranding, one failed retry");
+            }
+            if t == ct + 120 {
+                assert!(!i.stranded, "premise: resumed on the retry after the reopening");
+            }
+        }
+    }
+    // Then the second stranding (S = ct + 150) starts a fresh count:
+    // retried at S+60 … S+600 and removed exactly after step S+600
+    let s = ct + 150;
+    for &id in &ids {
+        let i = w.vehicle(id).unwrap();
+        assert!(i.stranded);
+        assert_eq!(i.no_route_retries, 0, "trip {}: retry count carried over from the earlier stranding", i.trip_id);
+    }
+    while w.tick() < s + 600 {
+        step_checked(&mut w);
+        let t = w.tick() - 1;
+        if t > s && (t - s) % NO_ROUTE_RETRY_TICKS == 0 {
+            let k = ((t - s) / NO_ROUTE_RETRY_TICKS) as u32;
+            for &id in &ids {
+                let i = w.vehicle(id).unwrap_or_else(|| panic!("removed early at tick {t} (after {k} retries)"));
+                assert_eq!(i.no_route_retries, k);
+            }
+        }
+    }
+    assert_eq!(w.metrics().removed_unreachable, 0);
+    step_checked(&mut w);
+    assert!(ids.iter().all(|&id| w.vehicle(id).is_none()));
+    assert_eq!(w.metrics().removed_unreachable, 6);
+    assert_eq!(NO_ROUTE_MAX_RETRIES, 10);
+}
