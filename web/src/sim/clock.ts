@@ -8,6 +8,8 @@ export const ITERATION_BUDGET_MS = 8;
 const WINDOW_MS = 1000;
 /** Below this share of the target, a sustained shortfall counts as behind. */
 const BEHIND_RATIO = 0.9;
+/** Batch limit before the first ms/tick measurement (e.g. a first plan after a stall). */
+const UNMEASURED_BATCH_TICKS = 64;
 /** Weight of the newest batch in the ms/tick estimate. */
 const MS_PER_TICK_EMA = 0.2;
 
@@ -78,7 +80,9 @@ export class SimClock {
     const maxTicks =
       this.msPerTick !== undefined && this.msPerTick > 0
         ? Math.max(1, Math.floor(ITERATION_BUDGET_MS / this.msPerTick))
-        : Number.POSITIVE_INFINITY;
+        : this.msPerTick === undefined
+          ? UNMEASURED_BATCH_TICKS
+          : Number.POSITIVE_INFINITY;
     return Math.min(n, maxTicks);
   }
 
@@ -125,7 +129,7 @@ export class SimClock {
   private credit(t: number, clampIsEvent: boolean): void {
     // A clock that goes backwards credits nothing (never negative ticks).
     this.backlog += (Math.max(0, t - this.creditedUntil) / 1000) * this.targetTicksPerS();
-    this.creditedUntil = t;
+    this.creditedUntil = Math.max(this.creditedUntil, t);
     if (this.backlog > this.cap()) {
       this.backlog = this.cap();
       if (clampIsEvent) this.lastCapEvent = t;

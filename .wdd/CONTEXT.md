@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-06, after core-003 completed (Gold approved, gold-1)
+2026-10-07, after core-004 completed (Gold approved, gold-2)
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). `main` holds only the initial commit.
@@ -11,7 +11,8 @@
 - `crates/sim-core/clippy.toml` machine-checks the Must NOT rules (no transcendental functions, HashMap/HashSet or wall clock).
 - **core-003 complete**: commands/closures, budgeted + staggered rerouting with hysteresis, forced decisions, NoRoute/stranded retries with removal, `state_hash`, `cities::three_bridges`, `bridge` example. 80 tests green (20 + 24 + 36). The Red gate took 7 rounds and was auto-approved under the user's convergence rule (see `.wdd/reviews/core-003-red-7-auto.md`). Gold was approved in round 1, and the differential run against an independent reference was identical over 10 scenarios.
 - **User decision (2026-10-06): convergence rule for gates.** From round 4 on, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved once the fix tests are incorporated. It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. (Not written into CLAUDE.md: the sandbox blocks self-modification of instructions; the user may add it.)
-- Next: core-004 (WASM worker bridge).
+- **core-004 complete**: `sim_core::frame` (AoS vehicle records, link stats, NetworkExport, METRIC_NAMES), `crates/sim-wasm` (thin adapter), `web/` (pnpm, Vite 8, React 19, Vitest 5): `SimClock` (honest behind, option (ii) after lowering speed), worker host (16 ms frames, transfer, exact-size pool, link-id validation, halt on panic), client, debug readout. Rust 85 + Vitest 37 green. Red took 4 rounds (2 spec BLOCKERs in round 1: an impossible decoder API, an achieved-rate tolerance). Gold took 2 rounds (F1: wasm-bindgen coerces NaN/1.7 ids onto real links → validate in the host). Browser smoke: 51 fps, frame bytes = 16 × on-network, close/reopen works, 300× achieved.
+- Next: core-005 (WebGL2 renderer + React UI + Playwright e2e). This is the **integration ward**, followed by the **human epic gate**.
 
 ## Architecture Decisions Made
 | Decision | Rationale | Ward |
@@ -35,6 +36,9 @@
 ## Key Metrics
 | Metric | Value | Ward |
 |--------|-------|------|
+| wasm bundle | 119 kB (47 kB gzip) | core-004 |
+| Per-frame cost (native, ~2.1k on network) | encode 5 µs, link stats 6 µs, `metrics()` 0.25 ms (dominant; 1–3 ms at saturation) | core-004 |
+| Browser debug page | 51 frames/s; 300× achieved with three_bridges | core-004 |
 | Step, 20×20 grid, ~25–32k vehicles (release) | 0.195 ms median, 0.36 ms p95; closure burst of 40 links 8.7 ms | core-003 |
 | three_bridges: central closure → central 0/min within 1 min; N+S ~6 → ~40/min; mean tt 242 → 264 s | bridge example | core-003 |
 | Step incl. demand+routing, 20×20 grid, ~10.2k active (release) | 0.108 ms median, 0.245 ms p95, 0.32 ms epoch ticks | core-002 |
@@ -55,7 +59,11 @@
 - Test city demand (1980 veh/h west→east vs. 3600 veh/h alternative capacity) makes closure queues mild. Epic city must calibrate demand so a closure visibly saturates the alternatives.
 - Explicit `spawn_with_route` routes that pass through their own destination get stranded (router returns None for from == dest). Demand routes never do this.
 - `apply_commands` scans the whole log each tick, and periodic enqueue/retries scan all slots (measured negligible).
+- `World::metrics()` dominates per-frame cost at high demand: make it incremental or sample it at ~10 Hz (epic polish/perf).
+- Browser `performance.now()` is coarse (0.1 ms), so the ms/tick readout shows ~0 for cheap ticks. For the perf epic, aggregate over time or enable cross-origin isolation.
+- After a wasm trap the host halts; reloading requires a new worker (full module reload), not just a new `Sim`.
+- three_bridges at natural demand peaks around 225 vehicles, so the 2k/10k targets need the epic-city network and demand.
 
 ## What Comes Next
-- core-004 Red: `crates/sim-wasm`, `sim_core::frame`, `web/` (pnpm, Vite 8, React 19, Vitest 5, Playwright 1.63). Spec in `.wdd/wards/core/ward-004.md`.
-- Then core-005 (WebGL2 + React, first closure in the browser), then the **epic gate (human)**.
+- core-005 Red: WebGL2 renderer (link table texture, instanced vehicles from the AoS buffer), camera/picking/geometry, React shell, Playwright e2e. Spec in `.wdd/wards/core/ward-005.md` (update: AoS decoder API, debug readout replaced).
+- Then the **epic gate (human)**: demo + run commands + review log.

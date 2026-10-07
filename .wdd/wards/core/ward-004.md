@@ -3,12 +3,12 @@ ward: 4
 revision: null
 name: "WASM worker bridge"
 epic: "core"
-status: "gold"
+status: "complete"
 dependencies: ["core-003"]
 layer: "typescript"
 estimated_tests: 39
 created: "2026-10-06"
-completed: null
+completed: "2026-10-07"
 ---
 # Ward core-004: WASM worker bridge
 

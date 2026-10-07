@@ -45,7 +45,7 @@ test('F2 a second speed drop before any plan keeps the option-(ii) suppression',
     t += 16;
     clock.report(clock.plan(), 0.01);
   }
-  t += 100;
+  t += 300; // 300 ms at 300× owes 180 ticks > the 60× cap (120): a real clamp
   clock.setSpeed(60);
   t += 5;
   clock.setSpeed(20);

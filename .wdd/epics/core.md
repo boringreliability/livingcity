@@ -15,7 +15,7 @@ Build the authoritative Rust traffic simulation (native-tested) and carry it all
 | core-001 | Road network, vehicles, queues and discharge | complete |
 | core-002 | Demand, routing and metrics | complete |
 | core-003 | Closures, rerouting, commands and determinism | complete |
-| core-004 | WASM worker bridge | planned |
+| core-004 | WASM worker bridge | complete |
 | core-005 | First closure in the browser (integration ward) | planned |
 
 ## Model contract (binding for all wards; reviewers check against this)
@@ -116,6 +116,7 @@ Queue spillback emerges from rule 4: a full downstream link stops the front vehi
 ### Frame / boundary format (core-004)
 - Per vehicle, 16 bytes: `link_id: u32`, `s: f32` (m), `v: f32` (m/s), `flags: u32` (bit0 queued, bit1 on closed link, bit2 stranded, bits 8..15 lane index; records ordered links → lanes → front first). There are **no x/y or screen coordinates from Rust**. The renderer maps link + s → world → screen.
 - The network is exported once: node coordinates (m), link from/to/lanes/length/speed.
+- In `sim-wasm`, `encode_frame()` also computes the per-link stats, and `link_counts()`/`link_queued()` return the stats of the **last encoded frame** (callers encode first).
 
 ### Float comparisons
 The threshold comparisons are exact, with no epsilon, in exactly this form: crossing iff `s + v' * DT >= length`; lane feasible iff `tail_guaranteed >= entry_s + JAM_SPACING`; `v'` = `min(v + ACCEL * DT, vmax * speed_factor)`. Same expression, same order of operations everywhere (determinism and test reproducibility). Movement speed is `v = (s' - s) / DT`, which may exceed `vmax × speed_factor` by float rounding, so invariant checks allow 1e-9 m/s, and lane spacing checks allow 1e-9 m. Lane credit is added (`credit = min(1.0, credit + 0.25)`) at the start of that lane's evaluation, before the crossing decision.

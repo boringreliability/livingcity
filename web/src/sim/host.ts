@@ -57,6 +57,7 @@ const PERF_SAMPLES = 64;
 export function createSimHost(deps: HostDeps): SimHost {
   const clock = new SimClock(deps.now);
   let sim: SimLike | undefined;
+  let halted = false;
   let linkCount = 0;
   let lastPost = Number.NEGATIVE_INFINITY;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
@@ -104,7 +105,7 @@ export function createSimHost(deps: HostDeps): SimHost {
 
   const command = (kind: 'close' | 'open', link: number) => {
     if (!sim) {
-      error(`command before init: ${kind} ${link}`);
+      error(halted ? `simulation halted; ignored ${kind} ${link}` : `command before init: ${kind} ${link}`);
       return;
     }
     // Validate here: wasm-bindgen coerces NaN/1.7/2^32+2 to valid u32 ids.
@@ -206,6 +207,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       } catch (e) {
         // A wasm panic leaves the instance in an unknown state: halt, report once.
         sim = undefined;
+        halted = true;
         error(`simulation halted: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
