@@ -3,12 +3,12 @@ ward: 2
 revision: null
 name: "River City network and calibrated demand"
 epic: "city"
-status: "gold"
+status: "complete"
 dependencies: ["city-001"]
 layer: "rust"
 estimated_tests: 16
 created: "2026-10-07"
-completed: null
+completed: "2026-10-07"
 ---
 # Ward city-002: River City network and calibrated demand
 

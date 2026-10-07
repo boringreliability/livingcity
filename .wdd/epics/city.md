@@ -22,7 +22,7 @@ Timeline, branching and comparison stay in epic `timeline`. Accessibility pass, 
 | Ward | Name | Status |
 |------|------|--------|
 | city-001 | Capacity attributes and gridlock relief | complete |
-| city-002 | River City network and calibrated demand | planned |
+| city-002 | River City network and calibrated demand | complete |
 | city-003 | Inspect vehicles and roads | planned |
 | city-004 | The miniature city look | planned |
 | city-005 | Living opening screen, diagnostics and measured performance (integration ward) | planned |

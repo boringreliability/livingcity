@@ -1,13 +1,13 @@
 # Progress — livingcity
 
 ## Summary
-6 of 10 Wards complete · 225 estimated tests · 0 blocked
+7 of 10 Wards complete · 229 estimated tests · 0 blocked
 
 ## Ward Status
 | Ward | Name | Tests | Status | Date |
 |------|------|-------|--------|------|
 | city-001 | Capacity attributes and gridlock relief | 28 | ✅ Complete | 2026-10-07 |
-| city-002 | River City network and calibrated demand | 12 | 📋 Planned | - |
+| city-002 | River City network and calibrated demand | 16 | ✅ Complete | 2026-10-07 |
 | city-003 | Inspect vehicles and roads | 16 | 📋 Planned | - |
 | city-004 | The miniature city look | 16 | 📋 Planned | - |
 | city-005 | Living opening screen, diagnostics and measured performance | 14 | 📋 Planned | - |
@@ -18,4 +18,4 @@
 | core-005 | First closure in the browser | 20 | ✅ Complete | 2026-10-07 |
 
 ## Test Summary
-- Estimated total: 225
+- Estimated total: 229

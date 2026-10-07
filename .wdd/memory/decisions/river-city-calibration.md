@@ -32,5 +32,18 @@
 | Main Bridge share after reopen | 0.73–0.81 |
 | Queued after reopen / during closure | 0.17–0.63 |
 
+## Measured on the shipped city (city-002 Gold r1, 8 seed pairs)
+| Measure | Range |
+|---|---|
+| Baseline active | 1,602–1,716 (low in the 1,600–2,600 band; "≈ 2,000" is a round figure) |
+| Baseline unserved / gridlock removals | 0 / 0 |
+| Main Bridge share | 0.78–0.82 |
+| Closure queued / baseline | 3.5–6.0 |
+| West→east trip time, closure / baseline | 1.64–1.84 |
+| Active after reopen / baseline | 0.99–1.08 |
+| Queued after reopen / closure level | 0.17–0.63 |
+
+The river example takes 0.26 s for 80 sim minutes in release. In the browser at 60× it runs at a full 120 ticks/s.
+
 ## Contract change made with this
 The C3 reopen target changed from "queued ≤ 1.5 × baseline over 5 min" to backlog, share and queue-reduction criteria. The 5-min queued ratio is noise, because route choice oscillates after a reopen: it swung 1.4–3.0 with ±2 % demand.

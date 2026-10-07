@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-07: city-001 complete (Gold approved, gold-2); next city-002
+2026-10-07: city-002 complete (Gold approved, gold-1); next city-003
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -12,6 +12,7 @@
   - Tests: Rust 85, Vitest 45, Playwright 17. Review logs are in `.wdd/reviews/`.
 - **Epic city: active.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
   - **city-001 complete**: per-link `sat_flow_per_lane` (`set_sat_flow`) and gridlock relief (`blocked_ticks`; reroute every 60 s with the blocked link excluded; removal at 10 min → `removed_gridlock`, `unserved`). `frame::EXTENDED_METRIC_NAMES` is used by sim-wasm, and `METRIC_NAMES` is unchanged. Example `gridlock`. Rust 113 tests. Red took 4 rounds (r4 auto), Gold 2 (r1: clippy on the example). three_bridges stays bit-identical.
+  - **city-002 complete**: `cities::river_city` (6×7 junctions per bank including a near-river column; Main / North / Old Bridge; 11 districts / 22 zones; demand scaled 2.3 intra / 0.9 cross), `City.name` / `City.river`, example `river`. sim-wasm `river_city` / `city_name` / `river`. `init.city` defaults to River City, `?city=three_bridges` gives the core city, `ReadyMessage.city` / `river`, and `riverDecor`. Fix S1: a speed picked before ready is honoured. Tests: Rust 125 (calibration release-only), Vitest 47, Playwright 20. Red took 3 rounds (the C3 reopen target was changed: the 5-min queued ratio was noise), Gold 1. Calibration: `.wdd/memory/decisions/river-city-calibration.md`.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. The sandbox blocked writing this into CLAUDE.md.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -29,6 +30,8 @@
 | Visibility minima in CSS px (road 2.5/closed 9, halo 3/2, vehicles 5×1.8 vs 3.4×3.4) | metric sizes collapse at fit zoom | core-005 |
 | Per-link saturation flow; gridlock relief (reroute 60 s, remove 10 min) | limited-capacity Old Bridge; oversaturation must not freeze | city-001 |
 | New metrics in `EXTENDED_METRIC_NAMES`, not `METRIC_NAMES` | core_004 pins the core list; the web reads metrics by name | city-001 |
+| River City calibrated at the centre of a measured plateau (intra 2.3, cross 0.9); near-river column for short approach blocks | closure must oversaturate the 2,700 veh/h alternatives, yet the city must recover after a reopen | city-002 |
+| C3 reopen target = backlog cleared + Main share + queue reduction (not a 5-min queued ratio) | the ratio swung 1.4–3.0 with ±2 % demand (route-choice oscillation) | city-002 |
 
 ## Active Constraints
 - The contracts `.wdd/epics/core.md` and `.wdd/epics/city.md` are binding. Change them explicitly (with the reason), never silently in code.
@@ -51,6 +54,8 @@
 
 ## Known Limitations
 - three_bridges demand is mild (it peaks around 225 vehicles) and never triggers gridlock relief.
+- River City's baseline sits low in its band (1,600–1,720 active). `RIVER_WEST_X` / `RIVER_EAST_X` are `pub` but only used in `cities.rs`. `cargo fmt --check` reports diffs (there is no fmt gate).
+- At fit zoom the control panel clips the "Westbrook Heights" label, and the North and Old Bridges look like streets (city-004).
 - `World::clone` copies the `Network` and the unbounded `completed_log` (timeline: share via `Arc`, window the log).
 - **Restore (timeline)** must invalidate the RouterCache and snapshot the reroute queues and their flags.
 - `World::metrics()` dominates per-frame cost at high demand (make it incremental or sample it).
@@ -67,7 +72,6 @@
   - no-WebGL2 path is silent.
 
 ## What Comes Next
-- **city-002**: River City + calibration tests; the app switches to River City.
 - **city-003**: inspect/follow vehicles, road stats.
 - **city-004**: miniature-city look + MINOR fixes.
 - **city-005**: warm-up, diagnostics, measured performance, integration.
