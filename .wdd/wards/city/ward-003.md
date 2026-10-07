@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Inspect vehicles and roads"
 epic: "city"
-status: "approved"
+status: "gold"
 dependencies: ["city-002"]
 layer: "typescript"
 estimated_tests: 17
@@ -57,6 +57,7 @@ Data follows `.wdd/epics/city.md` § C4: on-demand queries, one tracked vehicle 
       - `TrackedVehicle = { tripId, origin, dest, state, link, lane, s, v, ageS, routeSwitches, blockedTicks, route: Uint32Array }`;
       - `TrackedGone = { gone: true, tripId, outcome: 'completed' | 'removed_unreachable' | 'removed_gridlock' | 'unknown', travelTimeS: number | null }`, sent exactly once, after which tracking stops;
     - `linkDetail: LinkDetail | null`, where `LinkDetail = { link, vehicles, queued, costS, freeFlowS, exits, capacityVph }`.
+    - *Gold refinement:* both fields are **absent** until the UI first sends `inspectVehicle` / `inspectLink`, and present (possibly `null`) from then on. The frozen core-004 payload test requires every field of a frame to be numeric (no `null`), so a session that never inspects keeps purely numeric frames.
   - `decodeVehicleDetail(arr) -> TrackedVehicle | null` and `decodeLinkDetail(link, arr) -> LinkDetail` live in `protocol.ts`.
   - `NetworkArrays` gains the **optional** `linkSatFlow?: Float32Array`, because frozen test literals lack it.
   - The new `SimLike` methods (`vehicle_detail`, `trip_outcome`, `link_detail`, `trip_at_record`, `link_sat_flow`) are **optional**, because existing fakes lack them. The host guards their use.

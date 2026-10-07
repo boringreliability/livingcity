@@ -1,13 +1,19 @@
 //! wasm-bindgen adapter: batched steps, commands, and compact buffers.
 //! All simulation logic lives in `sim-core`; nothing here knows the clock.
 
+use std::collections::VecDeque;
+
 use wasm_bindgen::prelude::*;
 
 use sim_core::cities::{river_city, three_bridges, City, Landmarks, Zone, ZoneKind};
 use sim_core::frame::{
     metrics_to_extended_array, write_link_stats, write_vehicle_records, NetworkExport, EXTENDED_METRIC_NAMES,
 };
-use sim_core::{Command, CommandKind, LinkId, World};
+use sim_core::params::{DT, QUEUED_SPEED};
+use sim_core::{Command, CommandKind, LinkId, TripOutcome, VehicleState, World};
+
+/// Encoded frames whose record → trip tables are kept for picking (contract C4).
+const RETAINED_FRAMES: usize = 8;
 
 #[wasm_bindgen]
 pub struct Sim {
@@ -20,6 +26,8 @@ pub struct Sim {
     zones: Vec<Zone>,
     city_name: &'static str,
     river: (f64, f64),
+    /// (tick, trip id per record) of the last encoded frames, oldest first.
+    frame_trips: VecDeque<(u64, Vec<u64>)>,
 }
 
 impl Sim {
@@ -36,6 +44,7 @@ impl Sim {
             zones: city.zones,
             city_name: city.name,
             river: city.river,
+            frame_trips: VecDeque::with_capacity(RETAINED_FRAMES),
         }
     }
 }
@@ -90,7 +99,102 @@ impl Sim {
     /// of the last encoded frame.
     pub fn encode_frame(&mut self) -> u32 {
         write_link_stats(&self.world, &mut self.link_counts, &mut self.link_queued);
-        write_vehicle_records(&self.world, &mut self.frame)
+        let count = write_vehicle_records(&self.world, &mut self.frame);
+        // Record → trip table of this frame (same order as the records), reusing the oldest table.
+        let mut trips = if self.frame_trips.len() == RETAINED_FRAMES {
+            self.frame_trips.pop_front().map(|(_, v)| v).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        trips.clear();
+        self.world.for_each_on_network_trip(|t| trips.push(t));
+        let tick = self.world.tick();
+        self.frame_trips.retain(|&(t, _)| t != tick);
+        self.frame_trips.push_back((tick, trips));
+        count
+    }
+
+    /// Trip id of record `record` of the retained frame encoded at `frame_tick`, or −1.
+    pub fn trip_at_record(&self, frame_tick: f64, record: u32) -> f64 {
+        self.frame_trips
+            .iter()
+            .find(|&&(t, _)| t as f64 == frame_tick)
+            .and_then(|(_, trips)| trips.get(record as usize))
+            .map_or(-1.0, |&t| t as f64)
+    }
+
+    /// `VEHICLE_DETAIL` layout (protocol.ts): `[found, trip_id, origin, dest, state, link, lane, s, v,
+    /// age_s, route_switches, blocked_ticks, route_len, …remaining route (current link first)]`.
+    pub fn vehicle_detail(&self, trip_id: f64) -> Vec<f64> {
+        let header = 13;
+        let not_found = || vec![0.0; header];
+        let Some(trip) = as_trip_id(trip_id) else { return not_found() };
+        let Some(i) = self.world.vehicle_by_trip(trip) else { return not_found() };
+        let (state, link, route): (f64, f64, &[LinkId]) = match i.state {
+            VehicleState::WaitingAtOrigin => (0.0, -1.0, &[]),
+            VehicleState::NoRoute => (4.0, -1.0, &[]),
+            VehicleState::OnLink(l) => {
+                let code = if i.stranded {
+                    3.0
+                } else if i.v < QUEUED_SPEED {
+                    2.0
+                } else {
+                    1.0
+                };
+                (code, l.0 as f64, &i.route[i.route_pos..])
+            }
+        };
+        let mut out = vec![
+            1.0,
+            i.trip_id as f64,
+            i.origin.0 as f64,
+            i.dest.0 as f64,
+            state,
+            link,
+            i.lane as f64,
+            i.s,
+            i.v,
+            (self.world.tick() - i.created_tick) as f64 * DT,
+            i.route_switches as f64,
+            i.blocked_ticks as f64,
+            route.len() as f64,
+        ];
+        out.extend(route.iter().map(|l| l.0 as f64));
+        out
+    }
+
+    /// `[code, travel_time_s]`: 0 live, 1 completed, 2 removed unreachable, 3 removed gridlock,
+    /// 4 unknown; `travel_time_s` is NaN unless completed.
+    pub fn trip_outcome(&self, trip_id: f64) -> Vec<f64> {
+        let Some(trip) = as_trip_id(trip_id) else { return vec![4.0, f64::NAN] };
+        match self.world.trip_outcome(trip) {
+            TripOutcome::Live => vec![0.0, f64::NAN],
+            TripOutcome::Completed { travel_time_s } => vec![1.0, travel_time_s],
+            TripOutcome::RemovedUnreachable => vec![2.0, f64::NAN],
+            TripOutcome::RemovedGridlock => vec![3.0, f64::NAN],
+            TripOutcome::Unknown => vec![4.0, f64::NAN],
+        }
+    }
+
+    /// `[vehicles, queued, cost_s, free_flow_s, exits, capacity_vph]`; empty for an unknown link.
+    pub fn link_detail(&self, link: u32) -> Vec<f64> {
+        if link as usize >= self.export.link_from.len() {
+            return Vec::new();
+        }
+        let l = self.world.network().link(LinkId(link));
+        let st = self.world.link_stats(LinkId(link));
+        vec![
+            st.vehicles as f64,
+            st.queued as f64,
+            st.cost_s,
+            st.free_flow_s,
+            st.exits as f64,
+            l.lanes as f64 * l.sat_flow_per_lane * 3600.0,
+        ]
+    }
+
+    pub fn link_sat_flow(&self) -> Vec<f32> {
+        self.export.link_sat_flow.clone()
     }
 
     pub fn frame_ptr(&self) -> u32 {
@@ -197,4 +301,9 @@ fn json_string(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// A JS number → trip id, if it is a non-negative integer.
+fn as_trip_id(x: f64) -> Option<u64> {
+    (x.is_finite() && x >= 0.0 && x.fract() == 0.0 && x < 9.0e15).then_some(x as u64)
 }

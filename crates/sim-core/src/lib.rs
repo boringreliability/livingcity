@@ -19,6 +19,6 @@ pub use command::{Command, CommandError, CommandKind};
 pub use demand::{DemandError, DemandModel, OdFlow, Profile, TripRequest};
 pub use network::{Link, LinkId, Network, NetworkBuilder, NetworkError, Node, NodeId};
 pub use world::{
-    CompletedTrip, Counts, GeneratedTrip, Metrics, RerouteStats, Scenario, SpawnError, VehicleId, VehicleInfo,
-    VehicleState, VehicleView, World,
+    CompletedTrip, Counts, GeneratedTrip, LinkStats, Metrics, RerouteStats, Scenario, SpawnError, TripOutcome, VehicleId,
+    VehicleInfo, VehicleState, VehicleView, World,
 };

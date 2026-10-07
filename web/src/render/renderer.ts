@@ -1,7 +1,8 @@
 import { VEHICLE_RECORD_BYTES } from '../sim/protocol';
 import type { Camera } from './camera';
 import type { Decor } from './decor';
-import { LANE_WIDTH_M, type RoadGeometry } from './geometry';
+import type { TrackedVehicle } from '../sim/protocol';
+import { LANE_WIDTH_M, vehiclePosition, type RoadGeometry } from './geometry';
 
 /*
  * WebGL2 city renderer. The simulation supplies (link, s, v, flags/lane) per
@@ -158,6 +159,71 @@ void main() {
   o = vec4(c, 1.0);
 }`;
 
+/** Tracked vehicle ring: radii in CSS px (screen space, independent of zoom). */
+export const RING_INNER_PX = 7;
+export const RING_OUTER_PX = 10;
+const RING_EDGE_PX = 1.5;
+/** Route highlight: dashed centre line width and dash period, CSS px. */
+export const ROUTE_WIDTH_PX = 3;
+const ROUTE_DASH_PX = 12;
+
+// Route highlight: a screen-space dashed line along the remaining route's link centrelines.
+const ROUTE_VS = `#version 300 es
+layout(location = 0) in vec2 a_center;
+layout(location = 1) in vec2 a_normal;
+layout(location = 2) in float a_side;
+layout(location = 3) in float a_along;
+uniform vec2 u_center;
+uniform vec2 u_scale;
+uniform float u_pxPerM;
+out float v_alongPx;
+out float v_across;
+void main() {
+  vec2 p = a_center + a_normal * a_side * (${(ROUTE_WIDTH_PX / 2 + 1).toFixed(1)} / u_pxPerM);
+  gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
+  v_alongPx = a_along * u_pxPerM;
+  v_across = a_side;
+}`;
+
+const ROUTE_FS = `#version 300 es
+precision highp float;
+in float v_alongPx;
+in float v_across;
+out vec4 o;
+void main() {
+  if (fract(v_alongPx / ${ROUTE_DASH_PX.toFixed(1)}) > 0.6) discard;
+  // near-white core with a dark 1 px edge (readable on light, congested roads too)
+  float halfW = ${(ROUTE_WIDTH_PX / 2).toFixed(2)} / ${(ROUTE_WIDTH_PX / 2 + 1).toFixed(2)};
+  o = vec4(abs(v_across) <= halfW ? vec3(0.97) : vec3(0.05), 1.0);
+}`;
+
+// Tracked ring: one quad around the vehicle, sized in CSS px.
+const RING_VS = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+uniform vec2 u_center;
+uniform vec2 u_scale;
+uniform float u_pxPerM;
+uniform vec2 u_at;
+out vec2 v_px;
+void main() {
+  float r = ${(RING_OUTER_PX + RING_EDGE_PX + 1).toFixed(1)};
+  vec2 p = u_at + a_corner * (r / u_pxPerM);
+  gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
+  v_px = a_corner * r;
+}`;
+
+const RING_FS = `#version 300 es
+precision highp float;
+in vec2 v_px;
+out vec4 o;
+void main() {
+  float d = length(v_px);
+  if (d >= ${RING_INNER_PX.toFixed(1)} && d <= ${RING_OUTER_PX.toFixed(1)}) o = vec4(vec3(0.97), 1.0);
+  else if (d > ${RING_OUTER_PX.toFixed(1)} && d <= ${(RING_OUTER_PX + RING_EDGE_PX).toFixed(1)}) o = vec4(vec3(0.04), 1.0);
+  else if (d >= ${(RING_INNER_PX - RING_EDGE_PX).toFixed(1)} && d < ${RING_INNER_PX.toFixed(1)}) o = vec4(vec3(0.04), 1.0);
+  else discard;
+}`;
+
 function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
   const prog = gl.createProgram()!;
   for (const [type, src] of [
@@ -192,6 +258,14 @@ export class CityRenderer {
   private readonly solid: WebGLProgram;
   private readonly road: WebGLProgram;
   private readonly veh: WebGLProgram;
+  private readonly routeProg: WebGLProgram;
+  private readonly ringProg: WebGLProgram;
+  private readonly uRoute: Uniforms;
+  private readonly uRing: Uniforms;
+  private route: { vao: WebGLVertexArrayObject; buf: WebGLBuffer; count: number } | null = null;
+  private ringVao: WebGLVertexArrayObject;
+  private ringBuf: WebGLBuffer;
+  private tracked: TrackedVehicle | null = null;
   private water: Mesh | null = null;
   private pads: Mesh | null = null;
   private roads: Mesh | null = null;
@@ -251,6 +325,19 @@ export class CityRenderer {
     gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, stride, 12);
     for (const loc of [1, 2, 3, 4]) gl.vertexAttribDivisor(loc, 1);
     gl.bindVertexArray(null);
+
+    this.routeProg = compile(gl, ROUTE_VS, ROUTE_FS);
+    this.ringProg = compile(gl, RING_VS, RING_FS);
+    this.uRoute = uniforms(gl, this.routeProg, ['u_center', 'u_scale', 'u_pxPerM']);
+    this.uRing = uniforms(gl, this.ringProg, ['u_center', 'u_scale', 'u_pxPerM', 'u_at']);
+    this.ringVao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.ringVao);
+    this.ringBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.ringBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
   }
 
   private solidMesh(data: Float32Array): Mesh {
@@ -282,7 +369,14 @@ export class CityRenderer {
     gl.deleteBuffer(this.vehQuad);
     gl.deleteTexture(this.linkTex);
     gl.deleteTexture(this.stateTex);
-    for (const p of [this.solid, this.road, this.veh]) gl.deleteProgram(p);
+    if (this.route) {
+      gl.deleteVertexArray(this.route.vao);
+      gl.deleteBuffer(this.route.buf);
+      this.route = null;
+    }
+    gl.deleteVertexArray(this.ringVao);
+    gl.deleteBuffer(this.ringBuf);
+    for (const p of [this.solid, this.road, this.veh, this.routeProg, this.ringProg]) gl.deleteProgram(p);
   }
 
   setNetwork(geometry: RoadGeometry, decor: Decor): void {
@@ -373,6 +467,68 @@ export class CityRenderer {
     }
   }
 
+  /** The inspected vehicle (from the same frame as the last `setFrame`), or null. */
+  setTracked(t: TrackedVehicle | null): void {
+    const gl = this.gl;
+    const sameRoute =
+      !!t && !!this.tracked && t.route.length === this.tracked.route.length && t.route.every((l, i) => l === this.tracked!.route[i]);
+    this.tracked = t;
+    if (sameRoute) return;
+    if (this.route) {
+      gl.deleteVertexArray(this.route.vao);
+      gl.deleteBuffer(this.route.buf);
+      this.route = null;
+    }
+    const geometry = this.geometry;
+    if (!t || !geometry || t.route.length === 0) return;
+    // centre, normal, side, along (m) per vertex; one quad per remaining route link
+    const v: number[] = [];
+    let along = 0;
+    for (const id of t.route) {
+      const l = geometry.links[id];
+      if (!l) continue;
+      const len = Math.hypot(l.x1 - l.x0, l.y1 - l.y0);
+      const c = (end: 0 | 1, side: number) =>
+        v.push(end ? l.x1 : l.x0, end ? l.y1 : l.y0, l.nx, l.ny, side, along + (end ? len : 0));
+      c(0, -1);
+      c(1, -1);
+      c(1, 1);
+      c(0, -1);
+      c(1, 1);
+      c(0, 1);
+      along += len;
+    }
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const buf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STATIC_DRAW);
+    const F = 4;
+    for (const [loc, size, off] of [
+      [0, 2, 0],
+      [1, 2, 2],
+      [2, 1, 4],
+      [3, 1, 5],
+    ] as const) {
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 6 * F, off * F);
+    }
+    gl.bindVertexArray(null);
+    this.route = { vao, buf, count: v.length / 6 };
+  }
+
+  /**
+   * Where the tracked vehicle is drawn at `nowMs` (world m): its frame position extrapolated
+   * like every vehicle in the vertex shader, so Follow and the ring agree with the picture.
+   */
+  trackedWorldPosition(nowMs: number, simSecondsPerMs: number): [number, number] | null {
+    const t = this.tracked;
+    const l = t && t.link >= 0 ? this.geometry?.links[t.link] : undefined;
+    if (!t || !l) return null;
+    const dtSim = Math.min(2, Math.max(0, (nowMs - this.frameAtMs) * simSecondsPerMs));
+    return vehiclePosition(l, Math.min(t.s + t.v * dtSim, l.length), t.lane);
+  }
+
   private uploadState(): void {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.stateTex);
@@ -461,6 +617,16 @@ export class CityRenderer {
       gl.drawArrays(gl.TRIANGLES, 0, this.glyphs.count);
     }
 
+    if (this.route) {
+      const uRt = this.uRoute;
+      gl.useProgram(this.routeProg);
+      gl.uniform2f(uRt['u_center']!, camera.cx, camera.cy);
+      gl.uniform2f(uRt['u_scale']!, ...scale);
+      gl.uniform1f(uRt['u_pxPerM']!, camera.zoom);
+      gl.bindVertexArray(this.route.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, this.route.count);
+    }
+
     if (this.vehCount > 0) {
       const uV = this.uVeh;
       gl.useProgram(this.veh);
@@ -473,6 +639,18 @@ export class CityRenderer {
       gl.uniform1i(uV['u_links']!, 0);
       gl.bindVertexArray(this.vehVao);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.vehCount);
+    }
+
+    const at = this.trackedWorldPosition(nowMs, simSecondsPerMs);
+    if (at) {
+      const uRg = this.uRing;
+      gl.useProgram(this.ringProg);
+      gl.uniform2f(uRg['u_center']!, camera.cx, camera.cy);
+      gl.uniform2f(uRg['u_scale']!, ...scale);
+      gl.uniform1f(uRg['u_pxPerM']!, camera.zoom);
+      gl.uniform2f(uRg['u_at']!, at[0], at[1]);
+      gl.bindVertexArray(this.ringVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
     gl.bindVertexArray(null);
   }

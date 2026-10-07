@@ -7,7 +7,13 @@ import {
   type Landmarks,
   type PerfStats,
   DEFAULT_CITY,
+  decodeLinkDetail,
+  decodeTripOutcome,
+  decodeVehicleDetail,
   type CityName,
+  type LinkDetail,
+  type TrackedGone,
+  type TrackedVehicle,
   type ToWorker,
   type ZoneInfo,
 } from './protocol';
@@ -38,6 +44,12 @@ export interface SimLike {
   /** Optional (since epic city): older sims and test fakes may lack them. */
   city_name?(): string;
   river?(): Float64Array;
+  /** Inspection (since city-003); optional so older fakes keep working. */
+  trip_at_record?(frameTick: number, record: number): number;
+  vehicle_detail?(tripId: number): Float64Array;
+  trip_outcome?(tripId: number): Float64Array;
+  link_detail?(link: number): Float64Array;
+  link_sat_flow?(): Float32Array;
 }
 
 export interface HostDeps {
@@ -65,6 +77,12 @@ export function createSimHost(deps: HostDeps): SimHost {
   let halted = false;
   let linkCount = 0;
   let lastPost = Number.NEGATIVE_INFINITY;
+  /** The inspected trip and road (contract C4). */
+  let trackedTrip: number | null = null;
+  let inspectedLink: number | null = null;
+  /** The frame fields appear once inspection is used (absent before: numeric-only frames). */
+  let vehicleInspectionUsed = false;
+  let linkInspectionUsed = false;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
   let pool: ArrayBuffer[] = [];
   // ms/tick is sampled per frame from summed batch time. Browsers coarsen
@@ -102,6 +120,7 @@ export function createSimHost(deps: HostDeps): SimHost {
           linkLanes: sim.link_lanes(),
           linkLength: sim.link_length(),
           linkSpeed: sim.link_speed(),
+          ...(typeof sim.link_sat_flow === 'function' ? { linkSatFlow: sim.link_sat_flow() } : {}),
         },
         landmarks: JSON.parse(sim.landmarks_json()) as Landmarks,
         zones: JSON.parse(sim.zones_json()) as ZoneInfo[],
@@ -129,6 +148,40 @@ export function createSimHost(deps: HostDeps): SimHost {
     if (!ok) error(`unknown link ${link}`);
   };
 
+  const inspectVehicle = (msg: Extract<ToWorker, { type: 'inspectVehicle' }>) => {
+    if ('clear' in msg || !sim || typeof sim.trip_at_record !== 'function') {
+      trackedTrip = null;
+      return;
+    }
+    const { frameTick, record } = msg;
+    if (!Number.isInteger(frameTick) || !Number.isInteger(record) || record < 0) {
+      trackedTrip = null;
+      return;
+    }
+    const trip = sim.trip_at_record(frameTick, record);
+    trackedTrip = Number.isInteger(trip) && trip >= 0 ? trip : null;
+  };
+
+  const inspectLink = (link: number | null) => {
+    inspectedLink = link !== null && Number.isInteger(link) && link >= 0 && link < linkCount ? link : null;
+  };
+
+  /** At most one vehicle_detail (+ one trip_outcome once it is gone) and one link_detail per frame. */
+  const tracked = (s: SimLike): TrackedVehicle | TrackedGone | null => {
+    if (trackedTrip === null || typeof s.vehicle_detail !== 'function') return null;
+    const trip = trackedTrip;
+    const d = decodeVehicleDetail(s.vehicle_detail(trip));
+    if (d) return d;
+    trackedTrip = null;
+    const outcome = typeof s.trip_outcome === 'function' ? decodeTripOutcome(trip, s.trip_outcome(trip)) : null;
+    return outcome ?? { gone: true, tripId: trip, outcome: 'unknown', travelTimeS: null };
+  };
+
+  const linkDetail = (s: SimLike): LinkDetail | null =>
+    inspectedLink === null || typeof s.link_detail !== 'function'
+      ? null
+      : decodeLinkDetail(inspectedLink, s.link_detail(inspectedLink));
+
   const perf = (t: number): PerfStats => {
     while (frameTimes.length > 0 && frameTimes[0]! <= t - 1000) frameTimes.shift();
     const sorted = [...tickMs].sort((a, b) => a - b);
@@ -152,7 +205,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     sinceFrameMs = 0;
     sinceFrameTicks = 0;
     const tick = s.tick();
-    const msg: FrameMessage = {
+    // `tracked` / `linkDetail` are omitted until inspection is used (see FrameMessage)
+    const msg = {
       type: 'frame',
       tick,
       simTimeS: tick * DT,
@@ -164,7 +218,9 @@ export function createSimHost(deps: HostDeps): SimHost {
       metrics: s.metrics(),
       clock: clock.status(),
       perf: perf(t),
-    };
+      ...(vehicleInspectionUsed ? { tracked: tracked(s) } : {}),
+      ...(linkInspectionUsed ? { linkDetail: linkDetail(s) } : {}),
+    } as FrameMessage;
     deps.post(msg, [vehicles]);
   };
 
@@ -186,6 +242,14 @@ export function createSimHost(deps: HostDeps): SimHost {
             break;
           case 'returnBuffer':
             pool.push(msg.buffer);
+            break;
+          case 'inspectVehicle':
+            vehicleInspectionUsed = true;
+            inspectVehicle(msg);
+            break;
+          case 'inspectLink':
+            linkInspectionUsed = true;
+            inspectLink(msg.link);
             break;
         }
       } catch (e) {

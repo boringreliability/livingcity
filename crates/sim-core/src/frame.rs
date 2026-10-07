@@ -58,6 +58,8 @@ pub struct NetworkExport {
     pub link_lanes: Vec<u8>,
     pub link_length: Vec<f32>,
     pub link_speed: Vec<f32>,
+    /// Saturation flow per lane (veh/s), contract C1.
+    pub link_sat_flow: Vec<f32>,
 }
 
 impl NetworkExport {
@@ -72,6 +74,7 @@ impl NetworkExport {
             link_lanes: links.iter().map(|l| l.lanes).collect(),
             link_length: links.iter().map(|l| l.length_m as f32).collect(),
             link_speed: links.iter().map(|l| l.speed_limit_mps as f32).collect(),
+            link_sat_flow: links.iter().map(|l| l.sat_flow_per_lane as f32).collect(),
         }
     }
 }

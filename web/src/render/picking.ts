@@ -1,5 +1,9 @@
+import type { DecodedVehicles } from '../sim/frame';
 import type { Camera } from './camera';
-import type { LinkGeom } from './geometry';
+import { vehiclePosition, type LinkGeom } from './geometry';
+
+/** Vehicles are pickable only from this zoom (CSS px per metre); below it clicks select roads. */
+export const VEHICLE_PICK_MIN_ZOOM = 1.0;
 
 /** Distance (world metres) from (px, py) to the segment (x0, y0)–(x1, y1). */
 function segmentDistance(px: number, py: number, l: LinkGeom): number {
@@ -29,6 +33,34 @@ export function pickLink(
     if (px <= (l.width / 2) * camera.zoom + tolerancePx && px < bestPx) {
       best = l.id;
       bestPx = px;
+    }
+  }
+  return best;
+}
+
+/**
+ * The frame record whose drawn centre (unextrapolated) is nearest to screen point (sx, sy),
+ * within `tolerancePx`; ties → lower record. `links` is indexed by link id.
+ */
+export function pickVehicle(
+  vehicles: DecodedVehicles,
+  links: readonly LinkGeom[],
+  camera: Camera,
+  sx: number,
+  sy: number,
+  tolerancePx = 8,
+): number | null {
+  let best: number | null = null;
+  let bestPx = Infinity;
+  for (let i = 0; i < vehicles.count; i++) {
+    const l = links[vehicles.link(i)];
+    if (!l) continue;
+    const [wx, wy] = vehiclePosition(l, vehicles.s(i), vehicles.lane(i));
+    const [px, py] = camera.worldToScreen(wx, wy);
+    const d = Math.hypot(px - sx, py - sy);
+    if (d <= tolerancePx && d < bestPx) {
+      best = i;
+      bestPx = d;
     }
   }
   return best;

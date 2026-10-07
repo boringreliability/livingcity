@@ -92,6 +92,39 @@ pub struct VehicleInfo {
     pub route_switches: u32,
     /// Consecutive stop-line evaluations blocked by a full next link (contract C2).
     pub blocked_ticks: u32,
+    /// Trip endpoints.
+    pub origin: NodeId,
+    pub dest: NodeId,
+}
+
+/// Read-only statistics of one link (contract C4).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LinkStats {
+    pub vehicles: u32,
+    /// Vehicles on the link with `v < QUEUED_SPEED`.
+    pub queued: u32,
+    /// Current routing cost (s).
+    pub cost_s: f64,
+    pub free_flow_s: f64,
+    /// Cumulative exits (transfers and completions).
+    pub exits: u64,
+}
+
+/// What became of a trip (contract C4).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TripOutcome {
+    Live,
+    Completed { travel_time_s: f64 },
+    RemovedUnreachable,
+    RemovedGridlock,
+    /// Never spawned.
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemovalKind {
+    Unreachable,
+    Gridlock,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -252,6 +285,8 @@ pub struct World {
     /// All removals (unreachable + gridlock).
     removed: u64,
     removed_gridlock: u64,
+    /// Every removal in order: (trip id, kind). World state (hashed); serves `trip_outcome`.
+    removed_log: Vec<(u64, RemovalKind)>,
     completed_log: Vec<CompletedTrip>,
     /// Running Σ travel time (s) over `completed_log`, in log order.
     completed_tt_sum: f64,
@@ -315,6 +350,7 @@ impl World {
             completed: 0,
             removed: 0,
             removed_gridlock: 0,
+            removed_log: Vec::new(),
             completed_log: Vec::new(),
             completed_tt_sum: 0.0,
             demand,
@@ -390,7 +426,51 @@ impl World {
             no_route_retries: v.retries,
             route_switches: v.route_switches,
             blocked_ticks: v.blocked_ticks,
+            origin: v.origin,
+            dest: v.dest,
         })
+    }
+
+    /// Trip id of the `index_from_front`-th vehicle in `lane` of `link` (frame record order).
+    pub fn vehicle_at(&self, link: LinkId, lane: u8, index_from_front: usize) -> Option<u64> {
+        let q = self.lanes.get(link.index())?.get(lane as usize)?;
+        q.get(index_from_front).map(|&slot| self.veh(slot).trip_id)
+    }
+
+    /// The live vehicle of a trip (None once completed or removed, or if never spawned).
+    pub fn vehicle_by_trip(&self, trip_id: u64) -> Option<VehicleInfo> {
+        let slot = self.slots.iter().position(|v| v.as_ref().is_some_and(|v| v.trip_id == trip_id))?;
+        self.vehicle(VehicleId(slot as u32))
+    }
+
+    /// Statistics of one link (panics on an unknown link, like the other accessors).
+    pub fn link_stats(&self, link: LinkId) -> LinkStats {
+        let queued = self.lanes[link.index()].iter().flatten().filter(|&&slot| self.veh(slot).v < QUEUED_SPEED).count();
+        LinkStats {
+            vehicles: self.link_count(link),
+            queued: queued as u32,
+            cost_s: self.link_cost(link),
+            free_flow_s: self.free_flow[link.index()],
+            exits: self.exit_count[link.index()],
+        }
+    }
+
+    /// Why a trip is (no longer) on the network.
+    pub fn trip_outcome(&self, trip_id: u64) -> TripOutcome {
+        if trip_id >= self.next_trip_id {
+            return TripOutcome::Unknown;
+        }
+        if self.slots.iter().flatten().any(|v| v.trip_id == trip_id) {
+            return TripOutcome::Live;
+        }
+        if let Some(c) = self.completed_log.iter().find(|c| c.trip_id == trip_id) {
+            return TripOutcome::Completed { travel_time_s: (c.completed_tick - c.created_tick) as f64 * DT };
+        }
+        match self.removed_log.iter().find(|&&(t, _)| t == trip_id) {
+            Some((_, RemovalKind::Unreachable)) => TripOutcome::RemovedUnreachable,
+            Some((_, RemovalKind::Gridlock)) => TripOutcome::RemovedGridlock,
+            None => TripOutcome::Unknown,
+        }
     }
 
     /// Live vehicles, ascending.
@@ -526,6 +606,11 @@ impl World {
         self.exit_count.iter().for_each(|&e| h.u64(e));
         for x in [self.next_trip_id, self.spawned, self.completed, self.removed, self.removed_gridlock] {
             h.u64(x);
+        }
+        h.u64(self.removed_log.len() as u64);
+        for &(t, kind) in &self.removed_log {
+            h.u64(t);
+            h.u64(kind as u64);
         }
         h.u64(self.completed_log.len() as u64);
         for c in &self.completed_log {
@@ -865,6 +950,7 @@ impl World {
                 buf.remove(i);
             }
         }
+        self.removed_log.push((v.trip_id, RemovalKind::Unreachable));
         self.removed += 1;
         self.free.push(slot);
     }
@@ -1104,7 +1190,9 @@ impl World {
     fn remove_gridlocked(&mut self, slot: u32, link: LinkId, lane: usize) {
         let front = self.lanes[link.index()][lane].pop_front();
         debug_assert_eq!(front, Some(slot));
+        let trip = self.veh(slot).trip_id;
         self.slots[slot as usize] = None;
+        self.removed_log.push((trip, RemovalKind::Gridlock));
         self.removed += 1;
         self.removed_gridlock += 1;
         self.free.push(slot);
@@ -1235,6 +1323,13 @@ impl World {
                     f(LinkId(li as u32), lane as u8, v.s, v.v, v.stranded);
                 }
             }
+        }
+    }
+
+    /// Trip ids of every on-network vehicle, in frame record order (links → lanes → front first).
+    pub fn for_each_on_network_trip(&self, mut f: impl FnMut(u64)) {
+        for &slot in self.lanes.iter().flatten().flatten() {
+            f(self.veh(slot).trip_id);
         }
     }
 
