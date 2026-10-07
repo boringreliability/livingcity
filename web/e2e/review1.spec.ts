@@ -124,28 +124,4 @@ test('fix G4: closing the main bridge changes its grayscale appearance', async (
   expect(meanAbsDiff).toBeGreaterThan(15);
 });
 
-// G5: picking stays consistent with the drawn view on a HiDPI display and after wheel zoom
-test.describe('HiDPI', () => {
-  test.use({ deviceScaleFactor: 2 });
-  test('fix G5: clicking a road selects it at DPR 2, also after zooming with the wheel', async ({ page }) => {
-    const s0 = await ready(page);
-    const road = s0.landmarks!.central_bridge[0];
-    const other = s0.landmarks!.north_bridge[0];
-    const center = async (l: number) => (await page.evaluate((x) => window.__livingcity!.linkScreenCenter(x), l))!;
-    let p = await center(road);
-    await page.mouse.click(p[0], p[1]);
-    await expect.poll(async () => (await snap(page))!.selectedLink).toBe(road);
-    // When zooming with the wheel near the road, Then the view changes
-    const before = await center(other);
-    await page.mouse.move(p[0] + 40, p[1] + 20);
-    for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -200);
-    await expect.poll(async () => (await center(other))[1]).not.toBeCloseTo(before[1], 0);
-    // And clicking the (moved) road center still selects that road
-    await blur(page);
-    await page.keyboard.press('Escape');
-    p = await center(road);
-    expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, p)).toBe('CANVAS');
-    await page.mouse.click(p[0], p[1]);
-    await expect.poll(async () => (await snap(page))!.selectedLink).toBe(road);
-  });
-});
+// (G5 was replaced by "fix G5 (r2)" in review2.spec.ts: Red review r2, B6.)

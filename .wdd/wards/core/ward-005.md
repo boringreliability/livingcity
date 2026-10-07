@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-004"]
 layer: "typescript"
-estimated_tests: 16
+estimated_tests: 19
 created: "2026-10-06"
 completed: null
 ---
@@ -39,19 +39,19 @@ This is the integration ward of epic `core`. A WebGL2 renderer draws the three-b
     - a play/pause `<button>` whose accessible name is "Pause" while running and "Play" while paused;
     - a native `<select>` with `aria-label="Speed"` and options labelled exactly `1×`, `5×`, `20×`, `60×`;
     - a `<button aria-label="Close the main bridge" aria-pressed>` toggle. The accessible name is constant; the visible text may change ("Close the main bridge" / "Main bridge closed — reopen"), and "pending" is shown until a frame confirms. Pressing it again reopens both directions;
-    - a **speed status** with achieved vs. target speed (`data-testid="achieved-speed"`) and a visible, non-colour-only **"Behind"** indicator (text + icon, `role="status"`) whenever `clock.behind` is true. The brief requires honest reporting when the engine can't keep up;
+    - a **speed status** with achieved vs. target speed (`data-testid="achieved-speed"`) and a permanently present `role="status"` element that shows the visible text **"Behind"** (plus an icon, never colour alone) whenever `clock.behind` is true and no "Behind" text otherwise. The brief requires honest reporting when the engine can't keep up;
   - on load the app auto-runs at 20×;
   - `MetricsStrip`: sim time `HH:MM:SS` labelled "sim", visibly distinct from wall clock; active; completed; mean travel time; queued, with the definition in its tooltip; unreachable;
   - `SelectionPanel`: a heading with the text `Link <id>` (exactly once on the page), lanes, speed (km/h), length, vehicles, queued, closed state, and one button named exactly `Close link` or `Reopen link`;
   - zone labels as an HTML overlay.
-- Keyboard: Space = pause/resume, B = toggle main bridge, `+`/`-` = next/previous speed option, Esc = clear selection. **Global shortcuts are ignored while focus is in an interactive control** (button, select, input, textarea, contenteditable), so a focused button keeps its native Space activation. Every control is reachable with Tab and has an accessible name (browser-computed).
+- Keyboard: Space = pause/resume, B = toggle main bridge, `+`/`-` = next/previous speed option (stopping at the ends, no wrap-around), Esc = clear selection. **Global shortcuts are ignored while focus is in an interactive control** (button, select, input, textarea, contenteditable), so a focused button keeps its native Space activation. Every control is reachable with Tab and has an accessible name (browser-computed).
 - Test hook (`web/src/ui/testHook.ts` types): `window.__livingcity = { snapshot(), linkScreenCenter(link) }`. `snapshot()` returns `{ tick, simTimeS, running, metrics, closed, linkCounts, landmarks, selectedLink, renderFrames }` from the **latest frame** (`running = frame.clock.running`) plus UI state. `renderFrames` counts rAF draws. `linkScreenCenter` gives the page CSS-px position of a link's drawn midpoint (null when off-screen). It is read-only and used by Playwright.
 - Playwright: `web/playwright.config.ts` (chromium, webServer = vite dev on a fixed port), `web/e2e/*.spec.ts`, `pnpm -C web e2e`.
 
 ## Specification
 - Vehicles use colour **and** shape. Moving vehicles are light, elongated quads. Queued vehicles (flag bit0) are amber, shorter/wider, with a dark brake band. Stranded vehicles (bit2) carry a hollow/outlined mark. Motion itself is visible through extrapolation.
 - Closed links get a black/yellow diagonal hatch over the full road width plus barrier glyphs, recognisable in grayscale.
-- Rendering never feeds back into the sim. The frame rate is independent of the tick rate (requestAnimationFrame + extrapolation). Buffers are returned to the worker after upload. **While paused, nothing on the canvas depends on wall time** (no animation and no extrapolation), so the paused canvas is pixel-static. The canvas backing store follows `devicePixelRatio`, and picking/camera work in CSS px.
+- Rendering never feeds back into the sim. The frame rate is independent of the tick rate (requestAnimationFrame + extrapolation). Buffers are returned to the worker after upload. **While paused, nothing on the canvas depends on wall time** (no animation and no extrapolation), so the paused canvas is pixel-static. The canvas backing store follows `devicePixelRatio`, and picking/camera work in CSS px. The mouse wheel zooms about the cursor; its rate is unspecified (one notch must change the view).
 - Commands issued while paused take effect on the next executed tick (core-004 semantics). The UI shows them as pending until a frame confirms them.
 - "Close the main bridge" closes **both directions** of `landmarks.central_bridge`. Pressing it again reopens both.
 
@@ -70,7 +70,11 @@ This is the integration ward of epic `core`. A WebGL2 renderer draws the three-b
 | 10 | `fix G2: pressing the main-bridge toggle again reopens both directions` (Playwright) | the toggle reopens both links; aria-pressed follows |
 | 11 | `fix G3: Esc clears the selection and +/- change the speed` (Playwright) | Esc clears; + and - step through the speed options |
 | 12 | `fix G4: closing the main bridge changes its grayscale appearance` (Playwright) | the empty, paused bridge looks clearly different in grayscale once closed (mean abs. luminance diff > 15) |
-| 13 | `fix G5: clicking a road selects it at DPR 2, also after zooming with the wheel` (Playwright) | HiDPI picking stays consistent with the drawn view after wheel zoom |
+| 13 | (replaced by 20) | — |
+| 17 | `fix S1: a stalled engine shows a visible, non-colour "Behind" status that clears again` (Playwright) | the worker is stalled 2.5 s → visible status text "Behind" appears and clears; achieved speed is shown |
+| 18 | `fix N1: the app starts running at 20×, and the play/pause name follows the state` (Playwright) | default 20×; Pause/Play naming follows the confirmed state, also via Space |
+| 19 | `fix N2: vehicles are drawn inside their own right-hand roadway` (Playwright) | ≥ 95 % of changed pixels between two paused images lie within the west→east roadway (shader placement matches camera/picking) |
+| 20 | `fix G5 (r2): clicking a road selects it at DPR 2, also after zooming with the wheel` (Playwright) | backing store × DPR; picking after wheel zoom (no rate assumption) |
 | 14–16 | `fix U16 …`, `fix U2/U6 …`, `fix U13 …` (Vitest) | segment (not infinite-line) picking; both endpoints shifted and s mapped by sim length; fit clamps zoom |
 
 ## Must NOT
