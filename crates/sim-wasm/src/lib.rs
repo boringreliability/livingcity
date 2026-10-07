@@ -4,7 +4,9 @@
 use wasm_bindgen::prelude::*;
 
 use sim_core::cities::{three_bridges, Landmarks, Zone, ZoneKind};
-use sim_core::frame::{metrics_to_array, write_link_stats, write_vehicle_records, NetworkExport, METRIC_NAMES};
+use sim_core::frame::{
+    metrics_to_extended_array, write_link_stats, write_vehicle_records, NetworkExport, EXTENDED_METRIC_NAMES,
+};
 use sim_core::{Command, CommandKind, LinkId, World};
 
 #[wasm_bindgen]
@@ -85,11 +87,11 @@ impl Sim {
     }
 
     pub fn metrics(&self) -> Vec<f64> {
-        metrics_to_array(&self.world.metrics())
+        metrics_to_extended_array(&self.world.metrics())
     }
 
     pub fn metric_names(&self) -> Vec<String> {
-        METRIC_NAMES.iter().map(|s| s.to_string()).collect()
+        EXTENDED_METRIC_NAMES.iter().map(|s| s.to_string()).collect()
     }
 
     pub fn closed_links(&self) -> Vec<u32> {

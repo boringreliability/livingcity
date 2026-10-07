@@ -7,9 +7,10 @@ use crate::command::{Command, CommandError, CommandKind};
 use crate::demand::{trips_at, DemandError, DemandModel};
 use crate::network::{LinkId, Network, NodeId};
 use crate::params::{
-    ACCEL, COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, JAM_SPACING, LANE_CREDIT_CAP, LANE_CREDIT_PER_TICK,
+    ACCEL, COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, GRIDLOCK_REMOVE_TICKS, GRIDLOCK_REROUTE_TICKS, JAM_SPACING,
+    LANE_CREDIT_CAP,
     NO_ROUTE_MAX_RETRIES, NO_ROUTE_RETRY_TICKS, ORIGIN_ADMIT_PER_TICK, QUEUED_SPEED, REROUTE_BUDGET_PER_TICK,
-    REROUTE_PERIOD_TICKS, SAT_FLOW_PER_LANE, SWITCH_MIN_GAIN_S, SWITCH_RATIO,
+    REROUTE_PERIOD_TICKS, SWITCH_MIN_GAIN_S, SWITCH_RATIO,
 };
 use crate::rng::BehaviorRng;
 use crate::routing::{cost_key, free_flow_cost, RouterCache, Tree};
@@ -89,6 +90,8 @@ pub struct VehicleInfo {
     pub no_route_retries: u32,
     /// Route changes after spawn (any cause).
     pub route_switches: u32,
+    /// Consecutive stop-line evaluations blocked by a full next link (contract C2).
+    pub blocked_ticks: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -98,6 +101,8 @@ pub struct RerouteStats {
     pub retries_total: u64,
     pub switches_total: u64,
     pub max_budgeted_in_a_tick: u32,
+    /// Gridlock reroutes that found a path (contract C2).
+    pub gridlock_reroutes: u64,
 }
 
 /// The metric set shown in the UI; definitions in the model contract.
@@ -119,6 +124,10 @@ pub struct Metrics {
     pub mean_travel_time_s: Option<f64>,
     pub incomplete: u64,
     pub mean_incomplete_age_s: Option<f64>,
+    /// Vehicles removed after GRIDLOCK_REMOVE_TICKS blocked (contract C2).
+    pub removed_gridlock: u64,
+    /// Trips the city could not serve: `unreachable + removed_gridlock`.
+    pub unserved: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +171,7 @@ struct Vehicle {
     retries: u32,
     next_retry_tick: u64,
     route_switches: u32,
+    blocked_ticks: u32,
     in_priority: bool,
     in_periodic: bool,
     /// Trip endpoints (a NoRoute vehicle has an empty route).
@@ -198,6 +208,7 @@ impl Vehicle {
             retries: 0,
             next_retry_tick: tick + NO_ROUTE_RETRY_TICKS,
             route_switches: 0,
+            blocked_ticks: 0,
             in_priority: false,
             in_periodic: false,
         }
@@ -238,7 +249,9 @@ pub struct World {
     next_trip_id: u64,
     spawned: u64,
     completed: u64,
+    /// All removals (unreachable + gridlock).
     removed: u64,
+    removed_gridlock: u64,
     completed_log: Vec<CompletedTrip>,
     /// Running Σ travel time (s) over `completed_log`, in log order.
     completed_tt_sum: f64,
@@ -301,6 +314,7 @@ impl World {
             spawned: 0,
             completed: 0,
             removed: 0,
+            removed_gridlock: 0,
             completed_log: Vec::new(),
             completed_tt_sum: 0.0,
             demand,
@@ -375,6 +389,7 @@ impl World {
             stranded: v.stranded,
             no_route_retries: v.retries,
             route_switches: v.route_switches,
+            blocked_ticks: v.blocked_ticks,
         })
     }
 
@@ -411,11 +426,13 @@ impl World {
             stranded: c.stranded,
             queued,
             completed: c.completed,
-            removed_unreachable: c.removed,
-            unreachable: c.no_route + c.stranded + c.removed,
+            removed_unreachable: c.removed - self.removed_gridlock,
+            unreachable: c.no_route + c.stranded + c.removed - self.removed_gridlock,
             mean_travel_time_s: (self.completed > 0).then(|| self.completed_tt_sum / self.completed as f64),
             incomplete: c.active,
             mean_incomplete_age_s,
+            removed_gridlock: self.removed_gridlock,
+            unserved: c.no_route + c.stranded + c.removed,
         }
     }
 
@@ -484,6 +501,7 @@ impl World {
                     h.u64(v.retries as u64);
                     h.u64(v.next_retry_tick);
                     h.u64(v.route_switches as u64);
+                    h.u64(v.blocked_ticks as u64);
                     h.u64(v.in_priority as u64);
                     h.u64(v.in_periodic as u64);
                     h.u64(v.origin.0 as u64);
@@ -506,7 +524,7 @@ impl World {
             buf.iter().for_each(|&s| h.u64(s as u64));
         }
         self.exit_count.iter().for_each(|&e| h.u64(e));
-        for x in [self.next_trip_id, self.spawned, self.completed, self.removed] {
+        for x in [self.next_trip_id, self.spawned, self.completed, self.removed, self.removed_gridlock] {
             h.u64(x);
         }
         h.u64(self.completed_log.len() as u64);
@@ -554,7 +572,14 @@ impl World {
             }
         }
         let s = &self.reroute_stats;
-        for x in [s.budgeted_total, s.forced_total, s.retries_total, s.switches_total, s.max_budgeted_in_a_tick as u64] {
+        for x in [
+            s.budgeted_total,
+            s.forced_total,
+            s.retries_total,
+            s.switches_total,
+            s.max_budgeted_in_a_tick as u64,
+            s.gridlock_reroutes,
+        ] {
             h.u64(x);
         }
         h.finish()
@@ -620,7 +645,7 @@ impl World {
         for (l, link) in self.network.links().iter().enumerate() {
             let queued = self.lanes[l].iter().flatten().filter(|&&s| self.veh(s).v < QUEUED_SPEED).count();
             let queue_term = link.length_m / link.speed_limit_mps
-                + queued as f64 / (link.lanes as f64 * SAT_FLOW_PER_LANE);
+                + queued as f64 / (link.lanes as f64 * link.sat_flow_per_lane);
             let observed = if self.exit_time_n[l] > 0 {
                 (self.exit_time_sum[l] / self.exit_time_n[l] as f64).max(queue_term)
             } else {
@@ -974,8 +999,9 @@ impl World {
     }
 
     fn discharge_lane(&mut self, link: LinkId, lane: usize) -> Crossing {
+        let inc = self.network.link(link).sat_flow_per_lane * DT;
         let credit = &mut self.credit[link.index()][lane];
-        *credit = (*credit + LANE_CREDIT_PER_TICK).min(LANE_CREDIT_CAP);
+        *credit = (*credit + inc).min(LANE_CREDIT_CAP);
 
         let Some(&slot) = self.lanes[link.index()][lane].front() else {
             return Crossing::None;
@@ -989,6 +1015,7 @@ impl World {
         let reach = veh.s + v_next * DT;
         // Contract: crossing iff `s + v' * DT >= length` (all values finite).
         if reach < length {
+            self.veh_mut(slot).blocked_ticks = 0;
             return Crossing::None;
         }
 
@@ -999,6 +1026,7 @@ impl World {
             return Crossing::Completed;
         }
         if veh.stranded {
+            self.veh_mut(slot).blocked_ticks = 0;
             return Crossing::None; // acts only on its retry schedule; blocks the lane
         }
 
@@ -1010,29 +1038,76 @@ impl World {
                 Some((path, _)) => self.assign_route(slot, path),
                 None => {
                     self.enter_without_route(slot);
+                    self.veh_mut(slot).blocked_ticks = 0;
                     return Crossing::None;
                 }
             }
         }
-        let veh = self.veh(slot);
 
-        if self.credit[link.index()][lane] < 1.0 {
+        let mut next = self.veh(slot).route[self.veh(slot).route_pos + 1];
+        let mut entry_s = (reach - length).min(self.network.link(next).length_m);
+        let mut next_lane = self.choose_lane(next, entry_s);
+        if next_lane.is_none() {
+            // Blocked (contract C2): no space downstream, whatever the credit. One count per evaluation.
+            let blocked = {
+                let v = self.veh_mut(slot);
+                v.blocked_ticks += 1;
+                v.blocked_ticks as u64
+            };
+            if blocked == GRIDLOCK_REMOVE_TICKS {
+                self.remove_gridlocked(slot, link, lane);
+                return Crossing::None;
+            }
+            if blocked.is_multiple_of(GRIDLOCK_REROUTE_TICKS) {
+                if let Some(path) = self.gridlock_path(slot, next) {
+                    self.reroute_stats.gridlock_reroutes += 1;
+                    self.assign_route(slot, path);
+                    let v = self.veh(slot);
+                    next = v.route[v.route_pos + 1];
+                    entry_s = (reach - length).min(self.network.link(next).length_m);
+                    next_lane = self.choose_lane(next, entry_s);
+                }
+            }
+            // Still no space, or space but no credit: stay; the count is not reset in this evaluation.
+            if next_lane.is_none() || self.credit[link.index()][lane] < 1.0 {
+                return Crossing::None;
+            }
+        } else if self.credit[link.index()][lane] < 1.0 {
+            self.veh_mut(slot).blocked_ticks = 0; // credit-limited with space: not blocked
             return Crossing::None;
         }
-        let next = veh.route[veh.route_pos + 1];
-        let next_len = self.network.link(next).length_m;
-        let entry_s = (reach - length).min(next_len);
-        let Some(next_lane) = self.choose_lane(next, entry_s) else {
-            return Crossing::None;
-        };
-        let v_entry = v_next.min(self.network.link(next).speed_limit_mps * veh.speed_factor);
+        let next_lane = next_lane.expect("space was found above");
+        let v_entry = v_next.min(self.network.link(next).speed_limit_mps * self.veh(slot).speed_factor);
 
         self.credit[link.index()][lane] -= 1.0;
         self.lanes[link.index()][lane].pop_front();
         self.record_exit(link, slot);
-        self.veh_mut(slot).route_pos += 1;
+        let v = self.veh_mut(slot);
+        v.route_pos += 1;
+        v.blocked_ticks = 0;
         self.place_on_link(slot, next, next_lane, entry_s, v_entry);
         Crossing::Transferred
+    }
+
+    /// Contract C2: a fresh search from the decision point with `excluded` treated as
+    /// closed for this one search. It never reads or writes the router cache.
+    fn gridlock_path(&self, slot: u32, excluded: LinkId) -> Option<Vec<LinkId>> {
+        let (from, dest) = self.decision_point(slot);
+        let closed = &self.closed;
+        Tree::build(&self.network, &self.cost_keys, |l| !closed[l.index()] && l != excluded, dest)
+            .route(&self.network, from)
+            .map(|(path, _)| path)
+    }
+
+    /// Contract C2 last resort: the blocked front leaves its lane. Not a completion,
+    /// not an exit (no exit count, no exit-time sample), and `rr_next` is untouched.
+    fn remove_gridlocked(&mut self, slot: u32, link: LinkId, lane: usize) {
+        let front = self.lanes[link.index()][lane].pop_front();
+        debug_assert_eq!(front, Some(slot));
+        self.slots[slot as usize] = None;
+        self.removed += 1;
+        self.removed_gridlock += 1;
+        self.free.push(slot);
     }
 
     fn complete(&mut self, slot: u32) {

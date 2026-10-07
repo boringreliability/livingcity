@@ -41,3 +41,11 @@ pub const NO_ROUTE_RETRY_TICKS: u64 = 60;
 pub const NO_ROUTE_MAX_RETRIES: u32 = 10;
 /// Max lanes per link.
 pub const MAX_LANES: u8 = 8;
+
+/// Highest accepted per-link saturation flow (veh/s per lane): one credit per tick.
+pub const MAX_SAT_FLOW_PER_LANE: f64 = 2.0;
+/// Gridlock relief: a front blocked by a full downstream link reroutes at every
+/// positive multiple of this many blocked ticks (60 s), below the removal threshold.
+pub const GRIDLOCK_REROUTE_TICKS: u64 = 120;
+/// Gridlock relief: a front blocked this many ticks (10 min) is removed.
+pub const GRIDLOCK_REMOVE_TICKS: u64 = 1200;

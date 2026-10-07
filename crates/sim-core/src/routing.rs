@@ -4,11 +4,10 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 
 use crate::network::{Link, LinkId, Network, NodeId};
-use crate::params::SAT_FLOW_PER_LANE;
 
-/// length / vmax + 1 / (lanes × SAT_FLOW_PER_LANE), in seconds.
+/// length / vmax + 1 / (lanes × sat_flow_per_lane), in seconds.
 pub fn free_flow_cost(link: &Link) -> f64 {
-    link.length_m / link.speed_limit_mps + 1.0 / (link.lanes as f64 * SAT_FLOW_PER_LANE)
+    link.length_m / link.speed_limit_mps + 1.0 / (link.lanes as f64 * link.sat_flow_per_lane)
 }
 
 /// Integer-millisecond Dijkstra key: `(cost × 1000).round()`.

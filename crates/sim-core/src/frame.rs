@@ -117,3 +117,33 @@ pub fn metrics_to_array(m: &Metrics) -> Vec<f64> {
         m.mean_incomplete_age_s.unwrap_or(f64::NAN),
     ]
 }
+
+/// `METRIC_NAMES` (unchanged since core) followed by the epic-city metrics.
+pub const EXTENDED_METRIC_NAMES: &[&str] = &[
+    "tick",
+    "sim_time_s",
+    "trips_generated",
+    "spawned",
+    "active",
+    "on_network",
+    "waiting_at_origin",
+    "no_route",
+    "stranded",
+    "queued",
+    "completed",
+    "removed_unreachable",
+    "unreachable",
+    "mean_travel_time_s",
+    "incomplete",
+    "mean_incomplete_age_s",
+    "removed_gridlock",
+    "unserved",
+];
+
+/// `Metrics` as numbers in `EXTENDED_METRIC_NAMES` order; `None` → NaN.
+pub fn metrics_to_extended_array(m: &Metrics) -> Vec<f64> {
+    let mut out = metrics_to_array(m);
+    out.push(m.removed_gridlock as f64);
+    out.push(m.unserved as f64);
+    out
+}

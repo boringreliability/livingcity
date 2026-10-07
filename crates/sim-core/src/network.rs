@@ -1,7 +1,7 @@
 //! Directed road network. Node coordinates are world meters (simulation
 //! data); nothing here knows about screens or drawing.
 
-use crate::params::{JAM_SPACING, MAX_LANES, MAX_LINK_LENGTH, MIN_LINK_LENGTH};
+use crate::params::{JAM_SPACING, MAX_LANES, MAX_LINK_LENGTH, MAX_SAT_FLOW_PER_LANE, MIN_LINK_LENGTH, SAT_FLOW_PER_LANE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u32);
@@ -36,6 +36,8 @@ pub struct Link {
     pub length_m: f64,
     pub speed_limit_mps: f64,
     pub lanes: u8,
+    /// Intersection discharge capacity per lane (veh/s); default `SAT_FLOW_PER_LANE`.
+    pub sat_flow_per_lane: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,6 +48,9 @@ pub enum NetworkError {
     TooLong { from: NodeId, to: NodeId, length_m: f64 },
     InvalidSpeed { from: NodeId, to: NodeId },
     InvalidLanes { from: NodeId, to: NodeId, lanes: u8 },
+    InvalidSatFlow { from: NodeId, to: NodeId },
+    /// A saturation-flow override names a link that does not exist.
+    UnknownLink(LinkId),
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +70,8 @@ pub struct NetworkBuilder {
     nodes: Vec<Node>,
     zones: Vec<bool>,
     links: Vec<PendingLink>,
+    /// Saturation-flow overrides; the last call per link wins.
+    sat_flow: Vec<(LinkId, f64)>,
 }
 
 impl NetworkBuilder {
@@ -115,6 +122,12 @@ impl NetworkBuilder {
         id
     }
 
+    /// Override a link's saturation flow (veh/s per lane). Validated in [`build`](Self::build).
+    pub fn set_sat_flow(&mut self, link: LinkId, veh_per_s_per_lane: f64) {
+        self.sat_flow.retain(|&(l, _)| l != link);
+        self.sat_flow.push((link, veh_per_s_per_lane));
+    }
+
     pub fn build(self) -> Result<Network, NetworkError> {
         let n_nodes = self.nodes.len();
         let mut links = Vec::with_capacity(self.links.len());
@@ -144,6 +157,11 @@ impl NetworkBuilder {
             if p.lanes == 0 || p.lanes > MAX_LANES {
                 return Err(NetworkError::InvalidLanes { from: p.from, to: p.to, lanes: p.lanes });
             }
+            let sat_flow_per_lane =
+                self.sat_flow.iter().find(|&&(l, _)| l.index() == i).map_or(SAT_FLOW_PER_LANE, |&(_, v)| v);
+            if !(sat_flow_per_lane.is_finite() && sat_flow_per_lane > 0.0 && sat_flow_per_lane <= MAX_SAT_FLOW_PER_LANE) {
+                return Err(NetworkError::InvalidSatFlow { from: p.from, to: p.to });
+            }
             links.push(Link {
                 id: LinkId(i as u32),
                 from: p.from,
@@ -151,7 +169,11 @@ impl NetworkBuilder {
                 length_m,
                 speed_limit_mps: p.speed_limit_mps,
                 lanes: p.lanes,
+                sat_flow_per_lane,
             });
+        }
+        if let Some(unknown) = self.sat_flow.iter().map(|&(l, _)| l).filter(|l| l.index() >= links.len()).min() {
+            return Err(NetworkError::UnknownLink(unknown));
         }
 
         // Links are pushed in id order, so adjacency lists come out ascending.

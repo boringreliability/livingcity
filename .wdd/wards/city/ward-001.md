@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Capacity attributes and gridlock relief"
 epic: "city"
-status: "approved"
+status: "gold"
 dependencies: ["core-005"]
 layer: "rust"
 estimated_tests: 28
