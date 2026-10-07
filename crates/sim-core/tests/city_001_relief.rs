@@ -393,7 +393,7 @@ fn blocked_counter_counts_downstream_full_only() {
                 // no path exists at 120, 240, …)
                 match prev {
                     None => assert!(i.blocked_ticks <= 1, "tick {t}: starts at 1, got {}", i.blocked_ticks),
-                    Some(p) if p == 0 => assert!(i.blocked_ticks <= 1),
+                    Some(0) => assert!(i.blocked_ticks <= 1),
                     Some(p) => assert_eq!(i.blocked_ticks, p + 1, "tick {t}"),
                 }
                 assert_eq!(i.route, route_v, "no path around P: the route is kept");
@@ -954,11 +954,11 @@ fn stranding_resets_a_blocked_count() {
     let cx = b.link(bb, x, 10.0, 1);
     let mut w = World::new(b.build().unwrap());
     w.schedule(close(cx, 0)).unwrap();
-    w.step();
+    step_checked(&mut w);
     let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
     let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
     while w.vehicle(v).unwrap().blocked_ticks < 200 {
-        w.step();
+        step_checked(&mut w);
         assert!(w.tick() < 2000);
     }
     let tc = w.tick();
@@ -967,7 +967,7 @@ fn stranding_resets_a_blocked_count() {
     let (mut stranded_seen, mut resumed) = (false, false);
     for _ in 0..200 {
         let t = w.tick();
-        w.step();
+        step_checked(&mut w);
         assert!(w.vehicle(b1).is_some(), "precondition: b1 still holds P at {t}");
         let i = w.vehicle(v).unwrap();
         assert_eq!(i.state, VehicleState::OnLink(l1));
@@ -1001,13 +1001,13 @@ fn gridlock_removal_records_no_exit_time() {
     let r = b.link(bb, d, 10.0, 1);
     b.set_sat_flow(p, 1e-6);
     let mut w = World::new(b.build().unwrap());
-    w.step();
+    step_checked(&mut w);
     let b1 = w.spawn_with_route(vec![l1, p, r]).unwrap();
     let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
     let mut removed_at = None;
     for _ in 0..3000 {
         let t = w.tick();
-        w.step();
+        step_checked(&mut w);
         if w.vehicle(v).is_none() {
             removed_at = Some(t);
             break;
@@ -1019,11 +1019,11 @@ fn gridlock_removal_records_no_exit_time() {
     assert_ne!(rm % COST_EPOCH_TICKS, 0, "precondition: removal not on an epoch tick");
     // When the epoch after the removal updates L1 (empty, no real exits since b1's ~tick 25)
     while w.tick() % COST_EPOCH_TICKS != 0 {
-        w.step();
+        step_checked(&mut w);
     }
     assert!(w.link_vehicles(l1).is_empty());
     let prev = w.link_cost(l1);
-    w.step(); // epoch boundary
+    step_checked(&mut w); // epoch boundary
     // Then the cost has no exit-time sample: observed = queue_term = 200/10 + 0
     let ff = 200.0 / 10.0 + 1.0 / 0.5;
     let expected = f64::max(ff, 0.5 * (200.0 / 10.0) + 0.5 * prev);
@@ -1057,7 +1057,7 @@ fn gridlock_search_uses_current_costs() {
     let ce = b.link_with_length(ze, e, 50.0, 10.0, 1);
     let mut w = World::new(b.build().unwrap());
     w.schedule(close(cx, 0)).unwrap();
-    w.step();
+    step_checked(&mut w);
     let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
     let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
     for _ in 0..6 {
@@ -1069,7 +1069,7 @@ fn gridlock_search_uses_current_costs() {
     for _ in 0..400 {
         let t = w.tick();
         let g0 = w.reroute_stats().gridlock_reroutes;
-        w.step();
+        step_checked(&mut w);
         if w.reroute_stats().gridlock_reroutes > g0 {
             // precondition: by current costs S is cheaper than Q
             let cq = w.link_cost(q1) + w.link_cost(q2);
@@ -1082,4 +1082,197 @@ fn gridlock_search_uses_current_costs() {
         }
     }
     panic!("no gridlock reroute");
+}
+
+// ─── 23–26: added after Red review r3 (reviewer-verified against a reference) ──
+
+// ─── 23 ───────────────────────────────────────────────────────────────────
+/// R3-1 (kills U and G2). L1 earns credit slowly (sat 0.005: 400 ticks per credit). v is blocked
+/// behind stranded b1 on P while L1 re-earns credit. At count 120 the gridlock reroute finds the
+/// free Q route, but credit < 1: v stays with its count unchanged (120). From the next evaluation
+/// on it is credit-limited with space, so the count is 0 until it crosses onto Q1.
+#[test]
+fn relief_with_space_but_low_credit() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let x = b.node(10.0, -200.0);
+    let e = b.node(5.0, 9.0);
+    let y = b.node(5.0, 209.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let cx = b.link(bb, x, 10.0, 1);
+    let q1 = b.link_with_length(a, e, 10.0, 10.0, 1);
+    let q2 = b.link_with_length(e, bb, 10.0, 10.0, 1);
+    let _cy = b.link(e, y, 10.0, 1);
+    b.set_sat_flow(l1, 0.005);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(cx, 0)).unwrap();
+    step_checked(&mut w);
+    let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+
+    let mut relief_at = None;
+    let mut waited = 0;
+    for _ in 0..2000 {
+        let t = w.tick();
+        let g0 = w.reroute_stats().gridlock_reroutes;
+        let before = w.vehicle(v).unwrap();
+        step_checked(&mut w);
+        let i = w.vehicle(v).unwrap();
+        if w.reroute_stats().gridlock_reroutes > g0 {
+            assert_eq!(before.blocked_ticks, GRIDLOCK_REROUTE_TICKS as u32 - 1, "tick {t}");
+            assert_eq!(i.route, vec![l1, q1, q2, r], "tick {t}");
+            assert_eq!(i.state, VehicleState::OnLink(l1), "tick {t}: crossed without credit");
+            assert_eq!(i.blocked_ticks, GRIDLOCK_REROUTE_TICKS as u32, "tick {t}: count must stay unchanged");
+            relief_at = Some(t);
+            continue;
+        }
+        if relief_at.is_some() {
+            if i.state == VehicleState::OnLink(l1) {
+                assert_eq!(i.route, vec![l1, q1, q2, r], "tick {t}");
+                assert_eq!(i.blocked_ticks, 0, "tick {t}: credit-limited with space must reset");
+                waited += 1;
+            } else {
+                assert_eq!(i.state, VehicleState::OnLink(q1));
+                assert!(w.vehicle(b1).is_some());
+                assert!(waited >= 10, "precondition: v waited for credit after the relief ({waited})");
+                return;
+            }
+        }
+    }
+    panic!("no relief / no crossing");
+}
+
+
+// ─── 24 ───────────────────────────────────────────────────────────────────
+/// R3-2 (kills PR). A budgeted (priority) reroute that changes a blocked front's route
+/// downstream of its next link does not reset its count.
+#[test]
+fn priority_reroute_keeps_blocked_count() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let x = b.node(10.0, -200.0);
+    let m = b.node(110.0, 100.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let cx = b.link(bb, x, 10.0, 1);
+    let r2a = b.link(bb, m, 10.0, 1);
+    let r2b = b.link(m, d, 10.0, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(cx, 0)).unwrap();
+    step_checked(&mut w);
+    let _b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    while w.vehicle(v).unwrap().blocked_ticks < 200 {
+        step_checked(&mut w);
+        assert!(w.tick() < 2000);
+    }
+    let tc = w.tick();
+    w.schedule(close(r, tc)).unwrap();
+    step_checked(&mut w);
+    let i = w.vehicle(v).unwrap();
+    assert_eq!(i.route, vec![l1, p, r2a, r2b], "precondition: priority reroute around R");
+    assert_eq!(i.blocked_ticks, 201, "a budgeted reroute reset the blocked count");
+}
+
+
+// ─── 25 ───────────────────────────────────────────────────────────────────
+/// R3-3 (kills FD). A forced decision whose new next link is full is a blocked evaluation:
+/// the count is 1 in that evaluation and keeps rising.
+#[test]
+fn forced_decision_into_full_link_counts() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let e = b.node(5.0, 9.0);
+    let y = b.node(5.0, 209.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let q1 = b.link_with_length(a, e, 10.0, 10.0, 1);
+    let q2 = b.link_with_length(e, bb, 10.0, 10.0, 1);
+    let cy = b.link(e, y, 10.0, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(cy, 0)).unwrap();
+    w.schedule(close(p, 0)).unwrap();
+    step_checked(&mut w);
+    let b2 = w.spawn_with_route(vec![l1, q1, cy]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    let mut forced_seen = false;
+    let mut prev = 0u32;
+    for _ in 0..300 {
+        let t = w.tick();
+        let f0 = w.reroute_stats().forced_total;
+        step_checked(&mut w);
+        let i = w.vehicle(v).unwrap();
+        if w.reroute_stats().forced_total > f0 && i.route == vec![l1, q1, q2, r] && !forced_seen {
+            assert!(w.vehicle(b2).unwrap().stranded, "precondition: b2 holds Q1");
+            assert_eq!(i.blocked_ticks, 1, "tick {t}: forced decision into a full link not counted");
+            forced_seen = true;
+        } else if forced_seen {
+            assert_eq!(i.blocked_ticks, prev + 1, "tick {t}");
+        }
+        prev = i.blocked_ticks;
+    }
+    assert!(forced_seen, "precondition: forced decision observed");
+}
+
+
+// ─── 26 ───────────────────────────────────────────────────────────────────
+/// R3-4 (kills NR). "Blocked" requires the evaluation to reach the stop line. v drives the
+/// 200 m L1 alone toward P, which b1 already holds for good: during the approach v is a lane
+/// front with a full next link, but it does not reach the line, so its count stays 0. It is 1
+/// in its first evaluation at the line.
+#[test]
+fn approaching_front_is_not_blocked() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let x = b.node(10.0, -200.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let cx = b.link(bb, x, 10.0, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(cx, 0)).unwrap();
+    step_checked(&mut w);
+    let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
+    while !w.vehicle(b1).unwrap().stranded {
+        step_checked(&mut w);
+        assert!(w.tick() < 200);
+    }
+    assert_eq!(w.link_count(p), w.network().capacity(p), "precondition: P full");
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    let mut approach_ticks = 0;
+    for _ in 0..200 {
+        let t = w.tick();
+        step_checked(&mut w);
+        assert!(w.vehicle(b1).is_some());
+        let i = w.vehicle(v).unwrap();
+        if i.state != VehicleState::OnLink(l1) {
+            continue;
+        }
+        if i.s < 200.0 - 1e-9 {
+            // still short of the line: not a blocked evaluation
+            assert_eq!(i.blocked_ticks, 0, "tick {t}: counted at s = {} before reaching the line", i.s);
+            approach_ticks += 1;
+        } else {
+            assert!(approach_ticks >= 20, "precondition: a long approach ({approach_ticks} ticks)");
+            assert_eq!(i.blocked_ticks, 1, "tick {t}: first evaluation at the line");
+            return;
+        }
+    }
+    panic!("v never reached the line");
 }
