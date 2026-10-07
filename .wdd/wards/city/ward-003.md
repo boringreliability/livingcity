@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Inspect vehicles and roads"
 epic: "city"
-status: "planned"
+status: "red"
 dependencies: ["city-002"]
 layer: "typescript"
 estimated_tests: 16
@@ -13,84 +13,108 @@ completed: null
 # Ward city-003: Inspect vehicles and roads
 
 ## Scope
-The brief requires "inspect roads and vehicles" and "cars you can follow". Clicking a vehicle selects it:
-- a panel shows its trip;
-- its remaining route is highlighted on the map;
-- an optional **Follow** mode keeps the camera on it.
+The brief requires "inspect roads and vehicles" and "cars you can follow".
+- **Select a vehicle:** clicking it shows a panel with its trip, highlights its remaining route on the map, and offers **Follow**, which keeps the camera on it.
+- **Inspect a road:** clicking a road shows real link statistics from the simulation: vehicles, queued, current travel cost vs free flow, capacity in veh/h, and exits.
 
-Clicking a road shows real link statistics from the simulation (vehicles, queued, current travel cost vs free flow, capacity in veh/h, exits). The data follows `.wdd/epics/city.md` § C4: on-demand queries, one tracked vehicle and one link detail per frame, with no per-vehicle calls or JSON.
+Data follows `.wdd/epics/city.md` § C4: on-demand queries, one tracked vehicle and one link detail per frame, no per-vehicle calls, and no JSON of vehicles.
 
 ## Inputs
 - core-004/005: `Sim` adapter, worker host and protocol, `client.ts`, `frame.ts` AoS decoder, `picking.ts`, `geometry.vehiclePosition`, renderer state texture, `SelectionPanel`, the `window.__livingcity` hook.
-- city-001: `VehicleInfo.blocked_ticks`, `Link.sat_flow_per_lane`. city-002: River City and zones (names for origin/destination).
+- city-001: `VehicleInfo.blocked_ticks`, `Link.sat_flow_per_lane`.
+- city-002: River City and its zones (names for origin and destination).
 
 ## Outputs
-- **Rust:**
-  - `World::vehicle_at(link, lane, index_from_front) -> Option<u64>`;
-  - `World::vehicle_by_trip(trip_id) -> Option<VehicleInfo>` (live vehicles only);
-  - `World::link_stats(link) -> LinkStats { vehicles: u32, queued: u32, cost_s: f64, free_flow_s: f64, exits: u64 }`;
-  - `World::trip_outcome(trip_id) -> TripOutcome::{Live, Completed { travel_time_s }, RemovedUnreachable, RemovedGridlock, Unknown}`, which tells the UI why a followed vehicle vanished;
-  - `VehicleInfo` gains `origin: NodeId` and `dest: NodeId`;
-  - `NetworkExport.link_sat_flow`.
-- **sim-wasm:** `Sim::vehicle_at`, `Sim::vehicle_detail(trip_id) -> Vec<f64>` (fixed header + remaining route ids, layout documented in `protocol.ts`), `Sim::link_detail(link) -> Vec<f64>`, `Sim::trip_outcome(trip_id) -> u32 + travel time`, `Sim::link_sat_flow()`.
-- **Protocol:**
-  - `ToWorker` gains `{ type: 'inspectVehicle', link, lane, index } | { type: 'inspectVehicle', clear: true }` and `{ type: 'inspectLink', link: number | null }`.
-  - `FrameMessage` gains `tracked: TrackedVehicle | TrackedGone | null` and `linkDetail: LinkDetail | null`.
+- **Rust (`sim-core`)**
+  - `World::vehicle_at(link, lane, index_from_front) -> Option<u64>` returns the trip id.
+  - `World::vehicle_by_trip(trip_id) -> Option<VehicleInfo>`, for live vehicles only.
+  - `World::link_stats(link) -> LinkStats { vehicles: u32, queued: u32, cost_s: f64, free_flow_s: f64, exits: u64 }`. Panics on an unknown link, like the other accessors.
+  - `World::trip_outcome(trip_id) -> TripOutcome`, one of:
+    - `Live`;
+    - `Completed { travel_time_s }`;
+    - `RemovedUnreachable`;
+    - `RemovedGridlock`;
+    - `Unknown` (never spawned).
+  - The world keeps a `removed_log: Vec<(trip_id, RemovalKind)>`. It is state, so `state_hash` covers it. Spawned trip ids are dense, so `Unknown` means `trip_id >= next_trip_id`.
+  - `VehicleInfo` gains `origin: NodeId` and `dest: NodeId`.
+  - `NetworkExport.link_sat_flow: Vec<f32>`.
+- **sim-wasm**
+  - `Sim::vehicle_detail(trip_id: f64) -> Vec<f64>` uses `VEHICLE_DETAIL` (documented in `protocol.ts`):
+    - header `[found, trip_id, origin_node, dest_node, state, link, lane, s, v, age_s, route_switches, blocked_ticks, route_len]`;
+    - then `route_len` link ids: the remaining route `route[route_pos..]`, current link first (empty when waiting or NoRoute);
+    - state codes: 0 = waiting at origin, 1 = driving, 2 = queued (on network, v < 2 m/s), 3 = stranded, 4 = no route.
+    - `found == 0` means "not live", with the rest zero.
+  - `Sim::trip_outcome(trip_id) -> Vec<f64>`: `[code, travel_time_s]`. Codes are 0 live, 1 completed, 2 removed unreachable, 3 removed gridlock and 4 unknown; `travel_time_s` is NaN unless completed.
+  - `Sim::link_detail(link) -> Vec<f64>`: `[vehicles, queued, cost_s, free_flow_s, exits, capacity_vph]`, where `capacity_vph = lanes × sat_flow × 3600`.
+  - **Frame trip table.** `encode_frame` also records the trip id of every record of that frame, and the sim keeps the tables of its last 8 encoded frames.
+  - `Sim::trip_at_record(frame_tick: f64, record: u32) -> f64` returns that trip id, or −1 if the frame is no longer retained or the record is out of range.
+  - `Sim::link_sat_flow() -> Vec<f32>`.
+- **Protocol and host**
+  - `ToWorker` gains `{ type: 'inspectVehicle'; frameTick: number; record: number } | { type: 'inspectVehicle'; clear: true }` and `{ type: 'inspectLink'; link: number | null }`.
+  - **Resolving a pick.** The host resolves a pick with `trip_at_record` (−1 → no selection), then tracks that trip.
+  - **Every frame message carries:**
+    - `tracked: TrackedVehicle | TrackedGone | null`:
+      - `TrackedVehicle = { tripId, origin, dest, state, link, lane, s, v, ageS, routeSwitches, blockedTicks, route: Uint32Array }`;
+      - `TrackedGone = { gone: true, tripId, outcome: 'completed' | 'removed_unreachable' | 'removed_gridlock' | 'unknown', travelTimeS: number | null }`, sent exactly once, after which tracking stops;
+    - `linkDetail: LinkDetail | null`, where `LinkDetail = { link, vehicles, queued, costS, freeFlowS, exits, capacityVph }`.
+  - `decodeVehicleDetail(arr) -> TrackedVehicle | null` and `decodeLinkDetail(link, arr) -> LinkDetail` live in `protocol.ts`.
   - `NetworkArrays` gains `linkSatFlow`.
-- **TS:**
-  - `picking.pickVehicle(frame, geometry, camera, x, y, tolerancePx) -> { link, lane, index } | null` (CPU, from the decoded frame).
-  - A `VehiclePanel` component.
-  - Route highlight in the renderer.
-  - Follow mode in `App`.
-  - `snapshot()` gains `trackedTrip: number | null` and `following: boolean`.
+- **TS / UI**
+  - `picking.pickVehicle(vehicles: DecodedVehicles, links: LinkGeom[], camera, sx, sy, tolerancePx = 8) -> number | null` returns a record index: the nearest record centre (`vehiclePosition`, no extrapolation) within the tolerance, with ties going to the lower index.
+  - App keeps a copy of the latest frame's records, because the transferred buffer is returned to the worker. A click tries vehicles first, then roads.
+  - `VehiclePanel` and the route highlight + tracked ring in the renderer.
+  - **Follow mode.** The camera centre is set to the tracked vehicle every rAF, with no easing. A drag pan turns follow off.
+  - **Escape order:** vehicle selection first, then road selection.
+  - **`SelectionPanel` (road)** shows capacity, travel time now / free flow, vehicles, queued and exits. The values carry test ids `link-capacity`, `link-cost`, `link-freeflow`.
+  - **Hook additions:**
+    - `snapshot()` gains `trackedTrip: number | null`, `trackedRoute: number[]`, `following: boolean` and `frameRecords: number`;
+    - `vehicleScreenCenter(record) -> [x, y] | null` for the current frame, unextrapolated;
+    - `trackedScreenCenter() -> [x, y] | null`;
+    - `linkScreenPoint(link, t) -> [x, y] | null`, the point at fraction t along the drawn link;
+    - `pickAt(x, y) -> { vehicle: number | null; link: number | null }`, exactly what a click there would select, without selecting.
+  - **`TrackedVehicle.state`** is a string: `'waiting' | 'driving' | 'queued' | 'stranded' | 'no_route'`, mapped from the detail's state code.
+  - **Selections coexist.** A selected road and a tracked vehicle can both be active: selecting one never clears the other.
+  - **Vehicle panel.** It is a region labelled "Selected vehicle", with its title under test id `vehicle-title`. Its buttons are "Follow" and "Stop following".
 
 ## Specification
-- **Picking.** A click first tries vehicles (nearest drawn vehicle centre within 8 CSS px, using the same extrapolation-free positions as the last frame), then roads (existing). The vehicle's `index_from_front` is its order in the frame records (links → lanes → front first, core-004), so the worker resolves it with `vehicle_at` on the same tick. If the frame's tick differs from the worker's current tick, the worker resolves it against the stored last-encoded frame's ordering (it keeps the last frame's `(link, lane, index) → trip_id` table) to avoid picking the wrong car.
-- **Tracking.** Each frame, the worker encodes the tracked vehicle's detail:
-  - trip id, origin/destination node, state (`driving`, `queued`, `waiting at origin`, `stranded`, `no route`), link, lane, s, v, age in sim s, route switches, `blocked_ticks`, remaining route.
-  - When the vehicle leaves the network or the slot table, the next frame carries `{ gone, tripId, outcome, travelTimeS? }` once. Tracking then stops.
-- **Route highlight.** The remaining route links are drawn with a screen-space dashed centre line of at least 2 px, light, not hue-coded, above the roads and below the vehicles. The tracked vehicle gets a ring of at least 3 px around it, visible in grayscale.
-- **Follow.** While on, the camera centre is set to the tracked vehicle's extrapolated world position every rAF (no easing). Panning by drag or keys turns follow off. Escape clears the vehicle selection, then the road selection.
-- **Vehicle panel.** It shows:
-  - "Trip #id: Origin name → Destination name" (zone names from `ReadyMessage.zones`);
-  - state as **text plus an icon** (never colour alone), speed in km/h, time on trip (sim), road (link id + street role), route switches, and "waiting for space 45 s" when `blocked_ticks > 0`;
-  - "Follow" and "Stop following" buttons, keyboard reachable.
-- **Road panel** (extends `SelectionPanel`):
-  - capacity = `lanes × sat_flow × 3600` veh/h;
-  - travel time now vs free flow (s), vehicles, queued, exits since start;
-  - the Old Bridge shows its lower capacity explicitly.
-- **Budget.** At most one `vehicle_detail` and one `link_detail` call per encoded frame. No per-vehicle JS↔WASM calls.
+- **Panel text.** The vehicle panel title is `Trip #<id>: <origin zone name> → <destination zone name>` (names from `ReadyMessage.zones`; a non-zone node shows `node <id>`). State is shown as text plus an icon, never colour alone. It also shows speed in km/h, time on trip (sim), road (link id), route switches, and "waiting for space <n> s" when `blockedTicks > 0`. "Follow" and "Stop following" buttons are keyboard reachable.
+- **Gone.** After `TrackedGone` the panel shows "Arrived after m:ss" (completed), "Removed: no route" or "Removed: gridlock", follow turns off, and the selection clears when the user dismisses the panel or presses Escape.
+- **Route highlight.** A dashed centre line ≥ 2 CSS px along the remaining route links, light and not hue-coded. It is drawn above the roads and below the vehicles.
+- **Tracked ring.** A ring ≥ 3 px around the tracked vehicle, light with a dark edge, visible in grayscale.
+- **Budget.** At most one `vehicle_detail`, one `trip_outcome` (only when the detail says not live) and one `link_detail` per encoded frame. The trip table costs O(on-network) per encode, and that work is already done in `write_vehicle_records`.
+- **Determinism.** The queries are read-only. `removed_log` is the only new state (needed for `trip_outcome`).
 
 ## Tests
-Rust in `crates/sim-core/tests/city_003_inspect.rs`, Vitest in `web/tests/inspect.test.ts`, Playwright in `web/e2e/inspect.spec.ts`.
+Rust tests are in `crates/sim-core/tests/city_003_inspect.rs`, Vitest in `web/tests/inspect.test.ts`, and Playwright in `web/e2e/inspect.spec.ts`.
 
 | # | Test Name | Verifies |
 |---|-----------|----------|
-| 1 | `vehicle_at_matches_frame_order` (rust) | for every on-network vehicle, `vehicle_at(link, lane, i)` returns the trip id of the i-th record of that lane in `write_vehicle_records` order. Out-of-range gives None |
-| 2 | `vehicle_by_trip_reports_live_vehicles` (rust) | live trips return info with `origin`/`dest` matching `generated_trips`. Completed or removed trips return None |
-| 3 | `trip_outcome_explains_disappearance` (rust) | Completed (with exact travel time), RemovedUnreachable, RemovedGridlock and Unknown, each produced by a real scenario |
-| 4 | `link_stats_match_world` (rust) | vehicles/queued equal `link_count` and the queued definition. `cost_s == link_cost`. `free_flow_s` follows C1. `exits == link_exit_count` |
-| 5 | `inspection_does_not_change_state` (rust) | calling every query each tick leaves `state_hash` identical to a run without queries |
-| 6 | `vehicle_detail_layout_roundtrip` (vitest, real wasm) | the documented header layout decodes to the same values as `vehicle_by_trip`. The remaining route is the tail of `route` from `route_pos` |
-| 7 | `worker_tracks_one_vehicle` (vitest, host) | after `inspectVehicle`, every frame carries `tracked` for that trip. After it completes, exactly one `gone` with outcome `completed`, then `null` |
-| 8 | `pick_resolves_against_the_frames_tick` (vitest, host) | a pick sent with a stale frame's indices resolves to the vehicle that was at that index in that frame, not to a different vehicle that moved into the slot |
-| 9 | `pickVehicle_nearest_within_tolerance` (vitest) | nearest centre within 8 px wins, ties go to the earlier record, and nothing is picked beyond the tolerance |
-| 10 | `link_detail_capacity` (vitest) | the Old Bridge capacity shows ≤ 900 veh/h. A 2-lane default road shows 3600 veh/h |
-| 11 | `click_vehicle_opens_panel` (e2e) | clicking a moving vehicle at fit zoom (paused) opens the vehicle panel with "Trip #… : origin → destination" names from the city's zones |
-| 12 | `tracked_vehicle_ring_and_route_visible` (e2e, grayscale pixels) | after selecting, the ring pixels around the vehicle and a dashed line along the next route link are present in a grayscale screenshot, and absent before selecting |
-| 13 | `follow_keeps_vehicle_centred` (e2e) | with Follow on and the sim running, the tracked vehicle's screen position stays within 12 px of the canvas centre over 3 s. A drag turns follow off |
-| 14 | `vehicle_gone_message` (e2e) | following a vehicle to its destination (at 60×) shows "Arrived after m:ss" and stops following |
-| 15 | `road_panel_real_stats` (e2e) | selecting the Old Bridge shows its capacity (≤ 900 veh/h) and travel time now vs free flow. Closing the main bridge makes "travel time now" rise above free flow within 5 sim min at 20× |
-| 16 | `keyboard_escape_order` (e2e) | Escape first clears the vehicle selection, then the road selection. Both panel buttons are reachable with Tab and work with Enter |
+| 1 | `vehicle_at_matches_frame_order` (rust) | for every on-network vehicle, `vehicle_at(link, lane, i)` returns the trip id of the i-th record of that lane in `write_vehicle_records` order. Out-of-range lane or index gives None |
+| 2 | `vehicle_by_trip_reports_live_vehicles` (rust) | live trips return info whose `origin`/`dest` match `generated_trips`. Completed and removed trips return None, and so do never-spawned ids |
+| 3 | `trip_outcome_explains_disappearance` (rust) | a completed trip reports its exact travel time; a removed unreachable trip, a gridlock-removed trip (ring), a live trip and a never-spawned id report their own outcomes. Each comes from a real scenario |
+| 4 | `link_stats_match_world` (rust) | `vehicles` = `link_count`; `queued` = vehicles with v < 2; `cost_s == link_cost`; `free_flow_s` follows C1; `exits == link_exit_count` |
+| 5 | `inspection_does_not_change_state` (rust) | calling every query on every tick leaves `state_hash` identical to a run without queries |
+| 6 | `vehicle_detail_layout_roundtrip` (vitest, real wasm) | for a sample of frame records, `decodeVehicleDetail(sim.vehicle_detail(sim.trip_at_record(tick, i)))` gives that record's link, lane and s (f32 rounding), state codes consistent with the record's flags, and a route starting with the current link |
+| 7 | `worker_tracks_one_vehicle` (vitest, host) | after `inspectVehicle`, every frame carries `tracked` for that trip. When it completes, exactly one `gone` frame with outcome `completed` and its travel time arrives, then `null` |
+| 8 | `pick_resolves_against_the_frames_tick` (vitest, host) | a pick with an older frame's tick resolves to the vehicle that was at that record in that frame, even though a different vehicle is at that record now. A tick that is no longer retained selects nothing |
+| 9 | `pickVehicle_nearest_within_tolerance` (vitest) | the nearest centre within 8 px wins, ties go to the lower record, and nothing is picked beyond the tolerance |
+| 10 | `link_detail_capacity` (vitest, real wasm) | the Old Bridge link detail shows `capacityVph ≤ 900`. A 2-lane default road shows 3600. `cost_s ≥ free_flow_s`. `NetworkArrays.linkSatFlow` matches |
+| 11 | `click_vehicle_opens_panel` (e2e) | paused at fit zoom, clicking a vehicle's screen centre opens the vehicle panel titled "Trip #… : origin → destination" with zone names, and `trackedTrip` is set |
+| 12 | `tracked_vehicle_ring_and_route_visible` (e2e, grayscale pixels) | after selecting (paused), light pixels appear in a ring box around the tracked vehicle and along a remaining route link's midpoint. They are absent before selecting |
+| 13 | `follow_keeps_vehicle_centred` (e2e) | with Follow on and the sim running at 1×, the tracked vehicle stays within 12 px of the canvas centre for 3 s. A drag turns follow off |
+| 14 | `vehicle_gone_message` (e2e) | following a vehicle to its destination at 60× shows "Arrived after m:ss" (or a removal reason) and stops following |
+| 15 | `road_panel_real_stats` (e2e) | selecting the Old Bridge shows capacity ≤ 900 veh/h and travel time now vs free flow. After closing the main bridge, "travel time now" exceeds free flow within 6 sim min at 20× |
+| 16 | `keyboard_escape_order` (e2e) | Escape first clears the vehicle selection, then the road selection. The Follow button is reachable with Tab and works with Enter |
 
 ## Must NOT
-- Per-vehicle WASM calls, per-frame JSON of vehicles, or moving positions from Rust as x/y (the renderer still maps link + s).
+- Per-vehicle WASM calls, per-frame JSON of vehicles, or x/y positions from Rust (the renderer still maps link + s).
 - Colour-only state signalling in the panel or on the map.
-- Edit approved earlier tests.
+- Editing approved earlier tests.
 
 ## Must DO
 - Keep the frame record format (16 bytes) unchanged.
-- Tracking costs O(route length) per frame, not O(vehicles).
+- Tracking costs O(route length) per frame plus the trip table, never O(vehicles) JS work.
+- All earlier suites stay green unchanged.
 
 ## Manual Smoke Test
 ### Setup
@@ -99,14 +123,14 @@ pnpm -C web build:wasm && pnpm -C web dev
 ```
 ### Steps
 1. Click a car on the Main Bridge.
-   Verify: the panel shows its trip (district names). A ring and a dashed route appear. Follow keeps it centred.
+   Verify: the panel shows its trip with district names. A ring and a dashed route appear. Follow keeps it centred.
 2. Close the main bridge, then click a car approaching it.
-   Verify: its route changes (switch count +1), and the dashed line moves to another bridge.
+   Verify: its route changes (the switch count rises by 1), and the dashed line moves to another bridge.
 3. Click the Old Bridge.
    Verify: capacity ≤ 900 veh/h. After the closure, travel time now > free flow.
 ### Pass criteria
 - [ ] All Rust, Vitest and Playwright tests green, clippy clean, build OK
-- [ ] Follow is smooth (no jitter visible at 1×), and the ring and route are visible in grayscale
+- [ ] Follow is smooth (no visible jitter at 1×), and the ring and route are visible in grayscale
 
 ## Verification
-The Gold reviewer performs the smoke steps with Playwright MCP (screenshots + grayscale check) and runs all suites.
+The Gold reviewer performs the smoke steps with Playwright (screenshots and a grayscale check) and runs all suites.
