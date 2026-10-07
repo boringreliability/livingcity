@@ -3,7 +3,7 @@ ward: 4
 revision: null
 name: "The miniature city look"
 epic: "city"
-status: "red"
+status: "approved"
 dependencies: ["city-003"]
 layer: "typescript"
 estimated_tests: 16
@@ -59,6 +59,11 @@ It also fixes the renderer MINORs that were left open in core-005. All visual da
   - `setDebug({ hideVehicles: boolean })` skips drawing vehicles, so road pixels can be measured.
   - `linkCapacity(link) -> number` returns `lanes × max(1, floor(length / 7.5))`, the simulation's storage capacity.
   - `approachLinks(link) -> number[]` returns the links that end at `link`'s start node, excluding the reverse of `link` and zone connectors, ascending.
+- **Notes from Red r2 for Gold:**
+  - Congestion reaches its full width and lightness effect by 50 % occupancy and is clamped above that, so a road 55 % full is clearly marked.
+  - `riverProfile` covers the whole drawn water.
+  - The legend toggle has an accessible name ("Legend": `city.spec` requires named buttons).
+  - The Gold reviewer checks in screenshots that labels are centred on their points and stay clear of the top inset.
 - **Notes from Red r1 for Gold:**
   - Don't animate the water, because a paused canvas must stay static (`city.spec`).
   - Keep the legend clear of the Old Bridge approach at fit zoom (around x 554–599, y 692–716 on 1280 × 800).
