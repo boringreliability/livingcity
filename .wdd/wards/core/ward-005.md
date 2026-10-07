@@ -6,7 +6,7 @@ epic: "core"
 status: "red"
 dependencies: ["core-004"]
 layer: "typescript"
-estimated_tests: 19
+estimated_tests: 20
 created: "2026-10-06"
 completed: null
 ---
@@ -51,7 +51,7 @@ This is the integration ward of epic `core`. A WebGL2 renderer draws the three-b
 ## Specification
 - Vehicles use colour **and** shape. Moving vehicles are light, elongated quads. Queued vehicles (flag bit0) are amber, shorter/wider, with a dark brake band. Stranded vehicles (bit2) carry a hollow/outlined mark. Motion itself is visible through extrapolation.
 - Closed links get a black/yellow diagonal hatch over the full road width plus barrier glyphs, recognisable in grayscale.
-- Rendering never feeds back into the sim. The frame rate is independent of the tick rate (requestAnimationFrame + extrapolation). Buffers are returned to the worker after upload. **While paused, nothing on the canvas depends on wall time** (no animation and no extrapolation), so the paused canvas is pixel-static. The canvas backing store follows `devicePixelRatio`, and picking/camera work in CSS px. The mouse wheel zooms about the cursor; its rate is unspecified (one notch must change the view).
+- Rendering never feeds back into the sim. The frame rate is independent of the tick rate (requestAnimationFrame + extrapolation). Buffers are returned to the worker after upload. **In core-005 only vehicles move on the canvas**: water, decor, closure markers and selection are static (no wall-time animation), and congestion shading stays within the road's drawn width. Later epics may animate water, but must update the N2/B4 tests accordingly. **While paused, nothing on the canvas depends on wall time** (no animation and no extrapolation), so the paused canvas is pixel-static. The canvas backing store follows `devicePixelRatio`, and picking/camera work in CSS px. The mouse wheel zooms about the cursor; its rate is unspecified (one notch must change the view).
 - Commands issued while paused take effect on the next executed tick (core-004 semantics). The UI shows them as pending until a frame confirms them.
 - "Close the main bridge" closes **both directions** of `landmarks.central_bridge`. Pressing it again reopens both.
 
@@ -75,6 +75,7 @@ This is the integration ward of epic `core`. A WebGL2 renderer draws the three-b
 | 18 | `fix N1: the app starts running at 20×, and the play/pause name follows the state` (Playwright) | default 20×; Pause/Play naming follows the confirmed state, also via Space |
 | 19 | `fix N2: vehicles are drawn inside their own right-hand roadway` (Playwright) | ≥ 95 % of changed pixels between two paused images lie within the west→east roadway (shader placement matches camera/picking) |
 | 20 | `fix G5 (r2): clicking a road selects it at DPR 2, also after zooming with the wheel` (Playwright) | backing store × DPR; picking after wheel zoom (no rate assumption) |
+| 21 | `fix W1: the mouse wheel zooms about the cursor` (Playwright, DPR 2) | the road centre under the cursor stays within 3 px after wheel zoom (CSS-px anchor, not viewport centre) |
 | 14–16 | `fix U16 …`, `fix U2/U6 …`, `fix U13 …` (Vitest) | segment (not infinite-line) picking; both endpoints shifted and s mapped by sim length; fit clamps zoom |
 
 ## Must NOT
