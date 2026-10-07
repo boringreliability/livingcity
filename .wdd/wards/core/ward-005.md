@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "First closure in the browser"
 epic: "core"
-status: "red"
+status: "approved"
 dependencies: ["core-004"]
 layer: "typescript"
 estimated_tests: 20
@@ -51,7 +51,7 @@ This is the integration ward of epic `core`. A WebGL2 renderer draws the three-b
 ## Specification
 - Vehicles use colour **and** shape. Moving vehicles are light, elongated quads. Queued vehicles (flag bit0) are amber, shorter/wider, with a dark brake band. Stranded vehicles (bit2) carry a hollow/outlined mark. Motion itself is visible through extrapolation.
 - Closed links get a black/yellow diagonal hatch over the full road width plus barrier glyphs, recognisable in grayscale.
-- Rendering never feeds back into the sim. The frame rate is independent of the tick rate (requestAnimationFrame + extrapolation). Buffers are returned to the worker after upload. **In core-005 only vehicles move on the canvas**: water, decor, closure markers and selection are static (no wall-time animation), and congestion shading stays within the road's drawn width. Later epics may animate water, but must update the N2/B4 tests accordingly. **While paused, nothing on the canvas depends on wall time** (no animation and no extrapolation), so the paused canvas is pixel-static. The canvas backing store follows `devicePixelRatio`, and picking/camera work in CSS px. The mouse wheel zooms about the cursor; its rate is unspecified (one notch must change the view).
+- Rendering never feeds back into the sim. The frame rate is independent of the tick rate (requestAnimationFrame + extrapolation). Buffers are returned to the worker after upload. **In core-005 only vehicles move on the canvas**: water, decor, closure markers and selection are static (no wall-time animation), and congestion shading stays within the road's drawn width. Later epics may animate water, but must update tests 8 and 19 accordingly. The camera has **no easing or inertia** in core-005: pan and zoom apply immediately. **While paused, nothing on the canvas depends on wall time** (no animation and no extrapolation), so the paused canvas is pixel-static. The canvas backing store follows `devicePixelRatio`, and picking/camera work in CSS px. The mouse wheel zooms about the cursor; its rate is unspecified (one notch must change the view).
 - Commands issued while paused take effect on the next executed tick (core-004 semantics). The UI shows them as pending until a frame confirms them.
 - "Close the main bridge" closes **both directions** of `landmarks.central_bridge`. Pressing it again reopens both.
 

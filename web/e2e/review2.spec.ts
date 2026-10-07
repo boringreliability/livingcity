@@ -41,7 +41,7 @@ test('fix S1: a stalled engine shows a visible, non-colour "Behind" status that 
   });
   // When the simulation worker stalls for 2.5 s (the engine cannot keep up)
   // the simulation worker, selected by its script URL (Red review r3, n9)
-  const worker = page.workers().find((w) => /worker/i.test(w.url()))!;
+  const worker = page.workers().find((w) => /\/sim\/worker\.ts/.test(w.url()))!;
   expect(worker).toBeTruthy();
   await worker.evaluate(() => {
     const end = Date.now() + 2500;
