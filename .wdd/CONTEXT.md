@@ -11,16 +11,15 @@
   - `web/`: worker host + `SimClock`, WebGL2 renderer, React UI, Playwright e2e.
   - Tests: Rust 85, Vitest 45, Playwright 17. Review logs are in `.wdd/reviews/`.
 - **Epic city: active.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
-  - **city-001 complete**: per-link `sat_flow_per_lane` (`set_sat_flow`) and gridlock relief (`blocked_ticks`; reroute every 60 s with the blocked link excluded; removal at 10 min → `removed_gridlock`, `unserved`). `frame::EXTENDED_METRIC_NAMES` is used by sim-wasm, and `METRIC_NAMES` is unchanged. Example `gridlock`. Rust 113 tests. Red took 4 rounds (r4 auto), Gold 2 (r1: clippy on the example). three_bridges stays bit-identical.
-  - **city-002 complete**: `cities::river_city` (6×7 junctions per bank including a near-river column; Main / North / Old Bridge; 11 districts / 22 zones; demand scaled 2.3 intra / 0.9 cross), `City.name` / `City.river`, example `river`. sim-wasm `river_city` / `city_name` / `river`. `init.city` defaults to River City, `?city=three_bridges` gives the core city, `ReadyMessage.city` / `river`, and `riverDecor`. Fix S1: a speed picked before ready is honoured. Tests: Rust 125 (calibration release-only), Vitest 47, Playwright 20. Red took 3 rounds (the C3 reopen target was changed: the 5-min queued ratio was noise), Gold 1. Calibration: `.wdd/memory/decisions/river-city-calibration.md`.
-  - **city-003 complete**: inspection.
-    - Rust: `vehicle_at`, `vehicle_by_trip`, `link_stats`, `trip_outcome`; `removed_log` is hashed.
-    - wasm: frame trip tables for the last 8 frames, `trip_at_record`, `vehicle_detail` / `trip_outcome` / `link_detail`.
-    - Host: `inspectVehicle {frameTick, record, seq}` / `inspectLink`. Frames carry `tracked` + `trackedSeq` and `linkDetail`; the keys are omitted until inspection is first used, because core-004 forbids null-valued fields.
-    - UI: vehicles are pickable only at zoom ≥ 1 px/m (fit-zoom clicks select roads). VehiclePanel, Follow, ring and dashed route in screen px, road stats (capacity veh/h, travel time vs free flow), Escape clears the vehicle and then the road.
-    - Renderer: the extrapolation anchor restarts on a new tick, on resume and on a speed change. It extrapolates at the multiplier unless the clock is behind.
-    - Tests: Rust +5, Vitest 54, Playwright 30.
-    - Red took 3 rounds. Gold took 4: Follow jitter (a core-005 bug), a lurch after Play, stale frames after a clear, a lost pick. The user chose "1", a fresh round 4, after three rejections.
+  - **city-001 complete**: per-link `sat_flow_per_lane`; gridlock relief (reroute at 60 s blocked, removal at 10 min → `removed_gridlock` / `unserved`); `EXTENDED_METRIC_NAMES`. Red 4 rounds (auto), Gold 2.
+  - **city-002 complete**: `cities::river_city` (Main / North / Old Bridge, 22 zones, calibrated demand), the app defaults to River City (`?city=three_bridges`). Red 3, Gold 1. See `.wdd/memory/decisions/river-city-calibration.md`.
+  - **city-003 complete**: inspect and follow vehicles, road stats.
+    - Picks are `(frameTick, record)` via retained trip tables, with a `seq` echo.
+    - `tracked` / `linkDetail` are omitted until first used.
+    - Vehicle picking needs zoom ≥ 1 px/m.
+    - The extrapolation anchor restarts on a new tick, on resume and on a speed change.
+    - Red 3, Gold 4 (the user chose a fresh round 4).
+  - Tests now: Rust 130, Vitest 54, Playwright 30.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. The sandbox blocked writing this into CLAUDE.md.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
