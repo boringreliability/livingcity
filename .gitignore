@@ -22,3 +22,8 @@ test-results/
 
 # wasm-pack output for the web app
 web/src/wasm/
+
+# Playwright
+web/test-results/
+web/playwright-report/
+.playwright-mcp/
