@@ -167,6 +167,7 @@ test('tracked_vehicle_ring_and_route_visible', async ({ page }) => {
       await blur(page);
       await page.keyboard.press('Escape');
       await expect.poll(async () => (await snap(page))!.trackedTrip).toBeNull();
+      await sleep(300);
       continue;
     }
     // Then a near-white ring appears around the vehicle, off the road axis (not just the route line)

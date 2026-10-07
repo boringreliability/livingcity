@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Inspect vehicles and roads"
 epic: "city"
-status: "red"
+status: "approved"
 dependencies: ["city-002"]
 layer: "typescript"
 estimated_tests: 17
@@ -102,7 +102,7 @@ Rust tests are in `crates/sim-core/tests/city_003_inspect.rs`, Vitest in `web/te
 | 8 | `pick_resolves_against_the_frames_tick` (vitest, host) | a pick with an older frame's tick resolves to the vehicle that was at that record in that frame, even though a different vehicle is at that record now. A tick that is no longer retained selects nothing |
 | 9 | `pickVehicle_nearest_within_tolerance` (vitest) | the nearest centre within 8 px wins, ties go to the lower record, and nothing is picked beyond the tolerance |
 | 10 | `link_detail_capacity` (vitest, real wasm) | the Old Bridge link detail shows `capacityVph ≤ 900`. A 2-lane default road shows 3600. `cost_s ≥ free_flow_s`. `NetworkArrays.linkSatFlow` matches |
-| 11 | `click_vehicle_opens_panel` (e2e) | paused at fit zoom, clicking a vehicle's screen centre opens the vehicle panel titled "Trip #… : origin → destination" with zone names, and `trackedTrip` is set |
+| 11 | `click_vehicle_opens_panel` (e2e) | paused and zoomed to ≥ 1.5 px/m (the picking rule), clicking a vehicle's screen centre opens the vehicle panel titled "Trip #… : origin → destination" with zone names, and `trackedTrip` is set |
 | 12 | `tracked_vehicle_ring_and_route_visible` (e2e, grayscale pixels) | from tick ≥ 450, zoomed in and paused: after selecting, near-white pixels appear around the tracked vehicle off the road axis on *both* sides (≥ 4 each, ≥ 12 total; the ring, not a one-sided route line), and around the midpoint of a remaining route link ≥ 30 px away. The boxes are verified to be canvas, and the pixels are absent before selecting |
 | 13 | `follow_keeps_vehicle_centred` (e2e) | from tick ≥ 450, zoomed to ≥ 2 px/m, a *driving* vehicle with ≥ 2 route links left, followed at 1×: ≥ 4 samples within 12 px of the canvas centre over 3 s, and the camera centre moves ≥ 5 m. A drag turns follow off |
 | 14 | `vehicle_gone_message` (e2e) | following a vehicle to its destination at 60× shows "Arrived after m:ss" (or a removal reason) and stops following |

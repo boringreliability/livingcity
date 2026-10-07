@@ -105,15 +105,19 @@ The core contract allows gridlock in cycles. With oversaturation (closing the Ma
 - `three_bridges` and `river_city` share `City`. `City` gains `name: &'static str` and `river: (f64, f64)`.
 
 ### C4. Inspection (city-003)
-- **Sim queries, on demand and never per vehicle per frame:**
-  - `World::vehicle_at(link, lane, index_from_front) -> Option<u64 /* trip_id */>`;
-  - `World::vehicle_by_trip(trip_id) -> Option<VehicleInfo>`;
-  - `World::link_stats(link) -> LinkStats { vehicles, queued, cost_s, free_flow_s, exits }`.
+The ward `.wdd/wards/city/ward-003.md` § Outputs is the authoritative, detailed form of this contract. In summary:
+- **Sim queries, read-only, on demand:**
+  - `World::vehicle_at(link, lane, index_from_front)`, `vehicle_by_trip`, `link_stats` and `trip_outcome` (`Live`, `Completed { travel_time_s }`, `RemovedUnreachable`, `RemovedGridlock`, `Unknown`).
+  - `removed_log` is new world state and is hashed.
+- **Picks:**
+  - `encode_frame` records each record's trip id, and the last 8 frames' tables are kept.
+  - A pick is `inspectVehicle { frameTick, record }`, resolved with `trip_at_record`, so the clicked vehicle is the one the user saw.
 - **Worker boundary:**
-  - The client sends `inspectVehicle { link, lane, index }` / `inspectVehicle null` and `inspectLink { link } | null`.
-  - Every frame carries `tracked` (the followed vehicle's detail plus its remaining route as link ids, or `{ gone: 'completed' | 'removed' }` once) and `linkDetail` for the selected link.
-  - Exactly one tracked vehicle and one link detail per frame.
-- `NetworkArrays` gains `linkSatFlow` (veh/s/lane), so road capacity can be shown in veh/h.
+  - Every frame carries `tracked`, which is the vehicle detail with its remaining route, or a `TrackedGone` with one of four outcomes, sent once.
+  - It also carries `linkDetail`.
+  - There is at most one detail query of each kind per encoded frame, and no per-vehicle calls or JSON.
+- **Picking rule:** vehicles are pickable from `VEHICLE_PICK_MIN_ZOOM` = 1.0 px/m. Below that, clicks select roads, because the network dominates at wide zoom.
+- `NetworkArrays` gains the optional `linkSatFlow`, so road capacity is shown in veh/h.
 
 ### C5. Diagnostics (city-005)
 - The worker measures the wall time of each `step` batch and of each frame encode. Each frame message carries `perf { tickMsMedian, tickMsP95, encodeMs, ticksMeasured }` over a sliding window of the last 1,000 ticks (median/p95 of per-tick ms = batch ms ÷ ticks in batch).
