@@ -33,6 +33,10 @@ fn close(l: LinkId, tick: u64) -> Command {
     Command { tick, kind: CommandKind::CloseLink(l) }
 }
 
+fn open(l: LinkId, tick: u64) -> Command {
+    Command { tick, kind: CommandKind::OpenLink(l) }
+}
+
 fn infos(w: &World) -> Vec<VehicleInfo> {
     w.vehicle_ids().into_iter().map(|id| w.vehicle(id).unwrap()).collect()
 }
@@ -110,6 +114,7 @@ struct Fork {
     b1: VehicleId,
     b2: Option<VehicleId>,
     v: VehicleId,
+    #[allow(dead_code)] // the extra vehicles queue behind v; tests read them through the world
     extra: Vec<VehicleId>,
 }
 
@@ -923,7 +928,158 @@ fn removal_at_1200_makes_no_reroute_attempt() {
     }
     let (o, rm) = (opened_at.unwrap(), removed_at.expect("v removed"));
     assert!((o..=rm).all(|t| (t + trip_v) % REROUTE_PERIOD_TICKS != 0), "precondition: periodic in window");
-    assert!(w.shortest_route(a, d).is_some(), "precondition: the Q route exists at removal");
+    assert_eq!(w.shortest_route(a, d).map(|r| r.0), Some(vec![q1, _q2, r]), "precondition: the free Q route is the best route at removal");
     assert_eq!(w.metrics().removed_gridlock, 1);
     assert_eq!(w.reroute_stats().gridlock_reroutes, 0, "earlier searches found no path; none at 1200");
+}
+
+// ─── 20–22: added after Red review r2 (reviewer-verified against a reference) ──
+
+// ─── 20 ───────────────────────────────────────────────────────────────────
+/// R2-1 (kills G3: stranding does not reset the count). Fork without Q: v is blocked
+/// behind stranded b1 on P. At count 200, P is closed; v has no route and strands, so its
+/// count must drop to 0. P reopens; v's retry succeeds and, P still full, v is blocked
+/// again: the count restarts at 1, not at 201.
+#[test]
+fn stranding_resets_a_blocked_count() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let x = b.node(10.0, -200.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let cx = b.link(bb, x, 10.0, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(cx, 0)).unwrap();
+    w.step();
+    let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    while w.vehicle(v).unwrap().blocked_ticks < 200 {
+        w.step();
+        assert!(w.tick() < 2000);
+    }
+    let tc = w.tick();
+    w.schedule(close(p, tc)).unwrap();
+    w.schedule(open(p, tc + 30)).unwrap();
+    let (mut stranded_seen, mut resumed) = (false, false);
+    for _ in 0..200 {
+        let t = w.tick();
+        w.step();
+        assert!(w.vehicle(b1).is_some(), "precondition: b1 still holds P at {t}");
+        let i = w.vehicle(v).unwrap();
+        assert_eq!(i.state, VehicleState::OnLink(l1));
+        if i.stranded {
+            stranded_seen = true;
+            assert_eq!(i.blocked_ticks, 0, "tick {t}: stranded but count kept");
+        } else if stranded_seen {
+            // first evaluation after the successful retry: blocked again, count restarts
+            assert_eq!(i.blocked_ticks, 1, "tick {t}: count resumed from a stale value");
+            resumed = true;
+            break;
+        }
+    }
+    assert!(stranded_seen && resumed, "preconditions: v stranded, then resumed");
+}
+
+
+// ─── 21 ───────────────────────────────────────────────────────────────────
+/// R2-2 (kills E: a gridlock removal records an exit-time sample). Test 19's construction:
+/// after v's removal L1 is empty, so the next epoch has no exits on L1 and its cost must
+/// follow the queue_term-only formula.
+#[test]
+fn gridlock_removal_records_no_exit_time() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    b.set_sat_flow(p, 1e-6);
+    let mut w = World::new(b.build().unwrap());
+    w.step();
+    let b1 = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    let mut removed_at = None;
+    for _ in 0..3000 {
+        let t = w.tick();
+        w.step();
+        if w.vehicle(v).is_none() {
+            removed_at = Some(t);
+            break;
+        }
+    }
+    let rm = removed_at.expect("v removed");
+    assert_eq!(w.metrics().removed_gridlock, 1);
+    assert!(w.vehicle(b1).is_some());
+    assert_ne!(rm % COST_EPOCH_TICKS, 0, "precondition: removal not on an epoch tick");
+    // When the epoch after the removal updates L1 (empty, no real exits since b1's ~tick 25)
+    while w.tick() % COST_EPOCH_TICKS != 0 {
+        w.step();
+    }
+    assert!(w.link_vehicles(l1).is_empty());
+    let prev = w.link_cost(l1);
+    w.step(); // epoch boundary
+    // Then the cost has no exit-time sample: observed = queue_term = 200/10 + 0
+    let ff = 200.0 / 10.0 + 1.0 / 0.5;
+    let expected = f64::max(ff, 0.5 * (200.0 / 10.0) + 0.5 * prev);
+    assert_eq!(w.link_cost(l1), expected, "a gridlock removal produced an exit-time sample");
+}
+
+
+// ─── 22 ───────────────────────────────────────────────────────────────────
+/// R2-3 (kills COST: the gridlock search uses free-flow instead of current costs).
+/// Two alternatives around the blocked P: Q (A→E→B, cheaper at free flow) and S (A→F→B).
+/// Stranded vehicles queue on Q2 so Q's current cost exceeds S's. The relief must take S.
+#[test]
+fn gridlock_search_uses_current_costs() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let x = b.node(10.0, -200.0);
+    let e = b.node(5.0, 9.0);
+    let f = b.node(5.0, -9.0);
+    let ze = b.zone(5.0, 300.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let cx = b.link(bb, x, 10.0, 1);
+    let q1 = b.link_with_length(a, e, 10.0, 10.0, 1);
+    let q2 = b.link_with_length(e, bb, 100.0, 10.0, 1); // ff 10 + 2 = 12
+    let s1 = b.link_with_length(a, f, 10.0, 10.0, 1);
+    let s2 = b.link_with_length(f, bb, 110.0, 10.0, 1); // ff 11 + 2 = 13
+    let ce = b.link_with_length(ze, e, 50.0, 10.0, 1);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(cx, 0)).unwrap();
+    w.step();
+    let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    for _ in 0..6 {
+        w.spawn_with_route(vec![ce, q2, cx]).unwrap();
+    }
+    let ffq = 3.0 + 12.0;
+    let ffs = 3.0 + 13.0;
+    assert!(ffq < ffs);
+    for _ in 0..400 {
+        let t = w.tick();
+        let g0 = w.reroute_stats().gridlock_reroutes;
+        w.step();
+        if w.reroute_stats().gridlock_reroutes > g0 {
+            // precondition: by current costs S is cheaper than Q
+            let cq = w.link_cost(q1) + w.link_cost(q2);
+            let cs = w.link_cost(s1) + w.link_cost(s2);
+            assert!(cs < cq, "precondition at {t}: S {cs} vs Q {cq}");
+            let i = w.vehicle(v).unwrap();
+            assert_eq!(i.route, vec![l1, s1, s2, r], "tick {t}: relief ignored current costs");
+            assert!(w.vehicle(b1).is_some());
+            return;
+        }
+    }
+    panic!("no gridlock reroute");
 }

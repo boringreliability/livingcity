@@ -62,6 +62,8 @@ The core contract allows gridlock in cycles. With oversaturation (closing the Ma
   - it is not completed and not an exit;
   - its slot is freed.
 
+  A gridlock removal does not update `rr_next` (it is not a transfer).
+
   This is the analogue of SUMO's time-to-teleport, chosen over teleporting because it never jumps a vehicle forward. It is documented as a simplification.
 - **Metrics.**
   - `Metrics` gains `removed_gridlock` and `unserved` = `unreachable + removed_gridlock`.

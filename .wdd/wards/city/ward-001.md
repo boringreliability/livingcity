@@ -6,7 +6,7 @@ epic: "city"
 status: "red"
 dependencies: ["core-005"]
 layer: "rust"
-estimated_tests: 19
+estimated_tests: 22
 created: "2026-10-07"
 completed: null
 ---
@@ -64,8 +64,11 @@ All in `crates/sim-core/tests/city_001_relief.rs`. Two constructions:
 | 17 | `blocked_counts_while_credit_is_low` | (Red r1, M1) with L1 at sat 0.125 v reaches the stop line (P full) while the lane is still re-earning credit: it is counted from its first tick at the line |
 | 18 | `gridlock_search_does_not_touch_router_cache` | (Red r1, M4) a demand trip generated the tick after the gridlock reroute gets the normal shortest route via P |
 | 19 | `removal_at_1200_makes_no_reroute_attempt` | (Red r1, M2/M3) P held for good by a credit-starved vehicle (sat 1e-6), Q1 closed until v's count is 1190 (no search may use it); at 1200 v is removed, never rerouted, `gridlock_reroutes == 0` |
+| 20 | `stranding_resets_a_blocked_count` | (Red r2, M1) v blocked to count 200, then its next link closes: stranded, count 0; after reopen and a successful retry it is blocked again starting at 1 |
+| 21 | `gridlock_removal_records_no_exit_time` | (Red r2, M2) after test 19's removal, L1 is empty; the next epoch's L1 cost is exactly the queue-only update (no exit-time sample) |
+| 22 | `gridlock_search_uses_current_costs` | (Red r2, m1) two alternatives; the one cheaper at free flow is congested; the relief takes the one cheaper by current costs |
 
-`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. Worlds differing only in those fields cannot be built through the public API. Likewise the Gold reviewer checks in code that a gridlock removal records no exit time (an epoch-level test was not constructible: the freed space makes the link discharge in the same epoch).
+`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. Worlds differing only in those fields cannot be built through the public API.
 
 ## Must NOT
 - Change any earlier test or any core reference value. Default-sat-flow worlds must behave bit-identically wherever no front is blocked for 60 s.
@@ -83,13 +86,13 @@ cargo build -p sim-core --release --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core 85 + city_001 19 pass.
+   Expected: core 85 + city_001 22 pass.
 2. Run: `cargo run -p sim-core --release --example gridlock`
    Verify: blocked fronts appear. A reroute happens at 60 s blocked where an alternative exists, and a removal happens at 10 min in the pure deadlock. After that the ring drains and completes.
 3. Run it twice and `diff` the outputs.
    Expected: identical.
 ### Pass criteria
-- [ ] 104 Rust tests green, clippy clean (`cargo clippy --all-targets -- -D warnings`)
+- [ ] 107 Rust tests green, clippy clean (`cargo clippy --all-targets -- -D warnings`)
 - [ ] The gridlock example shows reroute, removal and recovery
 - [ ] Deterministic output
 
