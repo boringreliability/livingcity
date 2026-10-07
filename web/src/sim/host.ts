@@ -97,6 +97,9 @@ export function createSimHost(deps: HostDeps): SimHost {
   const error = (message: string) => deps.post({ type: 'error', message }, []);
 
   const init = (demandSeed: number, behaviorSeed: number, city: CityName) => {
+    // a new world: nothing is inspected any more
+    trackedTrip = null;
+    inspectedLink = null;
     try {
       sim = deps.createSim(demandSeed, behaviorSeed, city);
     } catch (e) {
@@ -159,7 +162,8 @@ export function createSimHost(deps: HostDeps): SimHost {
       return;
     }
     const trip = sim.trip_at_record(frameTick, record);
-    trackedTrip = Number.isInteger(trip) && trip >= 0 ? trip : null;
+    // an unresolvable pick (frame no longer retained) keeps whatever is tracked now
+    if (Number.isInteger(trip) && trip >= 0) trackedTrip = trip;
   };
 
   const inspectLink = (link: number | null) => {

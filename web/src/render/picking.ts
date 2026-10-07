@@ -39,8 +39,10 @@ export function pickLink(
 }
 
 /**
- * The frame record whose drawn centre (unextrapolated) is nearest to screen point (sx, sy),
- * within `tolerancePx`; ties → lower record. `links` is indexed by link id.
+ * The frame record whose centre is nearest to screen point (sx, sy), within `tolerancePx`;
+ * ties → lower record. `links` is indexed by link id. `dtSim` extrapolates like the renderer
+ * (s + v·dtSim, capped at the link end) so a click hits a car where it is drawn; 0 = the
+ * frame's own positions.
  */
 export function pickVehicle(
   vehicles: DecodedVehicles,
@@ -49,13 +51,14 @@ export function pickVehicle(
   sx: number,
   sy: number,
   tolerancePx = 8,
+  dtSim = 0,
 ): number | null {
   let best: number | null = null;
   let bestPx = Infinity;
   for (let i = 0; i < vehicles.count; i++) {
     const l = links[vehicles.link(i)];
     if (!l) continue;
-    const [wx, wy] = vehiclePosition(l, vehicles.s(i), vehicles.lane(i));
+    const [wx, wy] = vehiclePosition(l, Math.min(vehicles.s(i) + vehicles.v(i) * dtSim, l.length), vehicles.lane(i));
     const [px, py] = camera.worldToScreen(wx, wy);
     const d = Math.hypot(px - sx, py - sy);
     if (d <= tolerancePx && d < bestPx) {

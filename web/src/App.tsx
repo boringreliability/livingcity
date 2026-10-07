@@ -135,7 +135,7 @@ export function App() {
       c.setRunning(true);
     });
     c.onFrame((f: FrameMessage) => {
-      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now());
+      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick);
       // keep a copy for picking before the buffer goes back to the worker
       recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count) };
       if (f.tracked && 'gone' in f.tracked) {
@@ -150,6 +150,13 @@ export function App() {
         renderer.current?.setTracked(f.tracked);
         setTracked(f.tracked);
         setGone(null);
+      } else if (f.tracked === null && trackedRef.current) {
+        // the worker tracks nothing (e.g. an unresolvable pick): never keep stale data on screen
+        trackedRef.current = null;
+        renderer.current?.setTracked(null);
+        setTracked(null);
+        followingRef.current = false;
+        setFollowing(false);
       }
       setLinkDetail(f.linkDetail ?? null);
       c.returnBuffer(f.vehicles); // uploaded: give the buffer back to the worker's pool
@@ -246,6 +253,9 @@ export function App() {
   }, [mainPending]);
 
   const goneRef = useRef<TrackedGone | null>(null);
+  /** Origin/destination of the last tracked vehicle, so a `gone` notice keeps its names. */
+  const lastTitleRef = useRef<{ origin: number; dest: number } | null>(null);
+  if (tracked) lastTitleRef.current = { origin: tracked.origin, dest: tracked.dest };
   goneRef.current = gone;
 
   /** Canvas-local CSS px → the record a click would pick (only when zoomed in enough), else null. */
@@ -254,7 +264,7 @@ export function App() {
       const r = recordsRef.current;
       const g = geometry.current;
       if (!r || !g || camera.zoom < VEHICLE_PICK_MIN_ZOOM) return null;
-      return pickVehicle(r.vehicles, g.links, camera, x, y);
+      return pickVehicle(r.vehicles, g.links, camera, x, y, 8, renderer.current?.extrapolationS(performance.now(), simPerMsRef.current) ?? 0);
     },
     [camera],
   );
@@ -275,7 +285,9 @@ export function App() {
   // Global shortcuts (ignored while focus is in a control).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isInteractive(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const onButton = e.target instanceof HTMLElement && e.target.tagName === 'BUTTON';
+      if (isInteractive(e.target) && !(e.key === 'Escape' && onButton)) return;
       if (e.key === ' ') {
         e.preventDefault();
         if (!e.repeat) toggleRunning(); // holding Space must not flicker play/pause
@@ -457,6 +469,7 @@ export function App() {
             vehicle={tracked}
             gone={gone}
             placeName={(node) => ready.zones.find((z) => z.node === node)?.name ?? `node ${node}`}
+            lastTitle={lastTitleRef.current}
             following={following}
             onFollow={() => follow(true)}
             onStopFollowing={() => follow(false)}

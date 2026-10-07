@@ -237,3 +237,12 @@ button.bridge.closed {
   right: 16px;
   color: #ffd27a;
 }
+
+/* Narrow windows: the right column moves below the control panel instead of covering it. */
+@media (max-width: 620px) {
+  .side {
+    top: 150px;
+    left: 16px;
+    right: auto;
+  }
+}

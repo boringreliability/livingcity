@@ -1,11 +1,11 @@
-import type { TrackedGone, TrackedState, TrackedVehicle } from '../sim/protocol';
+import { DT, type TrackedGone, type TrackedState, type TrackedVehicle } from '../sim/protocol';
 
 /** State as text plus a shape icon (never colour alone). */
 const STATE_LABEL: Record<TrackedState, { icon: string; text: string }> = {
   waiting: { icon: '◷', text: 'waiting at origin' },
   driving: { icon: '▶', text: 'driving' },
   queued: { icon: '■', text: 'queued' },
-  stranded: { icon: '⊘', text: 'stranded: no route on' },
+  stranded: { icon: '⊘', text: 'stranded (no way onward)' },
   no_route: { icon: '⊘', text: 'no route' },
 };
 
@@ -19,6 +19,8 @@ interface Props {
   gone: TrackedGone | null;
   /** Zone name of a node, or `node <id>` for a plain junction. */
   placeName(node: number): string;
+  /** Endpoints of the last tracked vehicle (keeps the names on a `gone` notice). */
+  lastTitle: { origin: number; dest: number } | null;
   following: boolean;
   onFollow(): void;
   onStopFollowing(): void;
@@ -44,7 +46,11 @@ export function VehiclePanel(p: Props) {
   return (
     <section className="panel vehicle" aria-label="Selected vehicle">
       <h2 data-testid="vehicle-title">
-        {v ? `Trip #${v.tripId}: ${p.placeName(v.origin)} → ${p.placeName(v.dest)}` : `Trip #${trip ?? '?'}`}
+        {v
+          ? `Trip #${v.tripId}: ${p.placeName(v.origin)} → ${p.placeName(v.dest)}`
+          : p.lastTitle
+            ? `Trip #${trip ?? '?'}: ${p.placeName(p.lastTitle.origin)} → ${p.placeName(p.lastTitle.dest)}`
+            : `Trip #${trip ?? '?'}`}
       </h2>
       {v ? (
         <>
@@ -64,7 +70,7 @@ export function VehiclePanel(p: Props) {
             <dt>route changes</dt>
             <dd>{v.routeSwitches}</dd>
           </dl>
-          {v.blockedTicks > 0 && <p className="blocked">waiting for space {Math.round(v.blockedTicks / 2)} s</p>}
+          {v.blockedTicks > 0 && <p className="blocked">waiting for space {Math.round(v.blockedTicks * DT)} s</p>}
           {p.following ? (
             <button type="button" onClick={p.onStopFollowing}>
               Stop following
