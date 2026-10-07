@@ -49,19 +49,25 @@ fn main() {
     for (name, detour) in [("A (pure deadlock)", false), ("B (with detour)", true)] {
         let mut w = ring(detour);
         println!("ring {name}");
-        println!("{:>6} {:>8} {:>11} {:>16} {:>18} {:>10}", "sim", "active", "max blocked", "gridlock reroutes", "gridlock removals", "completed");
+        println!(
+            "{:>6} {:>8} {:>15} {:>11} {:>16} {:>18} {:>10}",
+            "sim", "active", "blocked fronts", "max blocked", "gridlock reroutes", "gridlock removals", "completed"
+        );
         for t in 0..(40 * 60 * 2u64) {
             w.step();
             if (t + 1) % 60 == 0 {
-                let max_blocked =
-                    w.vehicle_ids().into_iter().map(|id| w.vehicle(id).unwrap().blocked_ticks).max().unwrap_or(0);
+                let blocked: Vec<u32> =
+                    w.vehicle_ids().into_iter().map(|id| w.vehicle(id).unwrap().blocked_ticks).collect();
+                let blocked_fronts = blocked.iter().filter(|&&b| b > 0).count();
+                let max_blocked = blocked.iter().copied().max().unwrap_or(0);
                 let m = w.metrics();
-                let s = (t + 1) / 2;
+                let s = w.tick() / 2; // sim seconds (DT = 0.5 s)
                 println!(
-                    "{:>3}:{:02} {:>8} {:>9.1} s {:>16} {:>18} {:>10}",
+                    "{:>3}:{:02} {:>8} {:>15} {:>9.1} s {:>16} {:>18} {:>10}",
                     s / 60,
                     s % 60,
                     m.active,
+                    blocked_fronts,
                     max_blocked as f64 * 0.5,
                     w.reroute_stats().gridlock_reroutes,
                     m.removed_gridlock,

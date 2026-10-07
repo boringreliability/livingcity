@@ -1258,6 +1258,17 @@ impl World {
     /// Conservation, lane ordering/spacing, capacity, finite values.
     pub fn check_invariants(&self) -> Result<(), String> {
         let c = self.counts();
+        if self.removed_gridlock > self.removed {
+            return Err(format!("removed_gridlock {} > removed {}", self.removed_gridlock, self.removed));
+        }
+        // Only lane fronts can be blocked (contract C2).
+        for link in &self.lanes {
+            for q in link {
+                if let Some(&behind) = q.iter().skip(1).find(|&&slot| self.veh(slot).blocked_ticks > 0) {
+                    return Err(format!("vehicle slot {behind} is blocked but not a lane front"));
+                }
+            }
+        }
         if c.spawned != c.active + c.completed + c.removed {
             return Err(format!("conservation: {c:?}"));
         }
