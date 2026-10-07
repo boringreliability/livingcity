@@ -7,6 +7,7 @@ const snap = (page: Page): Promise<LivingCitySnapshot | null> =>
   page.evaluate(() => window.__livingcity?.snapshot() ?? null);
 const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const panel = (page: Page) => page.getByRole('region', { name: 'Selected vehicle' });
 
 async function ready(page: Page): Promise<LivingCitySnapshot> {
   await page.goto('/');
@@ -23,22 +24,43 @@ async function pause(page: Page) {
   await sleep(300);
 }
 
-/** A record whose centre is on the canvas (not under an overlay) and picks exactly that record. */
-async function clickableVehicle(page: Page): Promise<{ record: number; at: [number, number] }> {
-  const found = await page.evaluate(() => {
+/** Wheel-zoom at the canvas centre until the camera is at least `min` px/m (the wheel rate is not assumed). */
+async function zoomIn(page: Page, min: number) {
+  const box = (await page.locator('canvas').first().boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect
+    .poll(async () => {
+      if ((await snap(page))!.camera.zoom >= min) return true;
+      await page.mouse.wheel(0, -100);
+      return false;
+    }, { intervals: [100], timeout: 30_000 })
+    .toBe(true);
+  await page.mouse.move(5, 400);
+  await sleep(200);
+}
+
+/** Records whose centre is on the canvas (not under an overlay) and whose click picks exactly them. */
+async function clickableVehicles(page: Page, max = 40): Promise<{ record: number; at: [number, number] }[]> {
+  return page.evaluate((max) => {
     const h = window.__livingcity!;
     const n = h.snapshot().frameRecords;
-    for (let i = 0; i < n; i += 7) {
+    const out: { record: number; at: [number, number] }[] = [];
+    for (let i = 0; i < n && out.length < max; i++) {
       const p = h.vehicleScreenCenter(i);
       if (!p) continue;
-      if (document.elementFromPoint(p[0], p[1])?.tagName !== 'CANVAS') continue;
-      const pick = h.pickAt(p[0], p[1]);
-      if (pick.vehicle === i) return { record: i, at: p };
+      const onCanvas = [[0, 0], [-16, -16], [16, -16], [-16, 16], [16, 16]].every(
+        ([dx, dy]) => document.elementFromPoint(p[0] + dx!, p[1] + dy!)?.tagName === 'CANVAS',
+      );
+      if (onCanvas && h.pickAt(p[0], p[1]).vehicle === i) out.push({ record: i, at: p });
     }
-    return null;
-  });
-  expect(found).not.toBeNull();
-  return found!;
+    return out;
+  }, max);
+}
+
+async function clickableVehicle(page: Page): Promise<{ record: number; at: [number, number] }> {
+  const all = await clickableVehicles(page, 1);
+  expect(all.length).toBeGreaterThan(0);
+  return all[0]!;
 }
 
 /** A point on `link` where a click picks the road, not a vehicle. */
@@ -57,7 +79,7 @@ async function clickableRoadPoint(page: Page, link: number): Promise<[number, nu
   return p!;
 }
 
-/** Luminance (0–255) per pixel of a page clip. */
+/** Luminance (0–255) per pixel of a page clip (row-major, w × h at DPR 1). */
 async function luminance(page: Page, [x, y]: [number, number], w: number, h: number): Promise<number[]> {
   const png = await page.screenshot({ clip: { x: x - w / 2, y: y - h / 2, width: w, height: h } });
   return page.evaluate(async (b64) => {
@@ -77,17 +99,38 @@ async function luminance(page: Page, [x, y]: [number, number], w: number, h: num
 }
 const light = (lum: number[]) => lum.filter((v) => v >= 235).length;
 
+/** Near-white pixels farther than `band` px from the line through the box centre along unit `dir`. */
+async function lightOffAxis(page: Page, at: [number, number], w: number, h: number, dir: [number, number], band = 4) {
+  const lum = await luminance(page, at, w, h);
+  let n = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const dx = x + 0.5 - w / 2;
+      const dy = y + 0.5 - h / 2;
+      if (Math.abs(dx * dir[1] - dy * dir[0]) > band && lum[y * w + x]! >= 235) n++;
+    }
+  return n;
+}
+const onCanvasBox = (page: Page, [x, y]: [number, number], r: number) =>
+  page.evaluate(
+    ([x, y, r]) =>
+      [[x, y], [x - r, y - r], [x + r, y - r], [x - r, y + r], [x + r, y + r]].every(
+        ([a, b]) => document.elementFromPoint(a!, b!)?.tagName === 'CANVAS',
+      ),
+    [x, y, r] as const,
+  );
+
 // 11
 test('click_vehicle_opens_panel', async ({ page }) => {
   await ready(page);
   await pause(page);
+  await zoomIn(page, 1.5);
   const v = await clickableVehicle(page);
-  // When the user clicks the vehicle
+  // When the user clicks the vehicle (zoomed in: vehicles are pickable)
   await page.mouse.click(v.at[0], v.at[1]);
   // Then it is tracked and the panel names its trip with district names
   await expect.poll(async () => (await snap(page))!.trackedTrip).not.toBeNull();
-  const panel = page.getByRole('region', { name: 'Selected vehicle' });
-  await expect(panel).toBeVisible();
+  await expect(panel(page)).toBeVisible();
   const title = page.getByTestId('vehicle-title');
   await expect(title).toHaveText(/^Trip #\d+: .+ → .+$/);
   await expect(title).not.toHaveText(/node \d+/);
@@ -99,33 +142,58 @@ test('click_vehicle_opens_panel', async ({ page }) => {
 test('tracked_vehicle_ring_and_route_visible', async ({ page }) => {
   await ready(page);
   await pause(page);
-  const v = await clickableVehicle(page);
-  await page.mouse.move(5, 400);
-  await sleep(200);
-  const ringBefore = light(await luminance(page, v.at, 30, 30));
-  await page.mouse.click(v.at[0], v.at[1]);
-  await expect.poll(async () => (await snap(page))!.trackedRoute.length).toBeGreaterThan(0);
-  await page.mouse.move(5, 400);
-  await sleep(300);
-  const s = (await snap(page))!;
-  // Then a light ring appears around the vehicle
-  const ringAfter = light(await luminance(page, v.at, 30, 30));
-  expect(ringAfter - ringBefore).toBeGreaterThanOrEqual(12);
-  // And a light dashed line runs along a remaining route link (the next one, else the current)
-  const routeLink = s.trackedRoute[1] ?? s.trackedRoute[0]!;
-  const mid = (await page.evaluate((l) => window.__livingcity!.linkScreenCenter(l), routeLink))!;
-  expect(mid).not.toBeNull();
-  await blur(page);
-  await page.keyboard.press('Escape');
-  await expect.poll(async () => (await snap(page))!.trackedTrip).toBeNull();
-  await sleep(300);
-  const routeBefore = light(await luminance(page, mid, 24, 24));
-  await page.mouse.click(v.at[0], v.at[1]);
-  await expect.poll(async () => (await snap(page))!.trackedTrip).not.toBeNull();
-  await page.mouse.move(5, 400);
-  await sleep(300);
-  const routeAfter = light(await luminance(page, mid, 24, 24));
-  expect(routeAfter - routeBefore).toBeGreaterThanOrEqual(6);
+  await zoomIn(page, 1.5);
+  // Find a vehicle with a remaining route link ≥ 30 px away on the canvas (try several candidates)
+  for (const v of await clickableVehicles(page, 12)) {
+    const ringBeforeLum = await luminance(page, v.at, 30, 30);
+    await page.mouse.click(v.at[0], v.at[1]);
+    await expect.poll(async () => (await snap(page))!.trackedRoute.length).toBeGreaterThan(0);
+    await page.mouse.move(5, 400);
+    await sleep(300);
+    const s = (await snap(page))!;
+    const route = s.trackedRoute;
+    let target: { l: number; mid: [number, number] } | null = null;
+    for (const l of route) {
+      const mid = await page.evaluate((x) => window.__livingcity!.linkScreenCenter(x), l);
+      if (mid && Math.hypot(mid[0] - v.at[0], mid[1] - v.at[1]) >= 30 && (await onCanvasBox(page, mid, 12))) {
+        target = { l, mid };
+        break;
+      }
+    }
+    if (!target || !(await onCanvasBox(page, v.at, 15))) {
+      await blur(page);
+      await page.keyboard.press('Escape');
+      await expect.poll(async () => (await snap(page))!.trackedTrip).toBeNull();
+      continue;
+    }
+    // Then a near-white ring appears around the vehicle, off the road axis (not just the route line)
+    const a = (await page.evaluate((l) => window.__livingcity!.linkScreenPoint(l, 0), route[0]!))!;
+    const b = (await page.evaluate((l) => window.__livingcity!.linkScreenPoint(l, 1), route[0]!))!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const dir: [number, number] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const offAxis = (lum: number[]) => {
+      let n = 0;
+      for (let y = 0; y < 30; y++)
+        for (let x = 0; x < 30; x++) {
+          const dx = x + 0.5 - 15;
+          const dy = y + 0.5 - 15;
+          if (Math.abs(dx * dir[1] - dy * dir[0]) > 4 && lum[y * 30 + x]! >= 235) n++;
+        }
+      return n;
+    };
+    const ringAfter = await lightOffAxis(page, v.at, 30, 30, dir);
+    expect(ringAfter - offAxis(ringBeforeLum)).toBeGreaterThanOrEqual(12);
+    // And a near-white dashed line runs along a remaining route link ≥ 30 px away
+    const routeAfter = light(await luminance(page, target.mid, 24, 24));
+    await blur(page);
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await snap(page))!.trackedTrip).toBeNull();
+    await sleep(300);
+    const routeBefore = light(await luminance(page, target.mid, 24, 24));
+    expect(routeAfter - routeBefore).toBeGreaterThanOrEqual(6);
+    return;
+  }
+  throw new Error('no candidate vehicle with a remaining route link ≥ 30 px away on the canvas');
 });
 
 // 13
@@ -133,8 +201,21 @@ test('follow_keeps_vehicle_centred', async ({ page }) => {
   await ready(page);
   await page.getByRole('combobox', { name: /speed/i }).selectOption({ label: '1×' });
   await pause(page);
-  const v = await clickableVehicle(page);
-  await page.mouse.click(v.at[0], v.at[1]);
+  await zoomIn(page, 2);
+  // Given a driving vehicle (not queued), followed
+  let found = false;
+  for (const v of await clickableVehicles(page, 20)) {
+    await page.mouse.click(v.at[0], v.at[1]);
+    await expect.poll(async () => (await snap(page))!.trackedTrip).not.toBeNull();
+    if ((await snap(page))!.trackedState === 'driving') {
+      found = true;
+      break;
+    }
+    await blur(page);
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await snap(page))!.trackedTrip).toBeNull();
+  }
+  expect(found).toBe(true);
   await page.getByRole('button', { name: /^follow$/i }).click();
   await expect.poll(async () => (await snap(page))!.following).toBe(true);
   // When the sim runs
@@ -143,13 +224,22 @@ test('follow_keeps_vehicle_centred', async ({ page }) => {
   await expect.poll(async () => (await snap(page))!.running).toBe(true);
   const box = (await page.locator('canvas').first().boundingBox())!;
   const centre: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
-  // Then the tracked vehicle stays at the canvas centre
+  // Then the tracked vehicle stays at the canvas centre while the camera moves with it
+  let samples = 0;
+  const c0 = (await snap(page))!.camera;
   for (let k = 0; k < 6; k++) {
     await sleep(500);
     const p = await page.evaluate(() => window.__livingcity!.trackedScreenCenter());
-    if (p === null) break; // arrived: following ends (covered by test 14)
+    if (p === null) {
+      await expect(panel(page)).toContainText(/Arrived after|Removed:/);
+      break;
+    }
+    samples++;
     expect(Math.hypot(p[0] - centre[0], p[1] - centre[1])).toBeLessThanOrEqual(12);
   }
+  const c1 = (await snap(page))!.camera;
+  expect(samples).toBeGreaterThanOrEqual(4);
+  expect(Math.hypot(c1.cx - c0.cx, c1.cy - c0.cy)).toBeGreaterThanOrEqual(5);
   // And a drag turns follow off
   await page.mouse.move(centre[0] + 40, centre[1] + 40);
   await page.mouse.down();
@@ -163,6 +253,7 @@ test('vehicle_gone_message', async ({ page }) => {
   test.setTimeout(120_000);
   await ready(page);
   await pause(page);
+  await zoomIn(page, 1.5);
   const v = await clickableVehicle(page);
   await page.mouse.click(v.at[0], v.at[1]);
   await page.getByRole('button', { name: /^follow$/i }).click();
@@ -170,10 +261,7 @@ test('vehicle_gone_message', async ({ page }) => {
   await blur(page);
   await page.keyboard.press('Space');
   // Then, when the trip ends, the panel says so and following stops
-  await expect(page.getByRole('region', { name: 'Selected vehicle' })).toContainText(
-    /Arrived after \d+:\d\d|Removed: (no route|gridlock)/,
-    { timeout: 90_000 },
-  );
+  await expect(panel(page)).toContainText(/Arrived after \d+:\d\d|Removed: (no route|gridlock)/, { timeout: 90_000 });
   await expect.poll(async () => (await snap(page))!.following).toBe(false);
 });
 
@@ -187,11 +275,15 @@ test('road_panel_real_stats', async ({ page }) => {
   await page.mouse.click(p[0], p[1]);
   await expect.poll(async () => (await snap(page))!.selectedLink).toBe(old);
   const num = async (id: string) => Number(((await page.getByTestId(id).textContent()) ?? '').replace(/[^0-9.]/g, ''));
-  // Then the Old Bridge shows its limited capacity and travel time now vs free flow
-  await expect(page.getByTestId('link-capacity')).toHaveText(/veh\/h/);
+  // Then the Old Bridge shows its limited capacity and travel time now vs free flow (pinned formats)
+  await expect(page.getByTestId('link-capacity')).toHaveText(/^\d+ veh\/h$/);
+  await expect(page.getByTestId('link-cost')).toHaveText(/^\d+(\.\d)? s$/);
+  await expect(page.getByTestId('link-freeflow')).toHaveText(/^\d+(\.\d)? s$/);
   expect(await num('link-capacity')).toBeLessThanOrEqual(900);
   expect(await num('link-freeflow')).toBeGreaterThan(0);
   expect(await num('link-cost')).toBeGreaterThanOrEqual(await num('link-freeflow'));
+  // (precondition: not already congested before the closure)
+  expect(await num('link-cost')).toBeLessThanOrEqual((await num('link-freeflow')) + 1);
   // When the main bridge closes, the Old Bridge's travel time rises above free flow (≤ 6 sim min at 20×)
   await page.getByRole('combobox', { name: /speed/i }).selectOption({ label: '20×' });
   await page.getByRole('button', { name: /close the main bridge/i }).click();
@@ -208,11 +300,12 @@ test('road_panel_real_stats', async ({ page }) => {
 test('keyboard_escape_order', async ({ page }) => {
   const s0 = await ready(page);
   await pause(page);
-  // Given a selected road and a selected vehicle
-  const road = s0.landmarks!.north_bridge[0];
+  // Given a selected road (fit zoom) and a selected vehicle (zoomed in)
+  const road = s0.landmarks!.central_bridge[0];
   const p = await clickableRoadPoint(page, road);
   await page.mouse.click(p[0], p[1]);
   await expect.poll(async () => (await snap(page))!.selectedLink).toBe(road);
+  await zoomIn(page, 1.5);
   const v = await clickableVehicle(page);
   await page.mouse.click(v.at[0], v.at[1]);
   await expect.poll(async () => (await snap(page))!.trackedTrip).not.toBeNull();
@@ -235,4 +328,34 @@ test('keyboard_escape_order', async ({ page }) => {
   expect((await snap(page))!.following).toBe(false);
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await snap(page))!.selectedLink).toBeNull();
+});
+
+// 17
+test('fit_zoom_clicks_select_roads_not_vehicles', async ({ page }) => {
+  // (Red r1 M3: the network dominates at wide zoom; vehicles are pickable from VEHICLE_PICK_MIN_ZOOM)
+  await ready(page);
+  await pause(page);
+  const s = (await snap(page))!;
+  expect(s.camera.zoom).toBeLessThan(1);
+  // Given vehicle centres on the canvas at fit zoom
+  const centres = await page.evaluate(() => {
+    const h = window.__livingcity!;
+    const out: [number, number][] = [];
+    for (let i = 0; i < h.snapshot().frameRecords && out.length < 30; i += 11) {
+      const p = h.vehicleScreenCenter(i);
+      if (p && document.elementFromPoint(p[0], p[1])?.tagName === 'CANVAS') out.push(p);
+    }
+    return out;
+  });
+  expect(centres.length).toBeGreaterThan(10);
+  // Then a click there would never pick a vehicle, and picks the road under it
+  for (const c of centres) {
+    const pick = await page.evaluate(([x, y]) => window.__livingcity!.pickAt(x, y), c);
+    expect(pick.vehicle).toBeNull();
+    expect(pick.link).not.toBeNull();
+  }
+  // And clicking one of them selects a road and tracks no vehicle
+  await page.mouse.click(centres[0]![0], centres[0]![1]);
+  await expect.poll(async () => (await snap(page))!.selectedLink).not.toBeNull();
+  expect((await snap(page))!.trackedTrip).toBeNull();
 });

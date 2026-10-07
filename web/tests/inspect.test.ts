@@ -23,24 +23,46 @@ import { loadWasm } from './helpers';
 
 const isGone = (t: TrackedVehicle | TrackedGone | null): t is TrackedGone => !!t && 'gone' in t;
 
-/** Host on real wasm River City with fake time; keeps the Sim for direct queries. */
+/** Host on real wasm River City with fake time; keeps the Sim for direct queries and counts
+ * the inspection queries the host makes (per `iterate()`). */
 function riverHost() {
   const memory = loadWasm();
   let t = 0;
   let sim: Sim | undefined;
   const posted: FromWorker[] = [];
+  const calls: Record<string, number> = {};
+  const counted = ['vehicle_detail', 'trip_outcome', 'link_detail'];
   const h = createSimHost({
-    createSim: (d, b) => (sim = Sim.river_city(d, b)) as unknown as SimLike,
+    createSim: (d, b) => {
+      sim = Sim.river_city(d, b);
+      const target = sim as unknown as Record<string | symbol, unknown>;
+      return new Proxy(target, {
+        get: (o, prop) => {
+          const v = o[prop];
+          if (typeof v !== 'function') return v;
+          const f = (v as (...a: unknown[]) => unknown).bind(o);
+          if (typeof prop === 'string' && counted.includes(prop))
+            return (...a: unknown[]) => {
+              calls[prop] = (calls[prop] ?? 0) + 1;
+              return f(...a);
+            };
+          return f;
+        },
+      }) as unknown as SimLike;
+    },
     memory: () => memory,
     post: (msg) => posted.push(msg),
     now: () => t,
   });
   const send = (m: ToWorker) => h.handle(m);
   const frames = () => posted.filter((m): m is FrameMessage => m.type === 'frame');
+  /** Run iterations; asserts the per-iteration query budget (≤ 1 of each inspection query). */
   const advance = (iterations: number) => {
     for (let k = 0; k < iterations; k++) {
       t += 16;
+      for (const c of counted) calls[c] = 0;
       h.iterate();
+      for (const c of counted) expect(calls[c] ?? 0, `${c} calls in one iteration`).toBeLessThanOrEqual(1);
     }
   };
   send({ type: 'init', demandSeed: 2026, behaviorSeed: 7 });
@@ -86,22 +108,23 @@ test('vehicle_detail_layout_roundtrip', () => {
 // 7
 test('worker_tracks_one_vehicle', () => {
   const r = riverHost();
-  r.advance(60);
+  r.advance(150);
   const f = r.frames().at(-1)!;
-  // Given a vehicle on its final link (it completes soon)
+  // Given a vehicle on its final link with ≥ 30 m to go (it completes soon, not immediately)
   const sim = r.sim();
+  const len = r.ready.network.linkLength;
   let record = -1;
   let trip = -1;
   for (let i = 0; i < f.count; i++) {
     const t = sim.trip_at_record(f.tick, i);
     const d = decodeVehicleDetail(sim.vehicle_detail(t));
-    if (d && d.route.length === 1) {
+    if (d && d.route.length === 1 && len[d.link]! - d.s >= 30) {
       record = i;
       trip = t;
       break;
     }
   }
-  expect(record).toBeGreaterThanOrEqual(0);
+  expect(record).toBeGreaterThanOrEqual(0); // (precondition: measured 6 final-link vehicles at tick ≈ 288)
   // When it is inspected
   r.send({ type: 'inspectVehicle', frameTick: f.tick, record });
   const seen = r.frames().length;
@@ -211,5 +234,5 @@ test('link_detail_capacity', () => {
   }
   // and the ready message carries the per-link sat flow
   const r = riverHost();
-  expect(Array.from(r.ready.network.linkSatFlow)).toEqual(Array.from(sat));
+  expect(Array.from(r.ready.network.linkSatFlow ?? [])).toEqual(Array.from(sat));
 }, 30_000);
