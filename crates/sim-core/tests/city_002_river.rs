@@ -100,6 +100,10 @@ fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, 
                     if is_connector(c, l2) || net.link(l2).from == start {
                         continue;
                     }
+                    // real streets, not stubs at the bridge head (Red r2 m2)
+                    if net.link(l1).length_m + net.link(l2).length_m < 300.0 {
+                        continue;
+                    }
                     chains.push((l1, l2));
                 }
             }
@@ -252,17 +256,27 @@ fn check_reroutes(c: &City) {
     );
 }
 
-/// Test 10: 25–30 min after reopening (at closure + 30 min), queued is back near baseline.
+/// Test 10: reopened 30 min after the closure, the city recovers within 30 min: over minutes
+/// 20–30 after the reopen the backlog is gone (active ≤ 1.1 × baseline), the Main Bridge carries
+/// most west→east crossings again, and queued has fallen by at least a quarter from its closure level.
+/// (A queued ratio against the baseline over a 5-min window proved to be noise: route choice
+/// oscillates for a while after a reopen, so that ratio swung between 1.4 and 3.0 with ±2 %
+/// demand changes; see ward-002 § Specification.)
 fn check_reopen(c: &City) {
     let reopen_at = CLOSE_AT + 30 * MIN;
     let mut cmds = close_main(c, CLOSE_AT);
     cmds.extend(c.landmarks.central_bridge.iter().map(|&l| open(l, reopen_at)));
     let minutes = 50 + 30;
-    let base = run(c, &[], minutes, None, None);
+    let base = run(c, &[], 60, None, None);
     let r = run(c, &cmds, minutes, None, None);
-    let (qb, qr) = (mean(&base.queued[75..80]), mean(&r.queued[75..80]));
-    assert!(qr <= 1.5 * qb, "after reopen queued {qr} vs baseline {qb}");
-    assert!(mean(&r.queued[40..50]) > 1.5 * mean(&base.queued[40..50]), "the closure had raised queued");
+    let (a_base, a_after) = (mean(&base.active[30..60]), mean(&r.active[70..80]));
+    assert!(a_after <= 1.1 * a_base, "active 20–30 min after the reopen {a_after} vs baseline {a_base}");
+    let sum: [u64; 3] = r.we_exits[70..80].iter().fold([0; 3], |a, e| [a[0] + e[0], a[1] + e[1], a[2] + e[2]]);
+    let total = sum.iter().sum::<u64>() as f64;
+    assert!(sum[0] as f64 > 0.5 * total, "Main Bridge share after the reopen {} of {total}", sum[0]);
+    let (q_closed, q_after) = (mean(&r.queued[30..50]), mean(&r.queued[70..80]));
+    assert!(q_after <= 0.75 * q_closed, "queued after the reopen {q_after} vs during the closure {q_closed}");
+    assert!(q_closed > 1.5 * mean(&base.queued[30..50]), "the closure had raised queued");
 }
 
 // ─── 1 ────────────────────────────────────────────────────────────────────

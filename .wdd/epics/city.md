@@ -98,7 +98,10 @@ The core contract allows gridlock in cycles. With oversaturation (closing the Ma
     - the mean travel time of west→east trips completed in the window is ≥ 1.25 × baseline;
     - `removed_gridlock` ≤ 1 % of trips generated;
     - North + Old Bridge exits exceed baseline.
-  - **Reopened** 30 min after the closure: 30 min later, mean `queued` (over 5 min) ≤ 1.5 × baseline.
+  - **Reopened** 30 min after the closure, over minutes 20–30 after the reopen:
+    - mean `active` ≤ 1.1 × the baseline mean over minutes 30–60 (the backlog has cleared);
+    - the Main Bridge carries > 50 % of west→east crossings again;
+    - mean `queued` ≤ 0.75 × its mean during the closure (minutes 10–30 after it).
 - `three_bridges` and `river_city` share `City`. `City` gains `name: &'static str` and `river: (f64, f64)`.
 
 ### C4. Inspection (city-003)

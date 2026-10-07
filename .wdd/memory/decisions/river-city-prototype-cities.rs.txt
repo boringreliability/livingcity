@@ -1,0 +1,252 @@
+//! Built-in cities (simulation data: network, zones, demand). Purely visual
+//! data (river shape, buildings, labels' styling) lives in the renderer.
+
+use crate::demand::{DemandModel, OdFlow, Profile};
+use crate::network::{LinkId, NetworkBuilder, NodeId};
+use crate::world::Scenario;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ZoneKind {
+    Residential,
+    Workplace,
+    Hospital,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Zone {
+    pub name: String,
+    pub node: NodeId,
+    pub kind: ZoneKind,
+}
+
+/// Each bridge as `[west→east, east→west]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Landmarks {
+    pub north_bridge: [LinkId; 2],
+    pub central_bridge: [LinkId; 2],
+    pub south_bridge: [LinkId; 2],
+}
+
+#[derive(Clone, Debug)]
+pub struct City {
+    pub name: &'static str,
+    /// River corridor `(west_x, east_x)` in metres; only bridge links cross it.
+    pub river: (f64, f64),
+    pub scenario: Scenario,
+    pub landmarks: Landmarks,
+    pub zones: Vec<Zone>,
+}
+
+const STREET_SPEED: f64 = 11.1;
+const ARTERIAL_SPEED: f64 = 13.9;
+
+/// The core-epic test city: a river along x ∈ [−60, 60] m with three bridges.
+/// Construction order is fixed by ward core-003 (it determines every id).
+pub fn three_bridges(demand_seed: u64, behavior_seed: u64) -> City {
+    const XS_WEST: [f64; 3] = [-1000.0, -550.0, -100.0];
+    const XS_EAST: [f64; 3] = [100.0, 550.0, 1000.0];
+    const YS: [f64; 3] = [-700.0, 0.0, 700.0];
+    let mut b = NetworkBuilder::new();
+
+    // Nodes: W(r,c) = 3r + c, E(r,c) = 9 + 3r + c, then zones 18–23.
+    let west: Vec<Vec<NodeId>> = YS.iter().map(|&y| XS_WEST.iter().map(|&x| b.node(x, y)).collect()).collect();
+    let east: Vec<Vec<NodeId>> = YS.iter().map(|&y| XS_EAST.iter().map(|&x| b.node(x, y)).collect()).collect();
+    let zone_specs = [
+        ("Riverside", -1150.0, YS[0], ZoneKind::Residential),
+        ("Old Town", -1150.0, YS[1], ZoneKind::Residential),
+        ("Westbrook", -1150.0, YS[2], ZoneKind::Residential),
+        ("St. Mary's Hospital", 1150.0, YS[0], ZoneKind::Hospital),
+        ("Harbor Works", 1150.0, YS[1], ZoneKind::Workplace),
+        ("Tech Park", 1150.0, YS[2], ZoneKind::Workplace),
+    ];
+    let zones: Vec<Zone> = zone_specs
+        .iter()
+        .map(|&(name, x, y, kind)| Zone { name: name.to_string(), node: b.zone(x, y), kind })
+        .collect();
+
+    // The center row (r = 1) is a 2-lane arterial; other streets are 1-lane.
+    let street = |r: usize| if r == 1 { (ARTERIAL_SPEED, 2) } else { (STREET_SPEED, 1) };
+    for bank in [&west, &east] {
+        for (r, row) in bank.iter().enumerate() {
+            for c in 0..2 {
+                let (speed, lanes) = street(r);
+                b.two_way(row[c], row[c + 1], speed, lanes);
+            }
+        }
+        // verticals: column-major (c, then r), as the construction order requires
+        #[allow(clippy::needless_range_loop)]
+        for c in 0..3 {
+            for r in 0..2 {
+                b.two_way(bank[r][c], bank[r + 1][c], STREET_SPEED, 1);
+            }
+        }
+    }
+
+    let south_bridge = b.two_way(west[0][2], east[0][0], STREET_SPEED, 1);
+    let central_bridge = b.two_way(west[1][2], east[1][0], ARTERIAL_SPEED, 2);
+    let north_bridge = b.two_way(west[2][2], east[2][0], STREET_SPEED, 1);
+
+    for (i, z) in zones.iter().enumerate() {
+        let junction = if i < 3 { west[i][0] } else { east[i - 3][2] };
+        b.two_way(z.node, junction, STREET_SPEED, 2);
+    }
+    let network = b.build().expect("three_bridges is a valid network");
+
+    let flow = |o: &Zone, d: &Zone, veh_per_hour| OdFlow { origin: o.node, dest: d.node, veh_per_hour };
+    let (west_zones, east_zones) = zones.split_at(3);
+    let mut flows = Vec::new();
+    for w in west_zones {
+        flows.push(flow(w, &east_zones[0], 60.0));
+        flows.push(flow(w, &east_zones[1], 300.0));
+        flows.push(flow(w, &east_zones[2], 300.0));
+    }
+    for e in east_zones {
+        for w in west_zones {
+            flows.push(flow(e, w, 80.0));
+        }
+    }
+    let demand = DemandModel { flows, profile: Profile::default() };
+
+    City {
+        name: "three_bridges",
+        river: (-60.0, 60.0),
+        scenario: Scenario { network, demand, demand_seed, behavior_seed },
+        landmarks: Landmarks {
+            north_bridge: [north_bridge.0, north_bridge.1],
+            central_bridge: [central_bridge.0, central_bridge.1],
+            south_bridge: [south_bridge.0, south_bridge.1],
+        },
+        zones,
+    }
+}
+
+
+// ───────────────────────── River City (prototype v2) ─────────────────────────
+
+/// River corridor (simulation data: only bridge links cross it).
+pub const RIVER_WEST_X: f64 = -75.0;
+pub const RIVER_EAST_X: f64 = 75.0;
+const OLD_BRIDGE_SPEED: f64 = 8.3;
+const OLD_BRIDGE_SAT_FLOW: f64 = 0.25;
+
+fn proto_env(k: &str, d: f64) -> f64 {
+    std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d)
+}
+
+pub fn river_city(demand_seed: u64, behavior_seed: u64) -> City {
+    const XW: [f64; 6] = [-3000.0, -2300.0, -1600.0, -900.0, -500.0, -200.0];
+    const XE: [f64; 6] = [200.0, 500.0, 900.0, 1600.0, 2300.0, 3000.0];
+    const YS: [f64; 7] = [-1800.0, -1200.0, -600.0, 0.0, 600.0, 1200.0, 1800.0];
+    const MAIN_ROW: usize = 3;
+    let arterial_rows = [1usize, 3, 5];
+    let arterial_cols = [[1usize, 3], [2, 4]];
+    let mut b = NetworkBuilder::new();
+    let west: Vec<Vec<NodeId>> = YS.iter().map(|&y| XW.iter().map(|&x| b.node(x, y)).collect()).collect();
+    let east: Vec<Vec<NodeId>> = YS.iter().map(|&y| XE.iter().map(|&x| b.node(x, y)).collect()).collect();
+    for (k, bank) in [&west, &east].into_iter().enumerate() {
+        for r in 0..YS.len() {
+            for c in 0..5 {
+                let (speed, lanes) = if arterial_rows.contains(&r) { (ARTERIAL_SPEED, 2) } else { (STREET_SPEED, 1) };
+                b.two_way(bank[r][c], bank[r][c + 1], speed, lanes);
+            }
+        }
+        for c in 0..6 {
+            for r in 0..YS.len() - 1 {
+                let (speed, lanes) = if arterial_cols[k].contains(&c) { (ARTERIAL_SPEED, 2) } else { (STREET_SPEED, 1) };
+                b.two_way(bank[r][c], bank[r + 1][c], speed, lanes);
+            }
+        }
+    }
+    let main = b.two_way(west[MAIN_ROW][5], east[MAIN_ROW][0], ARTERIAL_SPEED, 2);
+    let north = b.two_way(west[6][5], east[6][0], STREET_SPEED, 1);
+    let old = b.two_way(west[0][5], east[0][0], OLD_BRIDGE_SPEED, 1);
+    b.set_sat_flow(old.0, OLD_BRIDGE_SAT_FLOW);
+    b.set_sat_flow(old.1, OLD_BRIDGE_SAT_FLOW);
+
+    // Districts: (kind, west bank?, zones: (name, row, col)). Zones sit 140 m off their junction.
+    let districts: Vec<(&str, ZoneKind, bool, Vec<(&str, usize, usize)>)> = vec![
+        ("westbrook", ZoneKind::Residential, true, vec![("Westbrook", 5, 1), ("Westbrook Heights", 6, 2)]),
+        ("hillside", ZoneKind::Residential, true, vec![("Hillside", 3, 0), ("Hillside Gardens", 4, 1)]),
+        ("oldtown", ZoneKind::Residential, true, vec![("Old Town", 3, 3), ("Cathedral Quarter", 2, 3)]),
+        ("riverside", ZoneKind::Residential, true, vec![("Riverside", 1, 3), ("Mill Lane", 1, 1)]),
+        ("millbrook", ZoneKind::Residential, true, vec![("Millbrook", 0, 2), ("Southfield", 2, 0)]),
+        ("market", ZoneKind::Workplace, true, vec![("Market Square", 4, 3), ("Old Exchange", 5, 3)]),
+        ("downtown", ZoneKind::Workplace, false, vec![("Downtown", 3, 3), ("City Hall", 4, 2), ("Station", 2, 2)]),
+        ("tech", ZoneKind::Workplace, false, vec![("Tech Park", 5, 4), ("Innovation Hub", 6, 3)]),
+        ("harbor", ZoneKind::Workplace, false, vec![("Harbor Works", 1, 2), ("Docks", 0, 3)]),
+        ("hospital", ZoneKind::Hospital, false, vec![("St. Mary's Hospital", 2, 4)]),
+        ("eastgate", ZoneKind::Residential, false, vec![("Eastgate", 4, 5), ("Eastgate Fields", 3, 5)]),
+    ];
+    let mut zones = Vec::new();
+    let mut dz: Vec<Vec<NodeId>> = Vec::new();
+    for (_, kind, is_west, zs) in &districts {
+        let mut nodes = Vec::new();
+        for &(name, r, c) in zs {
+            let j = if *is_west { west[r][c] } else { east[r][c] };
+            let x = if *is_west { XW[c] } else { XE[c] };
+            let z = b.zone(x + 140.0, YS[r] + 140.0);
+            b.two_way(z, j, STREET_SPEED, 2);
+            zones.push(Zone { name: name.to_string(), node: z, kind: *kind });
+            nodes.push(z);
+        }
+        dz.push(nodes);
+    }
+    let network = b.build().expect("river_city is a valid network");
+
+    let intra = proto_env("RC_INTRA", 1.0);
+    let cross = proto_env("RC_CROSS", 1.0);
+    let idx = |d: &str| districts.iter().position(|x| x.0 == d).expect("district");
+    let mut flows = Vec::new();
+    // district-to-district rate (veh/h), split evenly over zone pairs
+    let mut f = |o: &str, d: &str, vph: f64, k: f64| {
+        let (os, ds) = (&dz[idx(o)], &dz[idx(d)]);
+        let each = vph * k / (os.len() * ds.len()) as f64;
+        for &on in os {
+            for &dn in ds {
+                if on != dn {
+                    flows.push(OdFlow { origin: on, dest: dn, veh_per_hour: each });
+                }
+            }
+        }
+    };
+    let west_res = ["westbrook", "hillside", "oldtown", "riverside", "millbrook"];
+    for o in west_res {
+        f(o, "downtown", 300.0, cross);
+        f(o, "tech", 180.0, cross);
+        f(o, "harbor", 160.0, cross);
+        f(o, "hospital", 40.0, cross);
+        f(o, "market", 500.0, intra);
+        for d in west_res {
+            if d != o {
+                f(o, d, 120.0, intra);
+            }
+        }
+    }
+    for o in ["downtown", "tech", "harbor"] {
+        for d in west_res {
+            f(o, d, 50.0, cross);
+        }
+        f("eastgate", o, 400.0, intra);
+        f(o, "eastgate", 150.0, intra);
+    }
+    f("eastgate", "market", 150.0, cross);
+    f("eastgate", "hospital", 60.0, intra);
+    f("downtown", "tech", 300.0, intra);
+    f("tech", "downtown", 300.0, intra);
+    f("harbor", "downtown", 250.0, intra);
+    f("downtown", "harbor", 250.0, intra);
+    f("market", "eastgate", 100.0, cross);
+    let demand = DemandModel { flows, profile: Profile::default() };
+
+    City {
+        name: "river_city",
+        river: (RIVER_WEST_X, RIVER_EAST_X),
+        scenario: Scenario { network, demand, demand_seed, behavior_seed },
+        landmarks: Landmarks {
+            north_bridge: [north.0, north.1],
+            central_bridge: [main.0, main.1],
+            south_bridge: [old.0, old.1],
+        },
+        zones,
+    }
+}

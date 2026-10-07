@@ -96,6 +96,7 @@ test('the host reports the city and its river in ready', () => {
   const posted3: FromWorker[] = [];
   const real = Sim.three_bridges(1, 1) as unknown as Record<string | symbol, unknown>;
   const fake = new Proxy(real, {
+    has: (target, prop) => prop !== 'city_name' && prop !== 'river' && prop in target,
     get: (target, prop) => {
       if (prop === 'city_name' || prop === 'river') return undefined;
       const v = target[prop];
