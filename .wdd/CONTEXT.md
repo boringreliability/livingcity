@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-07: city-002 complete (Gold approved, gold-1); next city-003
+2026-10-08: city-003 complete (Gold approved at round 4, which the user authorised after three rejections); next city-004
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -13,6 +13,14 @@
 - **Epic city: active.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
   - **city-001 complete**: per-link `sat_flow_per_lane` (`set_sat_flow`) and gridlock relief (`blocked_ticks`; reroute every 60 s with the blocked link excluded; removal at 10 min → `removed_gridlock`, `unserved`). `frame::EXTENDED_METRIC_NAMES` is used by sim-wasm, and `METRIC_NAMES` is unchanged. Example `gridlock`. Rust 113 tests. Red took 4 rounds (r4 auto), Gold 2 (r1: clippy on the example). three_bridges stays bit-identical.
   - **city-002 complete**: `cities::river_city` (6×7 junctions per bank including a near-river column; Main / North / Old Bridge; 11 districts / 22 zones; demand scaled 2.3 intra / 0.9 cross), `City.name` / `City.river`, example `river`. sim-wasm `river_city` / `city_name` / `river`. `init.city` defaults to River City, `?city=three_bridges` gives the core city, `ReadyMessage.city` / `river`, and `riverDecor`. Fix S1: a speed picked before ready is honoured. Tests: Rust 125 (calibration release-only), Vitest 47, Playwright 20. Red took 3 rounds (the C3 reopen target was changed: the 5-min queued ratio was noise), Gold 1. Calibration: `.wdd/memory/decisions/river-city-calibration.md`.
+  - **city-003 complete**: inspection.
+    - Rust: `vehicle_at`, `vehicle_by_trip`, `link_stats`, `trip_outcome`; `removed_log` is hashed.
+    - wasm: frame trip tables for the last 8 frames, `trip_at_record`, `vehicle_detail` / `trip_outcome` / `link_detail`.
+    - Host: `inspectVehicle {frameTick, record, seq}` / `inspectLink`. Frames carry `tracked` + `trackedSeq` and `linkDetail`; the keys are omitted until inspection is first used, because core-004 forbids null-valued fields.
+    - UI: vehicles are pickable only at zoom ≥ 1 px/m (fit-zoom clicks select roads). VehiclePanel, Follow, ring and dashed route in screen px, road stats (capacity veh/h, travel time vs free flow), Escape clears the vehicle and then the road.
+    - Renderer: the extrapolation anchor restarts on a new tick, on resume and on a speed change. It extrapolates at the multiplier unless the clock is behind.
+    - Tests: Rust +5, Vitest 54, Playwright 30.
+    - Red took 3 rounds. Gold took 4: Follow jitter (a core-005 bug), a lurch after Play, stale frames after a clear, a lost pick. The user chose "1", a fresh round 4, after three rejections.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. The sandbox blocked writing this into CLAUDE.md.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -32,6 +40,7 @@
 | New metrics in `EXTENDED_METRIC_NAMES`, not `METRIC_NAMES` | core_004 pins the core list; the web reads metrics by name | city-001 |
 | River City calibrated at the centre of a measured plateau (intra 2.3, cross 0.9); near-river column for short approach blocks | closure must oversaturate the 2,700 veh/h alternatives, yet the city must recover after a reopen | city-002 |
 | C3 reopen target = backlog cleared + Main share + queue reduction (not a 5-min queued ratio) | the ratio swung 1.4–3.0 with ±2 % demand (route-choice oscillation) | city-002 |
+| Vehicle picking only at zoom ≥ 1 px/m; a pick = (frameTick, record) resolved via retained trip tables; requests carry `seq` | the network dominates at wide zoom; the clicked car is the one seen; no stale or in-flight frames | city-003 |
 
 ## Active Constraints
 - The contracts `.wdd/epics/core.md` and `.wdd/epics/city.md` are binding. Change them explicitly (with the reason), never silently in code.
@@ -53,6 +62,7 @@
 | three_bridges central closure | N+S exits ~6 → ~40/min; mean tt 242 → 264 s | core-003 |
 
 ## Known Limitations
+- city-003 MINORs: a car crossing a junction steps ~4–7 m between drawn link centrelines (the ring and Follow step too). A speed change or the behind flag restarts or rescales extrapolation (small steps). There is no host-level unit test for the `trackedSeq` echo (e2e covers it).
 - three_bridges demand is mild (it peaks around 225 vehicles) and never triggers gridlock relief.
 - River City's baseline sits low in its band (1,600–1,720 active). `RIVER_WEST_X` / `RIVER_EAST_X` are `pub` but only used in `cities.rs`. `cargo fmt --check` reports diffs (there is no fmt gate).
 - At fit zoom the control panel clips the "Westbrook Heights" label, and the North and Old Bridges look like streets (city-004).
@@ -72,7 +82,6 @@
   - no-WebGL2 path is silent.
 
 ## What Comes Next
-- **city-003**: inspect/follow vehicles, road stats.
 - **city-004**: miniature-city look + MINOR fixes.
 - **city-005**: warm-up, diagnostics, measured performance, integration.
 - Then the human epic gate. After that, epic `timeline` (snapshots, replay, branch, compare), then `polish`.

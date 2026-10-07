@@ -3,12 +3,12 @@ ward: 3
 revision: null
 name: "Inspect vehicles and roads"
 epic: "city"
-status: "gold"
+status: "complete"
 dependencies: ["city-002"]
 layer: "typescript"
 estimated_tests: 17
 created: "2026-10-07"
-completed: null
+completed: "2026-10-08"
 ---
 # Ward city-003: Inspect vehicles and roads
 
