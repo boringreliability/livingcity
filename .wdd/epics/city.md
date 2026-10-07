@@ -68,7 +68,7 @@ The core contract allows gridlock in cycles. With oversaturation (closing the Ma
   - `Counts.removed` = `removed_unreachable + removed_gridlock`.
   - `RerouteStats` gains `gridlock_reroutes`.
   - `VehicleInfo` gains `blocked_ticks`.
-  - `METRIC_NAMES` gains `"removed_gridlock"` and `"unserved"`, appended at the end.
+  - `frame::METRIC_NAMES` and `metrics_to_array` stay exactly as in core (core_004 pins them). New `frame::EXTENDED_METRIC_NAMES` = `METRIC_NAMES` + `["removed_gridlock", "unserved"]` and `metrics_to_extended_array` (same order). `sim-wasm` exposes the extended list and array (the web reads metrics by name).
 - **Determinism.** `state_hash` covers `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes`. Conservation becomes `spawned == active + completed + removed_unreachable + removed_gridlock` at every tick.
 
 ### C3. River City (city-002)

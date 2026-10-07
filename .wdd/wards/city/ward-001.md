@@ -6,7 +6,7 @@ epic: "city"
 status: "red"
 dependencies: ["core-005"]
 layer: "rust"
-estimated_tests: 16
+estimated_tests: 19
 created: "2026-10-07"
 completed: null
 ---
@@ -26,7 +26,7 @@ Rust only. Nothing changes for existing scenarios unless they actually gridlock.
 ## Outputs
 - `Link.sat_flow_per_lane`, `NetworkBuilder::set_sat_flow`, `NetworkError::{InvalidSatFlow { from, to }, UnknownLink(LinkId)}`, `params::{MAX_SAT_FLOW_PER_LANE, GRIDLOCK_REROUTE_TICKS, GRIDLOCK_REMOVE_TICKS}`.
 - `VehicleInfo.blocked_ticks: u32`, `RerouteStats.gridlock_reroutes: u64`, `Metrics.{removed_gridlock, unserved}: u64`. `Counts.removed` includes gridlock removals.
-- `frame::METRIC_NAMES` gains `"removed_gridlock"` and `"unserved"`, appended at the end, and `metrics_to_array` follows.
+- `frame::EXTENDED_METRIC_NAMES` + `metrics_to_extended_array` (core list + `removed_gridlock`, `unserved`). `METRIC_NAMES`/`metrics_to_array` unchanged (core_004 pins them). `sim-wasm` `metric_names()`/`metrics()` switch to the extended list.
 - Example `gridlock`: a ring scenario printing per 30 s: blocked fronts, gridlock reroutes, gridlock removals, completed.
 
 ## Specification
@@ -57,12 +57,15 @@ All in `crates/sim-core/tests/city_001_relief.rs`. Two constructions:
 | 10 | `gridlock_reroute_after_60s_crosses_when_free` | fork with Q free: in the step where v's count reaches 120 (119 before), v switches to (L1,Q1,Q2,R), keeping the driven prefix, and crosses onto Q1 in the same evaluation (`blocked_ticks` 0 there). `gridlock_reroutes` +1 and `switches_total` +1 |
 | 11 | `gridlock_reroute_without_space_keeps_counting` | fork with Q blocked by b2: at 120 v switches to the Q route but stays (count 120, not reset). At 240 it switches back to P. At 360 to Q again, each time `gridlock_reroutes` +1. When the blockers are removed, v crosses and its count resets to 0 |
 | 12 | `gridlock_removal_after_10_minutes` | pure ring: no gridlock reroute ever finds a path. Every vehicle that disappears without completing is a front whose count was 1199 before the step, and `removed_gridlock` rises by exactly their number. The removed vehicle's link gets no exit in that step. No count ever reaches 1200. All ring vehicles have completed or been removed within 30 min after the first removal |
-| 13 | `gridlock_metrics_and_conservation` | every tick in the ring and fork runs: `spawned == active + completed + removed_unreachable + removed_gridlock`; `Counts.removed == removed_unreachable + removed_gridlock`; `unserved == unreachable + removed_gridlock`. `METRIC_NAMES` ends with `removed_gridlock`, `unserved`, and `metrics_to_array` matches by index |
+| 13 | `gridlock_metrics_and_conservation` | every tick in the ring and fork runs: `spawned == active + completed + removed_unreachable + removed_gridlock`; `Counts.removed == removed_unreachable + removed_gridlock`; `unserved == unreachable + removed_gridlock`. `METRIC_NAMES` is unchanged; `EXTENDED_METRIC_NAMES` = core list + `removed_gridlock`, `unserved`, and `metrics_to_extended_array` matches by index |
 | 14 | `gridlock_reroute_spends_no_budget` | in test 10's relief step (with no periodic reroute due): `budgeted_total` and `forced_total` are unchanged |
 | 15 | `relief_is_deterministic_and_clone_safe` | two ring runs have equal `state_hash` and per-vehicle `blocked_ticks` every tick for 4,000 ticks. A clone taken at tick 700 (fronts blocked) matches the original every tick |
 | 16 | `normal_traffic_untouched_by_relief` | three_bridges, 1 h baseline and a 1 h run with the central bridge closed at 10 min: `gridlock_reroutes == 0` and `removed_gridlock == 0` |
+| 17 | `blocked_counts_while_credit_is_low` | (Red r1, M1) with L1 at sat 0.125 v reaches the stop line (P full) while the lane is still re-earning credit: it is counted from its first tick at the line |
+| 18 | `gridlock_search_does_not_touch_router_cache` | (Red r1, M4) a demand trip generated the tick after the gridlock reroute gets the normal shortest route via P |
+| 19 | `removal_at_1200_makes_no_reroute_attempt` | (Red r1, M2/M3) P held for good by a credit-starved vehicle (sat 1e-6), Q1 closed until v's count is 1190 (no search may use it); at 1200 v is removed, never rerouted, `gridlock_reroutes == 0` |
 
-`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. Worlds differing only in those fields cannot be built through the public API.
+`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. Worlds differing only in those fields cannot be built through the public API. Likewise the Gold reviewer checks in code that a gridlock removal records no exit time (an epoch-level test was not constructible: the freed space makes the link discharge in the same epoch).
 
 ## Must NOT
 - Change any earlier test or any core reference value. Default-sat-flow worlds must behave bit-identically wherever no front is blocked for 60 s.
@@ -80,13 +83,13 @@ cargo build -p sim-core --release --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core 85 + city_001 16 pass.
+   Expected: core 85 + city_001 19 pass.
 2. Run: `cargo run -p sim-core --release --example gridlock`
    Verify: blocked fronts appear. A reroute happens at 60 s blocked where an alternative exists, and a removal happens at 10 min in the pure deadlock. After that the ring drains and completes.
 3. Run it twice and `diff` the outputs.
    Expected: identical.
 ### Pass criteria
-- [ ] 101 Rust tests green, clippy clean (`cargo clippy --all-targets -- -D warnings`)
+- [ ] 104 Rust tests green, clippy clean (`cargo clippy --all-targets -- -D warnings`)
 - [ ] The gridlock example shows reroute, removal and recovery
 - [ ] Deterministic output
 

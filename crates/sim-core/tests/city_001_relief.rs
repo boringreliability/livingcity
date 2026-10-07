@@ -5,12 +5,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sim_core::cities::three_bridges;
-use sim_core::frame::{metrics_to_array, METRIC_NAMES};
+use sim_core::frame::{metrics_to_array, metrics_to_extended_array, EXTENDED_METRIC_NAMES, METRIC_NAMES};
 use sim_core::params::{
-    GRIDLOCK_REMOVE_TICKS, GRIDLOCK_REROUTE_TICKS, MAX_SAT_FLOW_PER_LANE, QUEUED_SPEED, REROUTE_PERIOD_TICKS,
+    COST_EPOCH_TICKS, GRIDLOCK_REMOVE_TICKS, GRIDLOCK_REROUTE_TICKS, MAX_SAT_FLOW_PER_LANE, QUEUED_SPEED, REROUTE_PERIOD_TICKS,
     SAT_FLOW_PER_LANE,
 };
-use sim_core::{Command, CommandKind, LinkId, NetworkBuilder, NetworkError, VehicleId, VehicleInfo, VehicleState, World};
+use sim_core::{
+    Command, CommandKind, DemandModel, LinkId, NetworkBuilder, NetworkError, OdFlow, Profile, Scenario, VehicleId,
+    VehicleInfo, VehicleState, World,
+};
 
 /// Step once and check the invariants plus the C2 conservation and metric identities.
 fn step_checked(w: &mut World) {
@@ -522,6 +525,9 @@ fn gridlock_reroute_without_space_keeps_counting() {
         step_checked(&mut f.w);
         let g = f.w.reroute_stats().gridlock_reroutes;
         let Some(i) = f.w.vehicle(f.v) else { break };
+        if i.state == VehicleState::WaitingAtOrigin {
+            continue;
+        }
         if i.state != VehicleState::OnLink(f.l1) {
             // Then once the blockers are removed v crosses and its count resets
             assert!(f.w.vehicle(f.b1).is_none() || f.w.vehicle(f.b2.unwrap()).is_none(), "tick {t}");
@@ -602,6 +608,13 @@ fn gridlock_removal_after_10_minutes() {
             first_removal.get_or_insert(t);
         }
         removals += removed.len() as u64;
+        if t == 400 {
+            // (premise: the ring is deadlocked: every ring link full, nothing moved for 50 ticks)
+            for &l in &r.ring {
+                assert_eq!(r.w.link_count(l), r.w.network().capacity(l), "ring link {l:?} not full at 400");
+            }
+            assert!(infos(&r.w).iter().any(|i| i.blocked_ticks >= 50), "fronts not blocked at 400");
+        }
         // And no count ever reaches 1200, and no gridlock reroute ever finds a path
         for i in infos(&r.w) {
             assert!(i.blocked_ticks < GRIDLOCK_REMOVE_TICKS as u32);
@@ -636,14 +649,21 @@ fn gridlock_metrics_and_conservation() {
     let m = r.w.metrics();
     assert!(m.removed_gridlock >= 1, "precondition: a gridlock removal");
 
-    // And the metric names/array carry the new fields at the end, aligned by index
+    // And the core list is unchanged; the extended list is the core list + the new fields,
+    // aligned by index with its array (core_004 pins the core list)
     let n = METRIC_NAMES.len();
-    assert_eq!(&METRIC_NAMES[n - 2..], &["removed_gridlock", "unserved"]);
-    let arr = metrics_to_array(&m);
-    assert_eq!(arr.len(), n);
-    assert_eq!(arr[n - 2], m.removed_gridlock as f64);
-    assert_eq!(arr[n - 1], m.unserved as f64);
-    let idx = |name: &str| METRIC_NAMES.iter().position(|&x| x == name).unwrap();
+    assert_eq!(&EXTENDED_METRIC_NAMES[..n], METRIC_NAMES);
+    assert_eq!(&EXTENDED_METRIC_NAMES[n..], &["removed_gridlock", "unserved"]);
+    let core = metrics_to_array(&m);
+    let arr = metrics_to_extended_array(&m);
+    assert_eq!(core.len(), n);
+    assert_eq!(arr.len(), n + 2);
+    for k in 0..n {
+        assert!(arr[k] == core[k] || (arr[k].is_nan() && core[k].is_nan()), "index {k}");
+    }
+    assert_eq!(arr[n], m.removed_gridlock as f64);
+    assert_eq!(arr[n + 1], m.unserved as f64);
+    let idx = |name: &str| EXTENDED_METRIC_NAMES.iter().position(|&x| x == name).unwrap();
     assert_eq!(arr[idx("unreachable")], m.unreachable as f64);
     assert_eq!(arr[idx("completed")], m.completed as f64);
 }
@@ -727,4 +747,183 @@ fn normal_traffic_untouched_by_relief() {
         assert_eq!(w.metrics().removed_gridlock, 0, "closure={closure}");
         assert!(max_blocked < GRIDLOCK_REROUTE_TICKS as u32, "closure={closure}: max blocked {max_blocked}");
     }
+}
+
+// ─── 17–19: added after Red review r1 (reviewer-verified against a reference) ──
+
+/// Fork variant with an optional single demand trip Z→D generated in a given tick.
+struct F {
+    w: World,
+    l1: LinkId,
+    p: LinkId,
+    q1: LinkId,
+    q2: LinkId,
+    r: LinkId,
+    v: sim_core::VehicleId,
+    b1: sim_core::VehicleId,
+}
+
+/// Same as the ward's fork(Q::Free / Q::None), optionally with demand Z→D and an L1 sat override.
+fn fork_d(with_q: bool, demand_tick: Option<u64>, l1_sat: Option<f64>) -> F {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let x = b.node(10.0, -200.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let cx = b.link(bb, x, 10.0, 1);
+    let (mut q1, mut q2) = (LinkId(0), LinkId(0));
+    if with_q {
+        let e = b.node(5.0, 9.0);
+        let y = b.node(5.0, 209.0);
+        q1 = b.link_with_length(a, e, 10.0, 10.0, 1);
+        q2 = b.link_with_length(e, bb, 10.0, 10.0, 1);
+        b.link(e, y, 10.0, 1);
+    }
+    if let Some(s) = l1_sat {
+        b.set_sat_flow(l1, s);
+    }
+    let net = b.build().unwrap();
+    let mut demand = DemandModel::default();
+    if let Some(t) = demand_tick {
+        // exactly one trip Z→D, generated in tick t
+        demand.flows.push(OdFlow { origin: z, dest: d, veh_per_hour: 7200.0 });
+        let s = |k: u64| k as f64 * 0.5;
+        demand.profile = Profile { points: vec![(s(t - 1), 0.0), (s(t), 1.0), (s(t + 1), 0.0)] };
+    }
+    let mut w = World::from_scenario(Scenario { network: net, demand, demand_seed: 1, behavior_seed: 1 }).unwrap();
+    w.schedule(close(cx, 0)).unwrap();
+    w.step();
+    let b1 = w.spawn_with_route(vec![l1, p, cx]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    F { w, l1, p, q1, q2, r, v, b1 }
+}
+
+
+// ─── 17 ───────────────────────────────────────────────────────────────────
+/// X1 (kills "credit checked before the blocked check"): the blocked check is a pure read made
+/// even when credit < 1. With L1 at sat 0.125 the lane needs 16 ticks to re-earn a credit after
+/// b1's crossing, and v reaches the stop line (P full) inside that window.
+#[test]
+fn blocked_counts_while_credit_is_low() {
+    let mut f = fork_d(false, None, Some(0.125));
+    let mut b1_crossed_at = None;
+    let mut first_at_line = None;
+    let mut prev_at_line: Option<u32> = None;
+    for _ in 0..400 {
+        let t = f.w.tick();
+        let e0 = f.w.link_exit_count(f.l1);
+        f.w.step();
+        if f.w.link_exit_count(f.l1) > e0 {
+            b1_crossed_at.get_or_insert(t);
+        }
+        let i = f.w.vehicle(f.v).unwrap();
+        if i.state == VehicleState::OnLink(f.l1) && i.s >= 200.0 - 1e-9 {
+            first_at_line.get_or_insert(t);
+            // Then a front standing at the stop line with P full is counted from its first such tick
+            assert!(i.blocked_ticks >= 1, "tick {t}: at the stop line with P full but count 0");
+            if let Some(p) = prev_at_line {
+                assert_eq!(i.blocked_ticks, p + 1, "tick {t}");
+            }
+            prev_at_line = Some(i.blocked_ticks);
+        }
+    }
+    let (c, a) = (b1_crossed_at.unwrap(), first_at_line.unwrap());
+    // precondition: v stood at the line while the lane was still re-earning credit
+    assert!(a < c + 16, "v reached the line at {a}, b1 crossed at {c}");
+}
+
+
+// ─── 18 ───────────────────────────────────────────────────────────────────
+/// X2 (kills "gridlock search reads/writes RouterCache"): a demand trip Z→D generated in the
+/// tick right after v's gridlock reroute is routed by the cached router; it must get the normal
+/// shortest route via P, not one built with P excluded.
+#[test]
+fn gridlock_search_does_not_touch_router_cache() {
+    // find the relief tick r
+    let mut probe = fork_d(true, None, None);
+    let mut r = None;
+    for _ in 0..400 {
+        let t = probe.w.tick();
+        probe.w.step();
+        if probe.w.reroute_stats().gridlock_reroutes == 1 {
+            r = Some(t);
+            break;
+        }
+    }
+    let r = r.expect("relief happened");
+    assert_ne!((r + 1) % COST_EPOCH_TICKS, 0, "precondition: r+1 not an epoch tick");
+    let mut f = fork_d(true, Some(r + 1), None);
+    while f.w.tick() <= r + 1 {
+        f.w.step();
+    }
+    assert_eq!(f.w.reroute_stats().gridlock_reroutes, 1);
+    let g = f.w.generated_trips();
+    assert_eq!(g.len(), 1, "exactly one demand trip");
+    let trip = g[0].trip_id;
+    let dv = infos(&f.w).into_iter().find(|i| i.trip_id == trip).unwrap();
+    assert_eq!(f.w.shortest_route(f.w.network().link(f.l1).from, f.w.network().link(f.r).to).unwrap().0, vec![f.l1, f.p, f.r]);
+    assert_eq!(dv.route, vec![f.l1, f.p, f.r], "the demand trip was routed by a polluted cache");
+    let _ = (f.q1, f.q2, f.v, f.b1);
+}
+
+
+// ─── 19 ───────────────────────────────────────────────────────────────────
+/// X3b (kills "reroute attempted at 1200"): P is held for good by a credit-starved vehicle
+/// (P's sat is 1e-6), the only alternative Q1 is closed until v's count is 1190. At 1200 v must
+/// be removed, although a gridlock search would now find the free Q route.
+#[test]
+fn removal_at_1200_makes_no_reroute_attempt() {
+    let mut b = NetworkBuilder::new();
+    let z = b.zone(-200.0, 0.0);
+    let a = b.node(0.0, 0.0);
+    let bb = b.node(10.0, 0.0);
+    let d = b.node(210.0, 0.0);
+    let e = b.node(5.0, 9.0);
+    let l1 = b.link(z, a, 10.0, 1);
+    let p = b.link_with_length(a, bb, 10.0, 10.0, 1);
+    let r = b.link(bb, d, 10.0, 1);
+    let q1 = b.link_with_length(a, e, 10.0, 10.0, 1);
+    let _q2 = b.link_with_length(e, bb, 10.0, 10.0, 1);
+    b.set_sat_flow(p, 1e-6);
+    let mut w = World::new(b.build().unwrap());
+    w.schedule(close(q1, 0)).unwrap();
+    w.step();
+    let b1 = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    let v = w.spawn_with_route(vec![l1, p, r]).unwrap();
+    let trip_v = w.vehicle(v).unwrap().trip_id;
+    let mut opened_at = None;
+    let mut removed_at = None;
+    for _ in 0..3000 {
+        let t = w.tick();
+        let before = w.vehicle(v);
+        w.step();
+        assert!(w.vehicle(b1).is_some(), "b1 holds P for good");
+        match w.vehicle(v) {
+            Some(i) => {
+                if i.blocked_ticks == 1190 && opened_at.is_none() {
+                    w.schedule(Command { tick: t + 1, kind: CommandKind::OpenLink(q1) }).unwrap();
+                    opened_at = Some(t + 1);
+                }
+                assert!(
+                    i.state == VehicleState::OnLink(l1) || i.state == VehicleState::WaitingAtOrigin,
+                    "tick {t}: v left L1 ({:?}) instead of being removed",
+                    i.state
+                );
+            }
+            None => {
+                assert_eq!(before.unwrap().blocked_ticks, GRIDLOCK_REMOVE_TICKS as u32 - 1);
+                removed_at = Some(t);
+                break;
+            }
+        }
+    }
+    let (o, rm) = (opened_at.unwrap(), removed_at.expect("v removed"));
+    assert!((o..=rm).all(|t| (t + trip_v) % REROUTE_PERIOD_TICKS != 0), "precondition: periodic in window");
+    assert!(w.shortest_route(a, d).is_some(), "precondition: the Q route exists at removal");
+    assert_eq!(w.metrics().removed_gridlock, 1);
+    assert_eq!(w.reroute_stats().gridlock_reroutes, 0, "earlier searches found no path; none at 1200");
 }
