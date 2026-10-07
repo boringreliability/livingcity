@@ -21,6 +21,7 @@ export function createSimClient(demandSeed: number, behaviorSeed: number): SimCl
   const errors: ((m: string) => void)[] = [];
   const send = (msg: ToWorker, transfer: Transferable[] = []) => worker.postMessage(msg, transfer);
 
+  worker.onerror = (e: ErrorEvent) => errors.forEach((cb) => cb(`worker error: ${e.message}`));
   worker.onmessage = (e: MessageEvent<FromWorker>) => {
     const msg = e.data;
     if (msg.type === 'ready') ready.forEach((cb) => cb(msg));

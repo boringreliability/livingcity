@@ -53,7 +53,7 @@ export class SimClock {
     const t = this.now();
     if (this.running) {
       // Credit the time so far at the old speed; a clamp here is a real cap event.
-      this.credit(t, true);
+      this.credit(t, !this.suppressCapEvents);
       this.multiplier = multiplier;
       if (this.backlog > this.cap()) {
         this.backlog = this.cap();
@@ -83,6 +83,7 @@ export class SimClock {
   }
 
   report(ticks: number, elapsedMs: number): void {
+    ticks = Math.max(0, Math.floor(ticks));
     this.executedTicks += ticks;
     this.backlog = Math.max(0, this.backlog - ticks);
     if (ticks > 0) {
@@ -122,7 +123,8 @@ export class SimClock {
 
   /** Add elapsed wall time to the backlog at the current speed, clamping at the cap. */
   private credit(t: number, clampIsEvent: boolean): void {
-    this.backlog += ((t - this.creditedUntil) / 1000) * this.targetTicksPerS();
+    // A clock that goes backwards credits nothing (never negative ticks).
+    this.backlog += (Math.max(0, t - this.creditedUntil) / 1000) * this.targetTicksPerS();
     this.creditedUntil = t;
     if (this.backlog > this.cap()) {
       this.backlog = this.cap();

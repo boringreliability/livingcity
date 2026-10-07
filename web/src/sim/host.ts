@@ -57,11 +57,13 @@ const PERF_SAMPLES = 64;
 export function createSimHost(deps: HostDeps): SimHost {
   const clock = new SimClock(deps.now);
   let sim: SimLike | undefined;
+  let linkCount = 0;
   let lastPost = Number.NEGATIVE_INFINITY;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
   let pool: ArrayBuffer[] = [];
-  // Browsers coarsen performance.now() (often to 0.1 ms) and a batch can be
-  // faster than that, so ms/tick is sampled per frame from summed batch time.
+  // ms/tick is sampled per frame from summed batch time. Browsers coarsen
+  // performance.now() (often to 0.1 ms), so sub-resolution ticks still read
+  // as ~0; the numbers are only meaningful once ticks cost ≳ 0.1 ms.
   const tickMs: number[] = [];
   let lastBatchTicks = 0;
   let sinceFrameMs = 0;
@@ -79,6 +81,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       return;
     }
     lastPost = Number.NEGATIVE_INFINITY;
+    linkCount = sim.link_from().length;
     deps.post(
       {
         type: 'ready',
@@ -102,6 +105,15 @@ export function createSimHost(deps: HostDeps): SimHost {
   const command = (kind: 'close' | 'open', link: number) => {
     if (!sim) {
       error(`command before init: ${kind} ${link}`);
+      return;
+    }
+    // Validate here: wasm-bindgen coerces NaN/1.7/2^32+2 to valid u32 ids.
+    if (kind !== 'close' && kind !== 'open') {
+      error(`unknown command kind ${String(kind)}`);
+      return;
+    }
+    if (!Number.isInteger(link) || link < 0 || link >= linkCount) {
+      error(`unknown link ${link}`);
       return;
     }
     const ok = kind === 'close' ? sim.close_link(link) : sim.open_link(link);
@@ -192,7 +204,9 @@ export function createSimHost(deps: HostDeps): SimHost {
           lastPost = t;
         }
       } catch (e) {
-        error(e instanceof Error ? e.message : String(e));
+        // A wasm panic leaves the instance in an unknown state: halt, report once.
+        sim = undefined;
+        error(`simulation halted: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   };

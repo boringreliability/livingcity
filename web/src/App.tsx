@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { createSimClient, type SimClient } from './sim/client';
 import { decodeVehicles } from './sim/frame';
-import { FLAG_ON_CLOSED_LINK, type FrameMessage, type ReadyMessage } from './sim/protocol';
+import { DT, FLAG_ON_CLOSED_LINK, type FrameMessage, type ReadyMessage } from './sim/protocol';
 
 const SPEEDS = [1, 5, 20, 60, 300];
 
@@ -76,7 +76,7 @@ export function App() {
           </dd>
           <dt>speed achieved / target</dt>
           <dd data-testid="speed">
-            {(f.clock.achievedTicksPerS * 0.5).toFixed(1)}× / {f.clock.multiplier}× {f.clock.behind ? '— BEHIND' : ''}
+            {(f.clock.achievedTicksPerS * DT).toFixed(1)}× / {f.clock.multiplier}× {f.clock.behind ? '— BEHIND' : ''}
           </dd>
           <dt>frames/s</dt>
           <dd>{f.perf.framesPerS}</dd>

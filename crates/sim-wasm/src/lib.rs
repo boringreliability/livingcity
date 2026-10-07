@@ -12,6 +12,8 @@ pub struct Sim {
     world: World,
     frame: Vec<u32>,
     export: NetworkExport,
+    link_counts: Vec<u16>,
+    link_queued: Vec<u16>,
     landmarks: Landmarks,
     zones: Vec<Zone>,
 }
@@ -23,7 +25,15 @@ impl Sim {
         let city = three_bridges(demand_seed as u64, behavior_seed as u64);
         let export = NetworkExport::new(&city.scenario.network);
         let world = World::from_scenario(city.scenario).expect("three_bridges is valid");
-        Sim { world, frame: Vec::new(), export, landmarks: city.landmarks, zones: city.zones }
+        Sim {
+            world,
+            frame: Vec::new(),
+            export,
+            link_counts: Vec::new(),
+            link_queued: Vec::new(),
+            landmarks: city.landmarks,
+            zones: city.zones,
+        }
     }
 
     pub fn step(&mut self, n: u32) {
@@ -50,8 +60,11 @@ impl Sim {
             && self.world.schedule(Command { tick: self.world.tick(), kind }).is_ok()
     }
 
-    /// Encode the vehicle records; returns the record count.
+    /// Encode the vehicle records and the per-link stats (one pass each);
+    /// returns the record count. `link_counts`/`link_queued` return the stats
+    /// of the last encoded frame.
     pub fn encode_frame(&mut self) -> u32 {
+        write_link_stats(&self.world, &mut self.link_counts, &mut self.link_queued);
         write_vehicle_records(&self.world, &mut self.frame)
     }
 
@@ -64,17 +77,11 @@ impl Sim {
     }
 
     pub fn link_counts(&self) -> Vec<u16> {
-        self.link_stats().0
+        self.link_counts.clone()
     }
 
     pub fn link_queued(&self) -> Vec<u16> {
-        self.link_stats().1
-    }
-
-    fn link_stats(&self) -> (Vec<u16>, Vec<u16>) {
-        let (mut counts, mut queued) = (Vec::new(), Vec::new());
-        write_link_stats(&self.world, &mut counts, &mut queued);
-        (counts, queued)
+        self.link_queued.clone()
     }
 
     pub fn metrics(&self) -> Vec<f64> {
