@@ -142,3 +142,53 @@ describe('geometry and picking', () => {
     expect(pickLink(g.links, cam, ...at(50, 15))).toBe(1);
   });
 });
+
+// Tests 14–16: proposed and verified by the Red reviewer, round 1 (U2, U6, U13, U16).
+/** A(0,0) → B(100,0) → C(200,0), collinear one-way links; plus a diagonal pair A ⇄ D(30,40) (sim length 60 ≠ 50). */
+function lineNetwork(): NetworkArrays {
+  return {
+    nodeXy: new Float32Array([0, 0, 100, 0, 200, 0, 30, 40]),
+    nodeIsZone: new Uint8Array(4),
+    linkFrom: new Uint32Array([0, 1, 0, 3]),
+    linkTo: new Uint32Array([1, 2, 3, 0]),
+    linkLanes: new Uint8Array([1, 1, 1, 1]),
+    linkLength: new Float32Array([100, 100, 60, 60]),
+    linkSpeed: new Float32Array([10, 10, 10, 10]),
+  };
+}
+
+test('fix U16: picking measures distance to the segment, not to its infinite line', () => {
+  const g = buildRoadGeometry(lineNetwork());
+  const cam = new Camera();
+  cam.setViewport(800, 400);
+  cam.cx = 100;
+  cam.cy = 0;
+  cam.zoom = 2;
+  // Clicking the middle of B→C (id 1) must not pick the collinear, lower-id A→B (id 0)
+  expect(pickLink(g.links, cam, ...cam.worldToScreen(150, 0))).toBe(1);
+  // And a point beyond the end of the line picks nothing
+  expect(pickLink(g.links, cam, ...cam.worldToScreen(260, 0))).toBeNull();
+});
+
+test('fix U2/U6: both endpoints are shifted, and s maps by the simulation length', () => {
+  const g = buildRoadGeometry(lineNetwork());
+  const ad = g.links[2]!;
+  const off = ad.width / 2 + MEDIAN_GAP_M / 2;
+  // unit right normal of (30, 40)/50 is (0.8, −0.6)
+  expect(close(ad.nx, 0.8) && close(ad.ny, -0.6)).toBe(true);
+  expect([ad.x0, ad.y0, ad.x1, ad.y1].every((v, i) => close(v, [0.8 * off, -0.6 * off, 30 + 0.8 * off, 40 - 0.6 * off][i]!))).toBe(true);
+  // s = length_sim reaches the drawn end even though the drawn length (50) differs from the sim length (60)
+  const end = vehiclePosition(ad, 60, 0);
+  expect(close(end[0], ad.x1) && close(end[1], ad.y1)).toBe(true);
+  const mid = vehiclePosition(ad, 30, 0);
+  expect(close(mid[0], (ad.x0 + ad.x1) / 2) && close(mid[1], (ad.y0 + ad.y1) / 2)).toBe(true);
+});
+
+test('fix U13: fit clamps the zoom', () => {
+  const cam = new Camera();
+  cam.setViewport(800, 600);
+  cam.fit({ minX: 0, minY: 0, maxX: 1, maxY: 1 }, 10);
+  expect(cam.zoom).toBe(MAX_ZOOM);
+  cam.fit({ minX: -1e7, minY: -1e7, maxX: 1e7, maxY: 1e7 }, 10);
+  expect(cam.zoom).toBe(MIN_ZOOM);
+});

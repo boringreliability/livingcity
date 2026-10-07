@@ -1,4 +1,5 @@
 // Ward core-005: end-to-end in a real browser (Rust → WASM → worker → WebGL2/React → command → Rust).
+// Tests 4, 6, 7, 8 use the robust assertions verified by the Red reviewer (round 1: B1, B3, B4, B5).
 import { expect, test, type Page } from '@playwright/test';
 
 import type { LivingCitySnapshot } from '../src/ui/testHook';
@@ -14,8 +15,43 @@ async function ready(page: Page): Promise<LivingCitySnapshot> {
 
 /** Remove keyboard focus so global shortcuts (Space, B) reach the app. */
 const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const speedSelect = (page: Page) => page.getByRole('combobox', { name: /speed/i });
+
+/** Hide every element that neither is nor contains the canvas (HTML overlays). */
+const hideOverlays = (page: Page) =>
+  page.evaluate(() => {
+    const canvas = document.querySelector('canvas')!;
+    for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*')))
+      if (el !== canvas && !el.contains(canvas)) el.style.visibility = 'hidden';
+  });
+const showOverlays = (page: Page) =>
+  page.evaluate(() => {
+    for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) el.style.visibility = '';
+  });
+
+/** Share of canvas pixels that differ from its most common colour. */
+async function nonBackgroundShare(page: Page): Promise<number> {
+  const png = await page.locator('canvas').first().screenshot();
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const g = c.getContext('2d')!;
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    const hist = new Map<number, number>();
+    for (let i = 0; i < d.length; i += 4) {
+      const k = (d[i]! << 16) | (d[i + 1]! << 8) | d[i + 2]!;
+      hist.set(k, (hist.get(k) ?? 0) + 1);
+    }
+    const bg = Math.max(...hist.values());
+    return 1 - bg / (d.length / 4);
+  }, png.toString('base64'));
+}
 
 async function meanBridgeOccupancy(page: Page, links: number[], samples = 10): Promise<number> {
   let sum = 0;
@@ -36,11 +72,13 @@ test('e2e: city loads and traffic moves', async ({ page }) => {
   page.on('pageerror', (e) => errors.push(e.message));
   // Given the app, When it loads
   const first = await ready(page);
-  // Then it renders with WebGL2 into a canvas that is not blank
+  // Then it renders with WebGL2, and the canvas itself (overlays hidden) is not blank
   expect(await page.evaluate(() => !!document.querySelector('canvas')?.getContext('webgl2'))).toBe(true);
-  const png = await page.locator('canvas').first().screenshot();
-  expect(png.byteLength).toBeGreaterThan(20_000);
-  // And sim time advances with active vehicles
+  await sleep(1000);
+  await hideOverlays(page);
+  expect(await nonBackgroundShare(page)).toBeGreaterThan(0.005);
+  await showOverlays(page);
+  // And sim time advances with active vehicles (auto-run on load)
   await expect.poll(async () => (await snap(page))!.simTimeS).toBeGreaterThan(first.simTimeS + 5);
   expect((await snap(page))!.metrics['active']).toBeGreaterThan(0);
   expect(errors).toEqual([]);
@@ -50,7 +88,7 @@ test('e2e: city loads and traffic moves', async ({ page }) => {
 test('e2e: close the main bridge and traffic reroutes', async ({ page }) => {
   const s0 = await ready(page);
   const lm = s0.landmarks!;
-  await page.getByLabel(/speed/i).selectOption({ label: '60×' });
+  await speedSelect(page).selectOption({ label: '60×' });
   await sleep(2000);
   const alternatives = [lm.north_bridge[0], lm.south_bridge[0]];
   const before = await meanBridgeOccupancy(page, alternatives);
@@ -76,10 +114,13 @@ test('e2e: close the main bridge and traffic reroutes', async ({ page }) => {
 // 6
 test('e2e: select a road, reopen, pause by keyboard', async ({ page }) => {
   const s0 = await ready(page);
-  const road = s0.landmarks!.south_bridge[0];
-  // When the user clicks the middle of a road
+  // a road near the middle of the fitted view (the central bridge, east→west)
+  const road = s0.landmarks!.central_bridge[1];
   const p = await page.evaluate((l) => window.__livingcity!.linkScreenCenter(l), road);
   expect(p).not.toBeNull();
+  // (the click must land on the canvas, not on an overlay)
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName, p!)).toBe('CANVAS');
+  // When the user clicks the middle of the road
   await page.mouse.click(p![0], p![1]);
   // Then it is selected and the panel shows it
   await expect.poll(async () => (await snap(page))!.selectedLink).toBe(road);
@@ -103,26 +144,23 @@ test('e2e: select a road, reopen, pause by keyboard', async ({ page }) => {
 // 7
 test('e2e: controls are keyboard reachable and labeled', async ({ page }) => {
   await ready(page);
-  // When tabbing through the page
-  const seen: { tag: string; name: string }[] = [];
+  // When tabbing through the page, Then every reached control has a browser-computed accessible name
+  const names: string[] = [];
   for (let i = 0; i < 20; i++) {
     await page.keyboard.press('Tab');
-    seen.push(
-      await page.evaluate(() => {
-        const el = document.activeElement as HTMLElement | null;
-        const label = el?.getAttribute('aria-label') ?? (el?.id ? document.querySelector(`label[for="${el.id}"]`)?.textContent : null);
-        return { tag: el?.tagName ?? '', name: (label ?? el?.textContent ?? '').trim() };
-      }),
-    );
+    const focused = page.locator(':focus');
+    if ((await focused.count()) === 0) continue;
+    const tag = await focused.evaluate((el) => el.tagName);
+    if (!['BUTTON', 'SELECT', 'INPUT'].includes(tag)) continue;
+    const aria = await focused.ariaSnapshot();
+    const m = /^- [\w-]+ "([^"]+)"/.exec(aria.trim());
+    expect(m, `${tag} without an accessible name: ${aria}`).not.toBeNull();
+    names.push(m![1]!.toLowerCase());
   }
-  const interactive = seen.filter((s) => ['BUTTON', 'SELECT', 'INPUT'].includes(s.tag));
-  // Then every reached control has a name, and the key controls are reachable
-  expect(interactive.length).toBeGreaterThanOrEqual(3);
-  for (const c of interactive) expect(c.name, `${c.tag} without a name`).not.toBe('');
-  const names = interactive.map((c) => c.name.toLowerCase()).join(' | ');
-  expect(names).toMatch(/pause|play/);
-  expect(names).toMatch(/speed/);
-  expect(names).toMatch(/main bridge/);
+  const all = names.join(' | ');
+  expect(all).toMatch(/pause|play/);
+  expect(all).toMatch(/speed/);
+  expect(all).toMatch(/main bridge/);
   // And B toggles the main bridge
   await blur(page);
   const button = page.getByRole('button', { name: /main bridge/i });
@@ -139,18 +177,22 @@ test('e2e: rendering is decoupled from simulation', async ({ page }) => {
   await page.keyboard.press('Space');
   await expect.poll(async () => (await snap(page))!.running).toBe(false);
   await sleep(500);
+  await hideOverlays(page);
   const r0 = (await snap(page))!.renderFrames;
   const a = await page.locator('canvas').first().screenshot();
   await sleep(500);
   const b = await page.locator('canvas').first().screenshot();
-  // Then rAF keeps drawing but vehicles do not move
+  // Then rAF keeps drawing but the canvas is static
   expect((await snap(page))!.renderFrames).toBeGreaterThan(r0 + 10);
   expect(Buffer.compare(a, b)).toBe(0);
   // When resumed, Then the picture changes
+  await showOverlays(page);
   await page.keyboard.press('Space');
   await sleep(1000);
+  await hideOverlays(page);
   const c = await page.locator('canvas').first().screenshot();
   expect(Buffer.compare(b, c)).not.toBe(0);
+  await showOverlays(page);
   // And resizing the window resizes the canvas without touching the simulation
   const tick = (await snap(page))!.tick;
   await page.setViewportSize({ width: 900, height: 700 });
