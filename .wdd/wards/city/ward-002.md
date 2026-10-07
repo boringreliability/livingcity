@@ -3,7 +3,7 @@ ward: 2
 revision: null
 name: "River City network and calibrated demand"
 epic: "city"
-status: "approved"
+status: "gold"
 dependencies: ["city-001"]
 layer: "rust"
 estimated_tests: 16

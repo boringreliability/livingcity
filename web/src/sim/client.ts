@@ -1,4 +1,4 @@
-import type { FrameMessage, FromWorker, ReadyMessage, ToWorker } from './protocol';
+import type { CityName, FrameMessage, FromWorker, ReadyMessage, ToWorker } from './protocol';
 
 /** UI-side handle on the simulation worker. */
 export interface SimClient {
@@ -14,7 +14,7 @@ export interface SimClient {
   dispose(): void;
 }
 
-export function createSimClient(demandSeed: number, behaviorSeed: number): SimClient {
+export function createSimClient(demandSeed: number, behaviorSeed: number, city?: CityName): SimClient {
   const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   const ready: ((m: ReadyMessage) => void)[] = [];
   const frame: ((m: FrameMessage) => void)[] = [];
@@ -28,7 +28,7 @@ export function createSimClient(demandSeed: number, behaviorSeed: number): SimCl
     else if (msg.type === 'frame') frame.forEach((cb) => cb(msg));
     else errors.forEach((cb) => cb(msg.message));
   };
-  send({ type: 'init', demandSeed, behaviorSeed });
+  send({ type: 'init', demandSeed, behaviorSeed, ...(city ? { city } : {}) });
 
   return {
     onReady: (cb) => void ready.push(cb),

@@ -3,7 +3,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use sim_core::cities::{three_bridges, Landmarks, Zone, ZoneKind};
+use sim_core::cities::{river_city, three_bridges, City, Landmarks, Zone, ZoneKind};
 use sim_core::frame::{
     metrics_to_extended_array, write_link_stats, write_vehicle_records, NetworkExport, EXTENDED_METRIC_NAMES,
 };
@@ -18,15 +18,14 @@ pub struct Sim {
     link_queued: Vec<u16>,
     landmarks: Landmarks,
     zones: Vec<Zone>,
+    city_name: &'static str,
+    river: (f64, f64),
 }
 
-#[wasm_bindgen]
 impl Sim {
-    /// The core-epic test city.
-    pub fn three_bridges(demand_seed: u32, behavior_seed: u32) -> Sim {
-        let city = three_bridges(demand_seed as u64, behavior_seed as u64);
+    fn from_city(city: City) -> Sim {
         let export = NetworkExport::new(&city.scenario.network);
-        let world = World::from_scenario(city.scenario).expect("three_bridges is valid");
+        let world = World::from_scenario(city.scenario).expect("built-in cities are valid");
         Sim {
             world,
             frame: Vec::new(),
@@ -35,7 +34,31 @@ impl Sim {
             link_queued: Vec::new(),
             landmarks: city.landmarks,
             zones: city.zones,
+            city_name: city.name,
+            river: city.river,
         }
+    }
+}
+
+#[wasm_bindgen]
+impl Sim {
+    /// The core-epic test city.
+    pub fn three_bridges(demand_seed: u32, behavior_seed: u32) -> Sim {
+        Sim::from_city(three_bridges(demand_seed as u64, behavior_seed as u64))
+    }
+
+    /// The demo city (epic city).
+    pub fn river_city(demand_seed: u32, behavior_seed: u32) -> Sim {
+        Sim::from_city(river_city(demand_seed as u64, behavior_seed as u64))
+    }
+
+    pub fn city_name(&self) -> String {
+        self.city_name.to_string()
+    }
+
+    /// The river corridor `[west_x, east_x]` in metres (simulation data).
+    pub fn river(&self) -> Vec<f64> {
+        vec![self.river.0, self.river.1]
     }
 
     pub fn step(&mut self, n: u32) {

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Camera } from './render/camera';
-import { threeBridgesDecor } from './render/decor';
+import { riverDecor } from './render/decor';
 import { buildRoadGeometry, type RoadGeometry } from './render/geometry';
 import { pickLink } from './render/picking';
 import { CityRenderer } from './render/renderer';
 import { createSimClient, type SimClient } from './sim/client';
-import { DT, type ClockStatus, type FrameMessage, type ReadyMessage } from './sim/protocol';
+import { DT, parseCityName, type ClockStatus, type FrameMessage, type ReadyMessage } from './sim/protocol';
 import { ControlPanel, SPEEDS } from './ui/ControlPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
@@ -50,6 +50,8 @@ export function App() {
   const [frame, setFrame] = useState<FrameView | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
+  // The latest requested speed: a choice made before the worker is ready must survive `ready`.
+  const speedRef = useRef(DEFAULT_SPEED);
   const [mainPending, setMainPending] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,17 +83,17 @@ export function App() {
       setError(e instanceof Error ? e.message : String(e));
       return;
     }
-    const c = createSimClient(2026, 7);
+    const c = createSimClient(2026, 7, parseCityName(new URLSearchParams(window.location.search).get('city')));
     client.current = c;
     c.onError(setError);
     c.onReady((r) => {
       readyRef.current = r;
       const g = buildRoadGeometry(r.network);
       geometry.current = g;
-      renderer.current!.setNetwork(g, threeBridgesDecor(r.network, g.bounds));
+      renderer.current!.setNetwork(g, riverDecor(r.network, g.bounds, r.river));
       camera.fit(g.bounds, FIT_PADDING_PX);
       setReady(r);
-      c.setSpeed(DEFAULT_SPEED);
+      c.setSpeed(speedRef.current);
       c.setRunning(true);
     });
     c.onFrame((f: FrameMessage) => {
@@ -170,6 +172,7 @@ export function App() {
 
   const toggleRunning = useCallback(() => client.current?.setRunning(!(frameRef.current?.clock.running ?? false)), []);
   const changeSpeed = useCallback((s: number) => {
+    speedRef.current = s;
     setSpeed(s);
     client.current?.setSpeed(s);
   }, []);
@@ -269,6 +272,7 @@ export function App() {
           closed: f?.closed ?? [],
           linkCounts: f ? Array.from(f.linkCounts) : [],
           landmarks: readyRef.current?.landmarks ?? null,
+          city: readyRef.current?.city ?? null,
           selectedLink: selectedRef.current,
           renderFrames: renderFrames.current,
         };

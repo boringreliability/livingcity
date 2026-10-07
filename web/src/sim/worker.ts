@@ -20,7 +20,8 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
 init()
   .then((wasm) => {
     const h = createSimHost({
-      createSim: (d, b) => Sim.three_bridges(d, b) as unknown as SimLike,
+      createSim: (d, b, city) =>
+        (city === 'three_bridges' ? Sim.three_bridges(d, b) : Sim.river_city(d, b)) as unknown as SimLike,
       memory: () => wasm.memory,
       post: (msg, transfer) => self.postMessage(msg, transfer),
       now: () => performance.now(),

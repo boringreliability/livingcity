@@ -9,8 +9,6 @@ export interface Decor {
   pads: Float32Array;
 }
 
-/** The three-bridges river runs north–south along x ∈ [−60, 60] m. */
-const RIVER_HALF_WIDTH_M = 60;
 const PAD_RADIUS_M = 45;
 
 function rect(x0: number, y0: number, x1: number, y1: number): number[] {
@@ -27,9 +25,10 @@ function disc(cx: number, cy: number, r: number, segments = 24): number[] {
   return out;
 }
 
-export function threeBridgesDecor(network: NetworkArrays, bounds: Bounds): Decor {
+/** Generic look: the simulation's river corridor `[west, east]` as straight water (city-004 adds the real shape). */
+export function riverDecor(network: NetworkArrays, bounds: Bounds, river: [number, number]): Decor {
   const margin = 2000;
-  const water = rect(-RIVER_HALF_WIDTH_M, bounds.minY - margin, RIVER_HALF_WIDTH_M, bounds.maxY + margin);
+  const water = river[1] > river[0] ? rect(river[0], bounds.minY - margin, river[1], bounds.maxY + margin) : [];
   const pads: number[] = [];
   for (let n = 0; n < network.nodeIsZone.length; n++) {
     if (network.nodeIsZone[n]) pads.push(...disc(network.nodeXy[2 * n]!, network.nodeXy[2 * n + 1]!, PAD_RADIUS_M));

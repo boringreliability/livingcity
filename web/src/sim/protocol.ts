@@ -22,8 +22,17 @@ export const FLAG_ON_CLOSED_LINK = 1 << 1;
 export const FLAG_STRANDED = 1 << 2;
 export const FLAG_LANE_SHIFT = 8;
 
+/** Built-in cities the worker can build. */
+export type CityName = 'river_city' | 'three_bridges';
+export const DEFAULT_CITY: CityName = 'river_city';
+
+/** `?city=` → a known city; anything else → the default. */
+export function parseCityName(value: string | null | undefined): CityName {
+  return value === 'three_bridges' || value === 'river_city' ? value : DEFAULT_CITY;
+}
+
 export type ToWorker =
-  | { type: 'init'; demandSeed: number; behaviorSeed: number }
+  | { type: 'init'; demandSeed: number; behaviorSeed: number; city?: CityName }
   | { type: 'setRunning'; running: boolean }
   | { type: 'setSpeed'; multiplier: number }
   | { type: 'command'; kind: 'close' | 'open'; link: number }
@@ -77,6 +86,10 @@ export interface PerfStats {
 
 export interface ReadyMessage {
   type: 'ready';
+  /** The built city's name as the sim reports it (`'unknown'` for sims without one). */
+  city: string;
+  /** River corridor `[west_x, east_x]` (m), from the sim; `[0, 0]` when unknown. */
+  river: [number, number];
   network: NetworkArrays;
   landmarks: Landmarks;
   zones: ZoneInfo[];

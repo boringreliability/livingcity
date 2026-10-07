@@ -2,6 +2,8 @@ import type { Landmarks } from '../sim/protocol';
 
 /** Read-only state exposed for end-to-end tests (`window.__livingcity`). */
 export interface LivingCitySnapshot {
+  /** The city the worker built (`ready.city`), null before ready. */
+  city: string | null;
   tick: number;
   simTimeS: number;
   running: boolean;

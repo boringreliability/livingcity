@@ -6,6 +6,8 @@ import {
   type FromWorker,
   type Landmarks,
   type PerfStats,
+  DEFAULT_CITY,
+  type CityName,
   type ToWorker,
   type ZoneInfo,
 } from './protocol';
@@ -33,10 +35,13 @@ export interface SimLike {
   link_speed(): Float32Array;
   landmarks_json(): string;
   zones_json(): string;
+  /** Optional (since epic city): older sims and test fakes may lack them. */
+  city_name?(): string;
+  river?(): Float64Array;
 }
 
 export interface HostDeps {
-  createSim(demandSeed: number, behaviorSeed: number): SimLike;
+  createSim(demandSeed: number, behaviorSeed: number, city: CityName): SimLike;
   /** The wasm linear memory (read the frame through it). */
   memory(): WebAssembly.Memory;
   post(msg: FromWorker, transfer: Transferable[]): void;
@@ -73,9 +78,9 @@ export function createSimHost(deps: HostDeps): SimHost {
 
   const error = (message: string) => deps.post({ type: 'error', message }, []);
 
-  const init = (demandSeed: number, behaviorSeed: number) => {
+  const init = (demandSeed: number, behaviorSeed: number, city: CityName) => {
     try {
-      sim = deps.createSim(demandSeed, behaviorSeed);
+      sim = deps.createSim(demandSeed, behaviorSeed, city);
     } catch (e) {
       sim = undefined;
       error(`init failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -83,9 +88,12 @@ export function createSimHost(deps: HostDeps): SimHost {
     }
     lastPost = Number.NEGATIVE_INFINITY;
     linkCount = sim.link_from().length;
+    const river = typeof sim.river === 'function' ? Array.from(sim.river()) : [];
     deps.post(
       {
         type: 'ready',
+        city: typeof sim.city_name === 'function' ? sim.city_name() : 'unknown',
+        river: river.length === 2 ? [river[0]!, river[1]!] : [0, 0],
         network: {
           nodeXy: sim.node_xy(),
           nodeIsZone: sim.node_is_zone(),
@@ -165,7 +173,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       try {
         switch (msg.type) {
           case 'init':
-            init(msg.demandSeed, msg.behaviorSeed);
+            init(msg.demandSeed, msg.behaviorSeed, msg.city ?? DEFAULT_CITY);
             break;
           case 'setRunning':
             clock.setRunning(msg.running);
