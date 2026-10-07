@@ -30,7 +30,7 @@ fn x_of(c: &City, n: NodeId) -> f64 {
     c.scenario.network.node(n).x_m
 }
 
-/// Link pairs that cross the river corridor (from one bank to the other).
+/// Links that cross the river corridor (from one bank to the other).
 fn crossing_links(c: &City) -> Vec<LinkId> {
     let (west, east) = c.river;
     let net = &c.scenario.network;
@@ -49,7 +49,7 @@ fn bridges(c: &City) -> [[LinkId; 2]; 3] {
     [l.central_bridge, l.north_bridge, l.south_bridge]
 }
 
-/// Link ids of zone connectors (links leaving a zone).
+/// Zone connectors (links leaving or entering a zone).
 fn is_connector(c: &City, l: LinkId) -> bool {
     let net = &c.scenario.network;
     net.is_zone(net.link(l).from) || net.is_zone(net.link(l).to)
@@ -58,19 +58,26 @@ fn is_connector(c: &City, l: LinkId) -> bool {
 /// Per-minute samples of a run, plus the world at its end.
 struct Run {
     w: World,
-    active: Vec<u64>,
-    queued: Vec<u64>,
+    /// Per-minute means over all ticks of that minute.
+    active: Vec<f64>,
+    queued: Vec<f64>,
+    /// Per-minute end-of-minute values.
+    unserved: Vec<u64>,
+    removed_gridlock: Vec<u64>,
     /// Max consecutive ticks any one link stayed ≥ 95 % full.
     longest_full_ticks: u64,
-    /// Ticks (within the closure window) where an approach to the North or Old Bridge
+    /// Ticks (within the spillback window) where an approach to the North or Old Bridge
     /// showed spillback through two consecutive non-connector links.
     spillback_ticks: u64,
     /// West→east exits per bridge (central, north, south) per minute.
     we_exits: Vec<[u64; 3]>,
+    /// Ticks after which a closed Main Bridge link gained a vehicle (must stay 0).
+    main_entries_while_closed: u64,
 }
 
-/// Simulate `minutes` minutes, applying `commands` up front; sample every minute.
-fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, u64)>) -> Run {
+/// Simulate `minutes` minutes with `commands`; `main_closed` = tick range in which the
+/// Main Bridge is closed (entries are counted there).
+fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, u64)>, main_closed: Option<(u64, u64)>) -> Run {
     let mut w = world(c);
     for &cmd in commands {
         w.schedule(cmd).unwrap();
@@ -80,7 +87,7 @@ fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, 
     let mut full_run = vec![0u64; n_links];
     let mut longest = 0;
     let b = bridges(c);
-    // Approaches: (bridge entry link L1 feeding the bridge's start node, its upstream feeder L2)
+    // Approaches: (link L1 into the bridge's start node, its upstream feeder L2), both streets.
     let mut chains: Vec<(LinkId, LinkId)> = Vec::new();
     for pair in [b[1], b[2]] {
         for bl in pair {
@@ -99,10 +106,29 @@ fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, 
         }
     }
     let full80 = |w: &World, l: LinkId| w.link_count(l) as f64 >= 0.8 * net.capacity(l) as f64;
-    let mut r = Run { w, active: vec![], queued: vec![], longest_full_ticks: 0, spillback_ticks: 0, we_exits: vec![] };
+    let mut r = Run {
+        w,
+        active: vec![],
+        queued: vec![],
+        unserved: vec![],
+        removed_gridlock: vec![],
+        longest_full_ticks: 0,
+        spillback_ticks: 0,
+        we_exits: vec![],
+        main_entries_while_closed: 0,
+    };
     let mut last: [u64; 3] = [0; 3];
+    let (mut sum_active, mut sum_queued) = (0u64, 0u64);
     for t in 0..minutes * MIN {
+        let main_before = [b[0][0], b[0][1]].map(|l| r.w.link_count(l));
         r.w.step();
+        if main_closed.is_some_and(|(a, z)| t >= a && t < z) {
+            for (i, l) in [b[0][0], b[0][1]].into_iter().enumerate() {
+                if r.w.link_count(l) > main_before[i] {
+                    r.main_entries_while_closed += 1;
+                }
+            }
+        }
         for l in 0..n_links {
             let id = LinkId(l as u32);
             if r.w.link_count(id) as f64 >= 0.95 * net.capacity(id) as f64 {
@@ -117,10 +143,15 @@ fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, 
                 r.spillback_ticks += 1;
             }
         }
+        let m = r.w.metrics();
+        sum_active += m.active;
+        sum_queued += m.queued;
         if (t + 1) % MIN == 0 {
-            let m = r.w.metrics();
-            r.active.push(m.active);
-            r.queued.push(m.queued);
+            r.active.push(sum_active as f64 / MIN as f64);
+            r.queued.push(sum_queued as f64 / MIN as f64);
+            (sum_active, sum_queued) = (0, 0);
+            r.unserved.push(m.unserved);
+            r.removed_gridlock.push(m.removed_gridlock);
             let now = [b[0][0], b[1][0], b[2][0]].map(|l| r.w.link_exit_count(l));
             r.we_exits.push([now[0] - last[0], now[1] - last[1], now[2] - last[2]]);
             last = now;
@@ -130,11 +161,11 @@ fn run(c: &City, commands: &[Command], minutes: u64, spill_window: Option<(u64, 
     r
 }
 
-fn mean(xs: &[u64]) -> f64 {
-    xs.iter().sum::<u64>() as f64 / xs.len() as f64
+fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len() as f64
 }
 
-/// Mean travel time (s) of west→east trips completed in ticks [from, to).
+/// Mean travel time (s) of west→east trips completed in ticks [from, to), and their count.
 fn west_east_tt(c: &City, w: &World, from: u64, to: u64) -> (f64, usize) {
     let (west, east) = c.river;
     let trips: BTreeMap<u64, (NodeId, NodeId)> =
@@ -143,9 +174,7 @@ fn west_east_tt(c: &City, w: &World, from: u64, to: u64) -> (f64, usize) {
         .completed_log()
         .iter()
         .filter(|t| t.completed_tick >= from && t.completed_tick < to)
-        .filter(|t| {
-            trips.get(&t.trip_id).is_some_and(|&(o, d)| x_of(c, o) < west && x_of(c, d) > east)
-        })
+        .filter(|t| trips.get(&t.trip_id).is_some_and(|&(o, d)| x_of(c, o) < west && x_of(c, d) > east))
         .map(|t| (t.completed_tick - t.created_tick) as f64 * DT)
         .collect();
     (tts.iter().sum::<f64>() / tts.len().max(1) as f64, tts.len())
@@ -153,6 +182,87 @@ fn west_east_tt(c: &City, w: &World, from: u64, to: u64) -> (f64, usize) {
 
 fn close_main(c: &City, at: u64) -> Vec<Command> {
     c.landmarks.central_bridge.iter().map(|&l| close(l, at)).collect()
+}
+
+// ─── calibration checks (each run for both seed pairs) ─────────────────────
+
+/// Test 4: a living ≈ 2,000-vehicle baseline without gridlock or unserved trips.
+fn check_living_baseline(c: &City) {
+    let r = run(c, &[], 60, None, None);
+    let active = mean(&r.active[30..60]);
+    assert!((1600.0..=2600.0).contains(&active), "mean active over min 30–60 = {active}");
+    assert!(r.unserved.iter().all(|&u| u == 0), "baseline unserved per minute: {:?}", r.unserved);
+    assert!(r.removed_gridlock.iter().all(|&g| g == 0), "baseline gridlock removals");
+    assert!(r.longest_full_ticks < 10 * MIN, "a link stayed ≥ 95 % full for {} ticks", r.longest_full_ticks);
+}
+
+/// Test 5: the Main Bridge carries most west→east crossings in the baseline.
+fn check_main_share(c: &City) {
+    let r = run(c, &[], 60, None, None);
+    let sum: [u64; 3] = r.we_exits[30..60].iter().fold([0; 3], |a, e| [a[0] + e[0], a[1] + e[1], a[2] + e[2]]);
+    let total = sum.iter().sum::<u64>() as f64;
+    assert!(total > 0.0);
+    assert!(sum[0] as f64 > 0.5 * total, "Main Bridge share {} of {total}", sum[0]);
+}
+
+/// Test 6: the closure at least doubles the mean queued over 10–40 min after it.
+fn check_queues_double(c: &City) {
+    let base = run(c, &[], 60, None, None);
+    let closed = run(c, &close_main(c, CLOSE_AT), 60, None, None);
+    let (qb, qc) = (mean(&base.queued[30..60]), mean(&closed.queued[30..60]));
+    assert!(qb > 0.0, "baseline has some queueing");
+    assert!(qc >= 2.0 * qb, "closure queued {qc} vs baseline {qb}");
+}
+
+/// Test 7: spillback through two consecutive street links on a North/Old Bridge approach.
+fn check_spillback(c: &City) {
+    let window = (CLOSE_AT + 10 * MIN, CLOSE_AT + 40 * MIN);
+    let closed = run(c, &close_main(c, CLOSE_AT), 60, Some(window), None);
+    assert!(closed.spillback_ticks > 0, "no two-link spillback on a North/Old Bridge approach");
+    let base = run(c, &[], 60, Some(window), None);
+    assert!(closed.spillback_ticks > base.spillback_ticks, "{} vs {}", closed.spillback_ticks, base.spillback_ticks);
+}
+
+/// Test 8: west→east trips are ≥ 25 % slower 10–40 min after the closure.
+fn check_trip_time(c: &City) {
+    let (a, z) = (CLOSE_AT + 10 * MIN, CLOSE_AT + 40 * MIN);
+    let base = run(c, &[], 60, None, None);
+    let closed = run(c, &close_main(c, CLOSE_AT), 60, None, None);
+    let (tb, nb) = west_east_tt(c, &base.w, a, z);
+    let (tc, nc) = west_east_tt(c, &closed.w, a, z);
+    assert!(nb >= 100 && nc >= 100, "enough completed west→east trips ({nb}, {nc})");
+    assert!(tc >= 1.25 * tb, "west→east mean trip {tc:.0} s vs baseline {tb:.0} s");
+}
+
+/// Test 9: traffic reroutes over the alternatives; nobody enters the closed bridge; few removals.
+fn check_reroutes(c: &City) {
+    let base = run(c, &[], 60, None, None);
+    let closed = run(c, &close_main(c, CLOSE_AT), 60, None, Some((CLOSE_AT, 60 * MIN)));
+    let alt = |r: &Run| r.we_exits[30..60].iter().map(|e| e[1] + e[2]).sum::<u64>();
+    assert!(alt(&closed) > alt(&base), "North + Old exits {} vs baseline {}", alt(&closed), alt(&base));
+    assert_eq!(closed.main_entries_while_closed, 0, "vehicles entered the closed Main Bridge");
+    let central_late: u64 = closed.we_exits[30..60].iter().map(|e| e[0]).sum();
+    assert_eq!(central_late, 0, "Main Bridge still discharging 10 min after the closure");
+    let m = closed.w.metrics();
+    assert!(
+        m.removed_gridlock as f64 <= 0.01 * m.trips_generated as f64,
+        "gridlock removals {} of {} trips",
+        m.removed_gridlock,
+        m.trips_generated
+    );
+}
+
+/// Test 10: 25–30 min after reopening (at closure + 30 min), queued is back near baseline.
+fn check_reopen(c: &City) {
+    let reopen_at = CLOSE_AT + 30 * MIN;
+    let mut cmds = close_main(c, CLOSE_AT);
+    cmds.extend(c.landmarks.central_bridge.iter().map(|&l| open(l, reopen_at)));
+    let minutes = 50 + 30;
+    let base = run(c, &[], minutes, None, None);
+    let r = run(c, &cmds, minutes, None, None);
+    let (qb, qr) = (mean(&base.queued[75..80]), mean(&r.queued[75..80]));
+    assert!(qr <= 1.5 * qb, "after reopen queued {qr} vs baseline {qb}");
+    assert!(mean(&r.queued[40..50]) > 1.5 * mean(&base.queued[40..50]), "the closure had raised queued");
 }
 
 // ─── 1 ────────────────────────────────────────────────────────────────────
@@ -180,6 +290,22 @@ fn river_city_is_valid() {
     for n in net.nodes() {
         assert!(n.x_m < west || n.x_m > east, "node {:?} inside the river", n.id);
     }
+    // Geography: North Bridge north of the Main Bridge, Old Bridge south, each 1–2.5 km apart
+    let lmk = c.landmarks;
+    let y_mid = |l: LinkId| (net.node(net.link(l).from).y_m + net.node(net.link(l).to).y_m) / 2.0;
+    let (n, m, s) = (y_mid(lmk.north_bridge[0]), y_mid(lmk.central_bridge[0]), y_mid(lmk.south_bridge[0]));
+    assert!((1000.0..=2500.0).contains(&(n - m)), "North Bridge {n} vs Main {m}");
+    assert!((1000.0..=2500.0).contains(&(m - s)), "Main {m} vs Old Bridge {s}");
+    // Extent: a town of ~5–7 km by ~4–5 km (tolerant: 4–8 km by 3–6 km)
+    let xs = net.nodes().iter().map(|n| n.x_m);
+    let ys = net.nodes().iter().map(|n| n.y_m);
+    let span = |it: &mut dyn Iterator<Item = f64>| {
+        let v: Vec<f64> = it.collect();
+        v.iter().cloned().fold(f64::NEG_INFINITY, f64::max) - v.iter().cloned().fold(f64::INFINITY, f64::min)
+    };
+    let (sx, sy) = (span(&mut xs.into_iter()), span(&mut ys.into_iter()));
+    assert!((4000.0..=8000.0).contains(&sx), "x extent {sx} m");
+    assert!((3000.0..=6000.0).contains(&sy), "y extent {sy} m");
     // Every zone reaches every other zone through the router
     for o in &c.zones {
         for d in &c.zones {
@@ -197,7 +323,8 @@ fn river_city_districts() {
     let (west, east) = c.river;
     let west_of = |n: NodeId| x_of(&c, n) < west;
     let east_of = |n: NodeId| x_of(&c, n) > east;
-    let count = |k: ZoneKind, side: &dyn Fn(NodeId) -> bool| c.zones.iter().filter(|z| z.kind == k && side(z.node)).count();
+    let count =
+        |k: ZoneKind, side: &dyn Fn(NodeId) -> bool| c.zones.iter().filter(|z| z.kind == k && side(z.node)).count();
     assert!(count(ZoneKind::Residential, &west_of) >= 4);
     assert!(c.zones.iter().filter(|z| z.kind == ZoneKind::Workplace).count() >= 3);
     assert!(count(ZoneKind::Workplace, &east_of) >= 2);
@@ -219,8 +346,10 @@ fn crossing_attributes() {
     let c = river_city(2026, 7);
     let net = &c.scenario.network;
     let lm = c.landmarks;
+    let fastest = net.links().iter().filter(|l| !is_connector(&c, l.id)).map(|l| l.speed_limit_mps).fold(0.0, f64::max);
     for &l in &lm.central_bridge {
         assert_eq!(net.link(l).lanes, 2, "Main Bridge: 2 lanes each way");
+        assert_eq!(net.link(l).speed_limit_mps, fastest, "Main Bridge at arterial speed");
     }
     for &l in &lm.north_bridge {
         assert_eq!(net.link(l).lanes, 1, "North Bridge: 1 lane each way");
@@ -231,119 +360,49 @@ fn crossing_attributes() {
         assert!(link.sat_flow_per_lane <= 0.25, "Old Bridge: ≤ 900 veh/h");
         assert!(link.speed_limit_mps <= 30.0 / 3.6 + 1e-9, "Old Bridge: ≤ 30 km/h");
     }
-    // The Main Bridge is the arterial: faster than the Old Bridge
-    assert!(net.link(lm.central_bridge[0]).speed_limit_mps > net.link(lm.south_bridge[0]).speed_limit_mps);
 }
 
-// ─── 4 ────────────────────────────────────────────────────────────────────
-fn assert_living_baseline(c: &City) -> Run {
-    let r = run(c, &[], 60, None);
-    let active = mean(&r.active[30..60]);
-    assert!((1600.0..=2600.0).contains(&active), "mean active over min 30–60 = {active}");
-    let m = r.w.metrics();
-    assert_eq!(m.unserved, 0, "baseline unserved");
-    assert_eq!(m.removed_gridlock, 0, "baseline gridlock removals");
-    assert!(r.longest_full_ticks < 10 * MIN, "a link stayed ≥ 95 % full for {} ticks", r.longest_full_ticks);
-    r
-}
-
+// ─── 4–10 (seeds 2026, 7) ─────────────────────────────────────────────────
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn baseline_is_a_living_city() {
-    assert_living_baseline(&river_city(2026, 7));
+    check_living_baseline(&river_city(2026, 7));
 }
 
-// ─── 5 ────────────────────────────────────────────────────────────────────
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn main_bridge_carries_most_crossings() {
-    let c = river_city(2026, 7);
-    let r = run(&c, &[], 60, None);
-    let sum: [u64; 3] = r.we_exits[30..60].iter().fold([0; 3], |a, e| [a[0] + e[0], a[1] + e[1], a[2] + e[2]]);
-    let total = sum.iter().sum::<u64>() as f64;
-    assert!(total > 0.0);
-    assert!(sum[0] as f64 > 0.5 * total, "Main Bridge share {} of {total}", sum[0]);
-}
-
-// ─── 6 ────────────────────────────────────────────────────────────────────
-fn assert_queues_double(c: &City) {
-    let base = run(c, &[], 60, None);
-    let closed = run(c, &close_main(c, CLOSE_AT), 60, None);
-    // window: 10–40 min after the closure = minutes 30..60
-    let (qb, qc) = (mean(&base.queued[30..60]), mean(&closed.queued[30..60]));
-    assert!(qb > 0.0, "baseline has some queueing");
-    assert!(qc >= 2.0 * qb, "closure queued {qc} vs baseline {qb}");
+    check_main_share(&river_city(2026, 7));
 }
 
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn closure_queues_double() {
-    assert_queues_double(&river_city(2026, 7));
+    check_queues_double(&river_city(2026, 7));
 }
 
-// ─── 7 ────────────────────────────────────────────────────────────────────
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn closure_spills_back() {
-    let c = river_city(2026, 7);
-    let window = (CLOSE_AT + 10 * MIN, CLOSE_AT + 40 * MIN);
-    let closed = run(&c, &close_main(&c, CLOSE_AT), 60, Some(window));
-    assert!(closed.spillback_ticks > 0, "no two-link spillback on a North/Old Bridge approach");
-    // And it is a consequence of the closure: the baseline never shows it in the same window
-    let base = run(&c, &[], 60, Some(window));
-    assert!(closed.spillback_ticks > base.spillback_ticks, "{} vs {}", closed.spillback_ticks, base.spillback_ticks);
+    check_spillback(&river_city(2026, 7));
 }
 
-// ─── 8 ────────────────────────────────────────────────────────────────────
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn closure_slows_cross_river_trips() {
-    let c = river_city(2026, 7);
-    let (a, z) = (CLOSE_AT + 10 * MIN, CLOSE_AT + 40 * MIN);
-    let base = run(&c, &[], 60, None);
-    let closed = run(&c, &close_main(&c, CLOSE_AT), 60, None);
-    let (tb, nb) = west_east_tt(&c, &base.w, a, z);
-    let (tc, nc) = west_east_tt(&c, &closed.w, a, z);
-    assert!(nb >= 100 && nc >= 100, "enough completed west→east trips ({nb}, {nc})");
-    assert!(tc >= 1.25 * tb, "west→east mean trip {tc:.0} s vs baseline {tb:.0} s");
+    check_trip_time(&river_city(2026, 7));
 }
 
-// ─── 9 ────────────────────────────────────────────────────────────────────
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn closure_reroutes_to_alternatives() {
-    let c = river_city(2026, 7);
-    let base = run(&c, &[], 60, None);
-    let closed = run(&c, &close_main(&c, CLOSE_AT), 60, None);
-    let alt = |r: &Run| r.we_exits[30..60].iter().map(|e| e[1] + e[2]).sum::<u64>();
-    assert!(alt(&closed) > alt(&base), "North + Old exits {} vs baseline {}", alt(&closed), alt(&base));
-    let central: u64 = closed.we_exits[22..60].iter().map(|e| e[0]).sum();
-    assert_eq!(central, 0, "no Main Bridge exits 2 min after the closure");
-    let m = closed.w.metrics();
-    assert!(
-        m.removed_gridlock as f64 <= 0.01 * m.trips_generated as f64,
-        "gridlock removals {} of {} trips",
-        m.removed_gridlock,
-        m.trips_generated
-    );
+    check_reroutes(&river_city(2026, 7));
 }
 
-// ─── 10 ───────────────────────────────────────────────────────────────────
 #[test]
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn reopen_recovers() {
-    let c = river_city(2026, 7);
-    let reopen_at = CLOSE_AT + 30 * MIN;
-    let mut cmds = close_main(&c, CLOSE_AT);
-    cmds.extend(c.landmarks.central_bridge.iter().map(|&l| open(l, reopen_at)));
-    let minutes = 50 + 30;
-    let base = run(&c, &[], minutes, None);
-    let r = run(&c, &cmds, minutes, None);
-    // minutes 25–30 after the reopen = minutes 75..80
-    let (qb, qr) = (mean(&base.queued[75..80]), mean(&r.queued[75..80]));
-    assert!(qr <= 1.5 * qb, "after reopen queued {qr} vs baseline {qb}");
-    // and the closure really had raised it
-    assert!(mean(&r.queued[40..50]) > 1.5 * mean(&base.queued[40..50]));
+    check_reopen(&river_city(2026, 7));
 }
 
 // ─── 11 ───────────────────────────────────────────────────────────────────
@@ -351,8 +410,13 @@ fn reopen_recovers() {
 #[cfg_attr(debug_assertions, ignore = "calibration: run with --release")]
 fn calibration_holds_for_another_seed() {
     let c = river_city(11, 3);
-    assert_living_baseline(&c);
-    assert_queues_double(&c);
+    check_living_baseline(&c);
+    check_main_share(&c);
+    check_queues_double(&c);
+    check_spillback(&c);
+    check_trip_time(&c);
+    check_reroutes(&c);
+    check_reopen(&c);
 }
 
 // ─── 12 ───────────────────────────────────────────────────────────────────
@@ -372,14 +436,12 @@ fn river_city_is_deterministic() {
             assert_eq!(a.state_hash(), b.state_hash(), "minute {}", (t + 1) / MIN);
         }
     }
-    let mut other = world(&river_city(2027, 7));
-    for _ in 0..10 * MIN {
-        other.step();
-    }
     let trips = |w: &World| w.generated_trips().iter().map(|g| (g.origin, g.dest, g.created_tick)).collect::<Vec<_>>();
     let mut a10 = world(&c);
+    let mut other = world(&river_city(2027, 7));
     for _ in 0..10 * MIN {
         a10.step();
+        other.step();
     }
     assert_ne!(trips(&a10), trips(&other), "a different demand seed gives different trips");
 }

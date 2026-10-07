@@ -39,7 +39,7 @@ test('river city runs through wasm with the extended metrics', () => {
   expect(count).toBe(at('on_network'));
   expect(sim.frame_words()).toBe(count * 4);
   expect(memory.buffer.byteLength).toBeGreaterThan(0);
-});
+}, 30_000);
 
 // 14
 test('the host reports the city and its river in ready', () => {
@@ -91,4 +91,24 @@ test('the host reports the city and its river in ready', () => {
   const ready2 = posted2.find((m): m is ReadyMessage => m.type === 'ready')!;
   expect(ready2.city).toBe('three_bridges');
   expect(cities.at(-1)).toBe('three_bridges');
-});
+
+  // And a sim without the optional city methods (older fakes) reports the documented fallback
+  const posted3: FromWorker[] = [];
+  const real = Sim.three_bridges(1, 1) as unknown as Record<string | symbol, unknown>;
+  const fake = new Proxy(real, {
+    get: (target, prop) => {
+      if (prop === 'city_name' || prop === 'river') return undefined;
+      const v = target[prop];
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  createSimHost({
+    createSim: () => fake as unknown as SimLike,
+    memory: () => memory,
+    post: (m) => posted3.push(m),
+    now: () => 0,
+  }).handle({ type: 'init', demandSeed: 1, behaviorSeed: 1 });
+  const ready3 = posted3.find((m): m is ReadyMessage => m.type === 'ready')!;
+  expect(ready3.city).toBe('unknown');
+  expect(ready3.river).toEqual([0, 0]);
+}, 30_000);

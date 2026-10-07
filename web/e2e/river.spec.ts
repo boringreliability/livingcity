@@ -44,4 +44,6 @@ test('?city=three_bridges opens the core test city', async ({ page }) => {
   // and an unknown city name falls back to River City
   const r = await ready(page, '/?city=atlantis');
   expect(r.city).toBe('river_city');
+  // and the worker really built a different city (not only the label): River City has more links
+  expect(r.linkCounts.length).toBeGreaterThan(s.linkCounts.length);
 });
