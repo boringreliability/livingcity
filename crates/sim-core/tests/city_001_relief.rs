@@ -26,6 +26,7 @@ fn step_checked(w: &mut World) {
     let t = w.tick();
     assert_eq!(c.spawned, c.active + c.completed + m.removed_unreachable + m.removed_gridlock, "conservation at {t}");
     assert_eq!(c.removed, m.removed_unreachable + m.removed_gridlock, "removed split at {t}");
+    assert_eq!(m.unreachable, m.no_route + m.stranded + m.removed_unreachable, "unreachable at {t}");
     assert_eq!(m.unserved, m.unreachable + m.removed_gridlock, "unserved at {t}");
 }
 
@@ -1275,4 +1276,37 @@ fn approaching_front_is_not_blocked() {
         }
     }
     panic!("v never reached the line");
+}
+
+// ─── 27–28: added after Red review r4 (MINOR, reviewer-verified) ──
+
+// ─── 27 ───────────────────────────────────────────────────────────────────
+#[test]
+fn huge_unknown_id_does_not_panic() {
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(100.0, 0.0);
+    b.link(o, a, 10.0, 1);
+    b.set_sat_flow(LinkId(u32::MAX), 0.3);
+    assert_eq!(b.build().map(|_| ()), Err(NetworkError::UnknownLink(LinkId(u32::MAX))));
+}
+
+// ─── 28 ───────────────────────────────────────────────────────────────────
+#[test]
+fn invalid_then_valid_override_last_wins() {
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(100.0, 0.0);
+    let l = b.link(o, a, 10.0, 1);
+    b.set_sat_flow(l, f64::NAN);
+    b.set_sat_flow(l, 0.3);
+    let net = b.build().unwrap();
+    assert_eq!(net.link(l).sat_flow_per_lane, 0.3);
+    let mut b = NetworkBuilder::new();
+    let o = b.node(0.0, 0.0);
+    let a = b.node(100.0, 0.0);
+    let l = b.link(o, a, 10.0, 1);
+    b.set_sat_flow(l, 0.3);
+    b.set_sat_flow(l, 0.0);
+    assert_eq!(b.build().map(|_| ()), Err(NetworkError::InvalidSatFlow { from: o, to: a }));
 }

@@ -3,10 +3,10 @@ ward: 1
 revision: null
 name: "Capacity attributes and gridlock relief"
 epic: "city"
-status: "red"
+status: "approved"
 dependencies: ["core-005"]
 layer: "rust"
-estimated_tests: 26
+estimated_tests: 28
 created: "2026-10-07"
 completed: null
 ---
@@ -57,7 +57,7 @@ All in `crates/sim-core/tests/city_001_relief.rs`. Two constructions:
 | 10 | `gridlock_reroute_after_60s_crosses_when_free` | fork with Q free: in the step where v's count reaches 120 (119 before), v switches to (L1,Q1,Q2,R), keeping the driven prefix, and crosses onto Q1 in the same evaluation (`blocked_ticks` 0 there). `gridlock_reroutes` +1 and `switches_total` +1 |
 | 11 | `gridlock_reroute_without_space_keeps_counting` | fork with Q blocked by b2: at 120 v switches to the Q route but stays (count 120, not reset). At 240 it switches back to P. At 360 to Q again, each time `gridlock_reroutes` +1. When the blockers are removed, v crosses and its count resets to 0 |
 | 12 | `gridlock_removal_after_10_minutes` | pure ring: no gridlock reroute ever finds a path. Every vehicle that disappears without completing is a front whose count was 1199 before the step, and `removed_gridlock` rises by exactly their number. The removed vehicle's link gets no exit in that step. No count ever reaches 1200. All ring vehicles have completed or been removed within 30 min after the first removal |
-| 13 | `gridlock_metrics_and_conservation` | every tick in the ring and fork runs: `spawned == active + completed + removed_unreachable + removed_gridlock`; `Counts.removed == removed_unreachable + removed_gridlock`; `unserved == unreachable + removed_gridlock`. `METRIC_NAMES` is unchanged; `EXTENDED_METRIC_NAMES` = core list + `removed_gridlock`, `unserved`, and `metrics_to_extended_array` matches by index |
+| 13 | `gridlock_metrics_and_conservation` | every tick in the ring and fork runs (via `step_checked`, which every test uses): `unreachable == no_route + stranded + removed_unreachable` (Red r4 M1); `spawned == active + completed + removed_unreachable + removed_gridlock`; `Counts.removed == removed_unreachable + removed_gridlock`; `unserved == unreachable + removed_gridlock`. `METRIC_NAMES` is unchanged; `EXTENDED_METRIC_NAMES` = core list + `removed_gridlock`, `unserved`, and `metrics_to_extended_array` matches by index |
 | 14 | `gridlock_reroute_spends_no_budget` | in test 10's relief step (with no periodic reroute due): `budgeted_total` and `forced_total` are unchanged |
 | 15 | `relief_is_deterministic_and_clone_safe` | two ring runs have equal `state_hash` and per-vehicle `blocked_ticks` every tick for 4,000 ticks. A clone taken at tick 700 (fronts blocked) matches the original every tick |
 | 16 | `normal_traffic_untouched_by_relief` | three_bridges, 1 h baseline and a 1 h run with the central bridge closed at 10 min: `gridlock_reroutes == 0` and `removed_gridlock == 0` |
@@ -71,8 +71,10 @@ All in `crates/sim-core/tests/city_001_relief.rs`. Two constructions:
 | 24 | `priority_reroute_keeps_blocked_count` | (Red r3, m2) a budgeted priority reroute that changes the route beyond the blocked next link leaves the count running (201 after 200) |
 | 25 | `forced_decision_into_full_link_counts` | (Red r3, m2) a forced decision whose new next link is full is a blocked evaluation: count 1, then rising |
 | 26 | `approaching_front_is_not_blocked` | (Red r3, M1) a lane front approaching a full next link counts 0 until its evaluation reaches the stop line, then 1 |
+| 27 | `huge_unknown_id_does_not_panic` | (Red r4, m3) an override for `LinkId(u32::MAX)` → `UnknownLink`, no panic |
+| 28 | `invalid_then_valid_override_last_wins` | (Red r4, m3) invalid then valid override builds; valid then invalid is rejected |
 
-`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. The Gold reviewer also checks in code (not reasonably testable, Red r3 m3): the blocked check uses the crossing's own `entry_s` expression, and a gridlock removal does not update `rr_next`. Worlds differing only in those fields cannot be built through the public API.
+`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. The Gold reviewer also checks in code (not reasonably testable, Red r3 m3): the blocked check uses the crossing's own `entry_s` expression, and a gridlock removal does not update `rr_next`. Also (Red r4): a forced decision without a route resets `blocked_ticks` in that evaluation; `sim-wasm` exposes `EXTENDED_METRIC_NAMES` / `metrics_to_extended_array`. Note (Red r4 m4): a tiny positive sat flow (e.g. 1e-300) validates but makes the link effectively unroutable; that is accepted (no panic). Worlds differing only in those fields cannot be built through the public API.
 
 ## Must NOT
 - Change any earlier test or any core reference value. Default-sat-flow worlds must behave bit-identically wherever no front is blocked for 60 s.
@@ -90,13 +92,13 @@ cargo build -p sim-core --release --examples
 ```
 ### Steps
 1. Run: `cargo test -p sim-core`
-   Expected: core 85 + city_001 26 pass.
+   Expected: core 85 + city_001 28 pass.
 2. Run: `cargo run -p sim-core --release --example gridlock`
    Verify: blocked fronts appear. A reroute happens at 60 s blocked where an alternative exists, and a removal happens at 10 min in the pure deadlock. After that the ring drains and completes.
 3. Run it twice and `diff` the outputs.
    Expected: identical.
 ### Pass criteria
-- [ ] 111 Rust tests green, clippy clean (`cargo clippy --all-targets -- -D warnings`)
+- [ ] 113 Rust tests green, clippy clean (`cargo clippy --all-targets -- -D warnings`)
 - [ ] The gridlock example shows reroute, removal and recovery
 - [ ] Deterministic output
 
