@@ -113,7 +113,11 @@ export function App() {
       pushLinkState();
       setFrame(view);
     });
-    return () => c.dispose();
+    return () => {
+      c.dispose();
+      renderer.current?.dispose();
+      renderer.current = null;
+    };
   }, [camera, pushLinkState]);
 
   // The pending main-bridge state clears once a frame confirms it.
@@ -132,7 +136,22 @@ export function App() {
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
-    return () => ro.disconnect();
+    // A DPR change (browser zoom, moving to another screen) does not resize the element: watch it directly.
+    let mq: MediaQueryList | null = null;
+    const watchDpr = () => {
+      mq?.removeEventListener('change', onDpr);
+      mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      mq.addEventListener('change', onDpr);
+    };
+    const onDpr = () => {
+      resize();
+      watchDpr();
+    };
+    watchDpr();
+    return () => {
+      ro.disconnect();
+      mq?.removeEventListener('change', onDpr);
+    };
   }, [camera]);
 
   // Render loop: independent of the tick rate; extrapolates only while running.
@@ -170,7 +189,7 @@ export function App() {
       if (isInteractive(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === ' ') {
         e.preventDefault();
-        toggleRunning();
+        if (!e.repeat) toggleRunning(); // holding Space must not flicker play/pause
       } else if (e.key === 'b' || e.key === 'B') {
         toggleMainBridge();
       } else if (e.key === '+' || e.key === '=' || e.key === '-') {

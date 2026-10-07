@@ -9,6 +9,13 @@ import { LANE_WIDTH_M, type RoadGeometry } from './geometry';
  * x/y ever comes from Rust. Rendering never feeds back into the simulation.
  */
 
+/** Halo around the selected / hovered road, CSS px (drawn on top of every road). */
+export const SELECTED_HALO_PX = 3;
+export const HOVER_HALO_PX = 2;
+/** Minimum on-screen vehicle size (length, width) in CSS px, per class: the shapes stay distinct. */
+export const MOVING_MIN_PX = [5.0, 1.8] as const;
+export const QUEUED_MIN_PX = [3.4, 3.4] as const;
+
 const COLORS = {
   background: [0.055, 0.067, 0.082],
   water: [0.075, 0.18, 0.27],
@@ -40,18 +47,28 @@ layout(location = 6) in float a_lanes;
 uniform vec2 u_center;
 uniform vec2 u_scale;
 uniform float u_pxPerM;
+uniform int u_pass; // 0: every road, no halo; 1: only selected/hovered roads, with halo, on top
 uniform sampler2D u_state;
 out float v_across;
 out float v_along;
 out float v_lanes;
+flat out float v_core; // share of the drawn half width that is road (the rest is the halo)
 flat out vec4 v_state;
 void main() {
   vec4 st = texelFetch(u_state, ivec2(int(a_link), 0), 0);
+  bool highlighted = st.g > 0.5 || st.b > 0.5;
+  if (u_pass == 1 && !highlighted) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume: not drawn
+    return;
+  }
   float minPx = st.r > 0.5 ? 9.0 : 2.5;
-  float hw = max(a_halfWidth, 0.5 * minPx / u_pxPerM);
+  float core = max(a_halfWidth, 0.5 * minPx / u_pxPerM);
+  float haloPx = u_pass == 1 ? (st.g > 0.5 ? ${SELECTED_HALO_PX.toFixed(1)} : ${HOVER_HALO_PX.toFixed(1)}) : 0.0;
+  float hw = core + haloPx / u_pxPerM;
   vec2 p = a_center + a_normal * a_side * hw;
   gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
-  v_across = a_side;
+  v_across = a_side * hw / core; // ±1 at the road edge, beyond it in the halo
+  v_core = core / hw;
   v_along = a_along;
   v_lanes = a_lanes;
   v_state = st;
@@ -62,6 +79,7 @@ precision highp float;
 in float v_across;
 in float v_along;
 in float v_lanes;
+flat in float v_core;
 flat in vec4 v_state;
 uniform float u_pxPerM;
 uniform float u_dpr;
@@ -76,13 +94,13 @@ void main() {
     float edge = abs(fract(lanePos + 0.5) - 0.5);
     if (edge < 0.04 && fract(v_along / 6.0) < 0.5) base = mix(base, vec3(0.7), 0.6);
   }
-  if (v_state.b > 0.5) base += 0.08; // hovered
   if (v_state.r > 0.5) {
     // closed: black/yellow diagonal hatch, fixed in screen pixels (legible at any zoom and in grayscale)
     float k = floor((gl_FragCoord.x + gl_FragCoord.y) / (5.0 * u_dpr));
     base = mod(k, 2.0) < 1.0 ? vec3(0.95, 0.76, 0.16) : vec3(0.05, 0.05, 0.05);
   }
-  if (v_state.g > 0.5 && abs(v_across) > 0.72) base = vec3(1.0); // selected outline
+  // halo (pass 1 only): white for the selected road, light grey for the hovered one — lightness, not hue
+  if (abs(v_across) > 1.0) base = v_state.g > 0.5 ? vec3(1.0) : vec3(0.72);
   o = vec4(base, 1.0);
 }`;
 
@@ -100,6 +118,7 @@ uniform float u_dtSim;
 uniform sampler2D u_links;
 out vec2 v_local;
 flat out uint v_flags;
+flat out float v_band; // brake band length as a share of the vehicle (at least ~1.25 px)
 void main() {
   int l = int(a_link);
   vec4 ends = texelFetch(u_links, ivec2(l, 0), 0);  // x0, y0, x1, y1
@@ -112,8 +131,10 @@ void main() {
   float lat = ((geo.w - 1.0) * 0.5 - lane) * ${LANE_WIDTH_M.toFixed(1)};
   vec2 p = mix(ends.xy, ends.zw, clamp(s / len, 0.0, 1.0)) + n * lat;
   bool queued = (a_flags & 1u) != 0u;
+  // queued: short and square; moving: long and slim — in metres when zoomed in, in CSS px when zoomed out
   vec2 size = queued ? vec2(3.6, 2.3) : vec2(4.4, 1.8);
-  size = max(size, vec2(3.2, 2.2) / u_pxPerM); // stay visible when zoomed out
+  size = max(size, (queued ? vec2(${QUEUED_MIN_PX.map((x) => x.toFixed(1)).join(', ')}) : vec2(${MOVING_MIN_PX.map((x) => x.toFixed(1)).join(', ')})) / u_pxPerM);
+  v_band = max(0.22, 1.25 / (size.x * u_pxPerM));
   vec2 local = a_corner * size;
   vec2 w = p - dir * (size.x * 0.5) + dir * local.x + n * local.y;
   gl_Position = vec4((w - u_center) * u_scale, 0.0, 1.0);
@@ -125,13 +146,14 @@ const VEH_FS = `#version 300 es
 precision highp float;
 in vec2 v_local;
 flat in uint v_flags;
+flat in float v_band;
 out vec4 o;
 void main() {
   bool queued = (v_flags & 1u) != 0u;
   bool stranded = (v_flags & 4u) != 0u;
   vec3 c = queued ? vec3(0.96, 0.66, 0.2) : vec3(0.86, 0.9, 0.95);
   // v_local.x runs 0 (rear) → 1 (front) along the vehicle, v_local.y −0.5 → 0.5 across it
-  if (queued && v_local.x < 0.22) c = vec3(0.22, 0.1, 0.02); // brake band at the rear
+  if (queued && v_local.x < v_band) c = vec3(0.22, 0.1, 0.02); // brake band at the rear
   if (stranded && abs(v_local.x - 0.5) < 0.3 && abs(v_local.y) < 0.25) c = vec3(0.08); // hollow mark
   o = vec4(c, 1.0);
 }`;
@@ -155,7 +177,14 @@ function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgr
 
 interface Mesh {
   vao: WebGLVertexArrayObject;
+  buf: WebGLBuffer;
   count: number;
+}
+
+type Uniforms = Record<string, WebGLUniformLocation | null>;
+
+function uniforms(gl: WebGL2RenderingContext, prog: WebGLProgram, names: string[]): Uniforms {
+  return Object.fromEntries(names.map((n) => [n, gl.getUniformLocation(prog, n)]));
 }
 
 export class CityRenderer {
@@ -170,6 +199,10 @@ export class CityRenderer {
   private glyphKey = '';
   private vehVao: WebGLVertexArrayObject;
   private vehBuf: WebGLBuffer;
+  private vehQuad: WebGLBuffer;
+  private readonly uSolid: Uniforms;
+  private readonly uRoad: Uniforms;
+  private readonly uVeh: Uniforms;
   private vehCount = 0;
   private linkTex: WebGLTexture;
   private stateTex: WebGLTexture;
@@ -185,6 +218,9 @@ export class CityRenderer {
     this.solid = compile(gl, SOLID_VS, SOLID_FS);
     this.road = compile(gl, ROAD_VS, ROAD_FS);
     this.veh = compile(gl, VEH_VS, VEH_FS);
+    this.uSolid = uniforms(gl, this.solid, ['u_center', 'u_scale', 'u_color']);
+    this.uRoad = uniforms(gl, this.road, ['u_center', 'u_scale', 'u_pxPerM', 'u_dpr', 'u_pass', 'u_state']);
+    this.uVeh = uniforms(gl, this.veh, ['u_center', 'u_scale', 'u_pxPerM', 'u_dtSim', 'u_links']);
     this.linkTex = gl.createTexture()!;
     this.stateTex = gl.createTexture()!;
     for (const t of [this.linkTex, this.stateTex]) {
@@ -197,6 +233,7 @@ export class CityRenderer {
     this.vehVao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vehVao);
     const quad = gl.createBuffer()!;
+    this.vehQuad = quad;
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -0.5, 1, -0.5, 1, 0.5, 0, -0.5, 1, 0.5, 0, 0.5]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
@@ -226,12 +263,32 @@ export class CityRenderer {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
-    return { vao, count: data.length / 2 };
+    return { vao, buf, count: data.length / 2 };
+  }
+
+  private deleteMesh(m: Mesh | null): void {
+    if (!m) return;
+    this.gl.deleteVertexArray(m.vao);
+    this.gl.deleteBuffer(m.buf);
+  }
+
+  /** Free every GPU object (the canvas may be reused, e.g. React StrictMode remounts). */
+  dispose(): void {
+    const gl = this.gl;
+    for (const m of [this.water, this.pads, this.roads, this.glyphs]) this.deleteMesh(m);
+    this.water = this.pads = this.roads = this.glyphs = null;
+    gl.deleteVertexArray(this.vehVao);
+    gl.deleteBuffer(this.vehBuf);
+    gl.deleteBuffer(this.vehQuad);
+    gl.deleteTexture(this.linkTex);
+    gl.deleteTexture(this.stateTex);
+    for (const p of [this.solid, this.road, this.veh]) gl.deleteProgram(p);
   }
 
   setNetwork(geometry: RoadGeometry, decor: Decor): void {
     const gl = this.gl;
     this.geometry = geometry;
+    for (const m of [this.water, this.pads, this.roads]) this.deleteMesh(m);
     this.water = this.solidMesh(decor.water);
     this.pads = this.solidMesh(decor.pads);
 
@@ -269,7 +326,7 @@ export class CityRenderer {
       gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 9 * F, off * F);
     }
     gl.bindVertexArray(null);
-    this.roads = { vao, count: v.length / 9 };
+    this.roads = { vao, buf, count: v.length / 9 };
 
     // Link table: 3 RGBA32F texels per link.
     const n = geometry.links.length;
@@ -311,7 +368,7 @@ export class CityRenderer {
     const key = Array.from(closed).join(',');
     if (key !== this.glyphKey) {
       this.glyphKey = key;
-      if (this.glyphs) this.gl.deleteVertexArray(this.glyphs.vao);
+      this.deleteMesh(this.glyphs);
       this.glyphs = this.solidMesh(this.barrierGlyphs(closed));
     }
   }
@@ -366,10 +423,11 @@ export class CityRenderer {
     if (!this.roads) return;
     const scale: [number, number] = [(2 * camera.zoom) / camera.width, (2 * camera.zoom) / camera.height];
 
+    const uS = this.uSolid;
     gl.useProgram(this.solid);
-    gl.uniform2f(gl.getUniformLocation(this.solid, 'u_center'), camera.cx, camera.cy);
-    gl.uniform2f(gl.getUniformLocation(this.solid, 'u_scale'), ...scale);
-    const color = gl.getUniformLocation(this.solid, 'u_color');
+    gl.uniform2f(uS['u_center']!, camera.cx, camera.cy);
+    gl.uniform2f(uS['u_scale']!, ...scale);
+    const color = uS['u_color']!;
     for (const [mesh, c] of [
       [this.water, COLORS.water],
       [this.pads, COLORS.pad],
@@ -380,15 +438,20 @@ export class CityRenderer {
       gl.drawArrays(gl.TRIANGLES, 0, mesh.count);
     }
 
+    const uR = this.uRoad;
     gl.useProgram(this.road);
-    gl.uniform2f(gl.getUniformLocation(this.road, 'u_center'), camera.cx, camera.cy);
-    gl.uniform2f(gl.getUniformLocation(this.road, 'u_scale'), ...scale);
-    gl.uniform1f(gl.getUniformLocation(this.road, 'u_pxPerM'), camera.zoom);
-    gl.uniform1f(gl.getUniformLocation(this.road, 'u_dpr'), this.dpr);
+    gl.uniform2f(uR['u_center']!, camera.cx, camera.cy);
+    gl.uniform2f(uR['u_scale']!, ...scale);
+    gl.uniform1f(uR['u_pxPerM']!, camera.zoom);
+    gl.uniform1f(uR['u_dpr']!, this.dpr);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.stateTex);
-    gl.uniform1i(gl.getUniformLocation(this.road, 'u_state'), 0);
+    gl.uniform1i(uR['u_state']!, 0);
     gl.bindVertexArray(this.roads.vao);
+    gl.uniform1i(uR['u_pass']!, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, this.roads.count);
+    // pass 1: the selected / hovered road again, with its halo, above the roads that cross it
+    gl.uniform1i(uR['u_pass']!, 1);
     gl.drawArrays(gl.TRIANGLES, 0, this.roads.count);
 
     if (this.glyphs && this.glyphs.count > 0) {
@@ -399,14 +462,15 @@ export class CityRenderer {
     }
 
     if (this.vehCount > 0) {
+      const uV = this.uVeh;
       gl.useProgram(this.veh);
-      gl.uniform2f(gl.getUniformLocation(this.veh, 'u_center'), camera.cx, camera.cy);
-      gl.uniform2f(gl.getUniformLocation(this.veh, 'u_scale'), ...scale);
-      gl.uniform1f(gl.getUniformLocation(this.veh, 'u_pxPerM'), camera.zoom);
+      gl.uniform2f(uV['u_center']!, camera.cx, camera.cy);
+      gl.uniform2f(uV['u_scale']!, ...scale);
+      gl.uniform1f(uV['u_pxPerM']!, camera.zoom);
       const dtSim = Math.min(2, Math.max(0, (nowMs - this.frameAtMs) * simSecondsPerMs));
-      gl.uniform1f(gl.getUniformLocation(this.veh, 'u_dtSim'), dtSim);
+      gl.uniform1f(uV['u_dtSim']!, dtSim);
       gl.bindTexture(gl.TEXTURE_2D, this.linkTex);
-      gl.uniform1i(gl.getUniformLocation(this.veh, 'u_links'), 0);
+      gl.uniform1i(uV['u_links']!, 0);
       gl.bindVertexArray(this.vehVao);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.vehCount);
     }
