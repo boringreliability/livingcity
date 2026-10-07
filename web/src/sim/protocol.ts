@@ -38,8 +38,8 @@ export type ToWorker =
   | { type: 'command'; kind: 'close' | 'open'; link: number }
   | { type: 'returnBuffer'; buffer: ArrayBuffer }
   /** Track the vehicle at `record` of the frame encoded at `frameTick` (resolved in the worker). */
-  | { type: 'inspectVehicle'; frameTick: number; record: number }
-  | { type: 'inspectVehicle'; clear: true }
+  | { type: 'inspectVehicle'; frameTick: number; record: number; seq?: number }
+  | { type: 'inspectVehicle'; clear: true; seq?: number }
   | { type: 'inspectLink'; link: number | null };
 
 export interface NetworkArrays {
@@ -122,6 +122,9 @@ export interface FrameMessage {
   tracked: TrackedVehicle | TrackedGone | null;
   /** The inspected road, or null; omitted (read as null) until the UI first sends `inspectLink`. */
   linkDetail: LinkDetail | null;
+  /** `seq` of the last `inspectVehicle` the worker had handled when it built this frame
+   * (present with `tracked`); the UI ignores tracking from frames older than its last request. */
+  trackedSeq?: number;
 }
 
 export type TrackedState = 'waiting' | 'driving' | 'queued' | 'stranded' | 'no_route';

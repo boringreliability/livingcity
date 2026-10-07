@@ -285,6 +285,7 @@ export class CityRenderer {
   private frameAtMs = 0;
   private frameTick: number | null = null;
   private frameRunning = false;
+  private frameMultiplier: number | null = null;
   private dpr = 1;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -439,7 +440,7 @@ export class CityRenderer {
   }
 
   /** Upload one frame's records (the AoS buffer as is). The caller may then return the buffer. */
-  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number, running = true): void {
+  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number, running = true, multiplier?: number): void {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vehBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(words.buffer, words.byteOffset, count * VEHICLE_RECORD_BYTES), gl.STREAM_DRAW);
@@ -448,9 +449,12 @@ export class CityRenderer {
     // is unchanged (they come every 16 ms), and resetting then would make motion lurch.
     // Also restart on resume: while paused the tick stands still, so the anchor would be stale
     // and the first frames after Play would extrapolate over the whole pause.
+    // and on a speed change, which would otherwise rescale the extrapolation already under way.
     const resumed = running && !this.frameRunning;
+    const rescaled = multiplier !== undefined && multiplier !== this.frameMultiplier;
     this.frameRunning = running;
-    if (tick === undefined || tick !== this.frameTick || resumed) {
+    this.frameMultiplier = multiplier ?? this.frameMultiplier;
+    if (tick === undefined || tick !== this.frameTick || resumed || rescaled) {
       this.frameAtMs = receivedAtMs;
       this.frameTick = tick ?? null;
     }

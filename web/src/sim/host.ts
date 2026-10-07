@@ -82,6 +82,8 @@ export function createSimHost(deps: HostDeps): SimHost {
   let inspectedLink: number | null = null;
   /** The frame fields appear once inspection is used (absent before: numeric-only frames). */
   let vehicleInspectionUsed = false;
+  /** Echoed in frames so the UI can tell which of its requests a frame already reflects. */
+  let inspectSeq = 0;
   let linkInspectionUsed = false;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
   let pool: ArrayBuffer[] = [];
@@ -222,7 +224,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       metrics: s.metrics(),
       clock: clock.status(),
       perf: perf(t),
-      ...(vehicleInspectionUsed ? { tracked: tracked(s) } : {}),
+      ...(vehicleInspectionUsed ? { tracked: tracked(s), trackedSeq: inspectSeq } : {}),
       ...(linkInspectionUsed ? { linkDetail: linkDetail(s) } : {}),
     } as FrameMessage;
     deps.post(msg, [vehicles]);
@@ -249,6 +251,7 @@ export function createSimHost(deps: HostDeps): SimHost {
             break;
           case 'inspectVehicle':
             vehicleInspectionUsed = true;
+            if (typeof msg.seq === 'number' && Number.isFinite(msg.seq)) inspectSeq = msg.seq;
             inspectVehicle(msg);
             break;
           case 'inspectLink':

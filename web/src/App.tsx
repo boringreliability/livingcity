@@ -59,9 +59,9 @@ export function App() {
   /** A copy of the latest frame's records (the transferred buffer goes back to the worker). */
   const recordsRef = useRef<{ tick: number; vehicles: DecodedVehicles } | null>(null);
   const trackedRef = useRef<TrackedVehicle | null>(null);
-  /** After a local clear, frames already in flight may still carry the old vehicle: ignore
-   * tracking data until the worker confirms the clear with a frame whose `tracked` is null. */
-  const awaitingClearRef = useRef(false);
+  /** Sequence number of the last vehicle request (pick or clear). Frames echo the last one the
+   * worker handled; tracking from frames older than our last request is stale and ignored. */
+  const inspectSeqRef = useRef(0);
   const followingRef = useRef(false);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
@@ -107,8 +107,7 @@ export function App() {
 
   /** Stop inspecting the vehicle (also clears a `gone` notice). */
   const clearVehicle = useCallback(() => {
-    client.current?.clearInspectedVehicle();
-    awaitingClearRef.current = true;
+    client.current?.clearInspectedVehicle(++inspectSeqRef.current);
     trackedRef.current = null;
     renderer.current?.setTracked(null);
     setTracked(null);
@@ -139,11 +138,11 @@ export function App() {
       c.setRunning(true);
     });
     c.onFrame((f: FrameMessage) => {
-      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running);
+      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier);
       // keep a copy for picking before the buffer goes back to the worker
       recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count) };
-      if (awaitingClearRef.current) {
-        if (f.tracked === null) awaitingClearRef.current = false; // the worker has dropped it
+      if (f.trackedSeq !== undefined && f.trackedSeq < inspectSeqRef.current) {
+        // built before the worker saw our latest pick/clear: its tracking data is stale
       } else if (f.tracked && 'gone' in f.tracked) {
         trackedRef.current = null;
         renderer.current?.setTracked(null);
@@ -355,7 +354,7 @@ export function App() {
         const v = pickVeh(x, y);
         const r = recordsRef.current;
         // a vehicle click tracks it (the road selection stays); otherwise a road click
-        if (v !== null && r) client.current?.inspectVehicle(r.tick, v);
+        if (v !== null && r) client.current?.inspectVehicle(r.tick, v, ++inspectSeqRef.current);
         else select(pick(x, y));
       }
       drag = null;

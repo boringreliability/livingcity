@@ -12,8 +12,9 @@ export interface SimClient {
   /** Give a consumed vehicle buffer back to the worker's pool. */
   returnBuffer(buffer: ArrayBuffer): void;
   /** Track the vehicle at `record` of the frame encoded at `frameTick`. */
-  inspectVehicle(frameTick: number, record: number): void;
-  clearInspectedVehicle(): void;
+  /** `seq` is echoed back in frames (`trackedSeq`). */
+  inspectVehicle(frameTick: number, record: number, seq?: number): void;
+  clearInspectedVehicle(seq?: number): void;
   inspectLink(link: number | null): void;
   dispose(): void;
 }
@@ -43,8 +44,9 @@ export function createSimClient(demandSeed: number, behaviorSeed: number, city?:
     closeLink: (link) => send({ type: 'command', kind: 'close', link }),
     openLink: (link) => send({ type: 'command', kind: 'open', link }),
     returnBuffer: (buffer) => send({ type: 'returnBuffer', buffer }, [buffer]),
-    inspectVehicle: (frameTick, record) => send({ type: 'inspectVehicle', frameTick, record }),
-    clearInspectedVehicle: () => send({ type: 'inspectVehicle', clear: true }),
+    inspectVehicle: (frameTick, record, seq) =>
+      send({ type: 'inspectVehicle', frameTick, record, ...(seq === undefined ? {} : { seq }) }),
+    clearInspectedVehicle: (seq) => send({ type: 'inspectVehicle', clear: true, ...(seq === undefined ? {} : { seq }) }),
     inspectLink: (link) => send({ type: 'inspectLink', link }),
     dispose: () => worker.terminate(),
   };

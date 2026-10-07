@@ -83,3 +83,104 @@ test('fix M1: following at 1x moves the camera smoothly (no jump per tick)', asy
   expect(lurches.length, JSON.stringify(lurches)).toBeLessThanOrEqual(1);
   expect(steps.reduce((a, b) => a + b, 0)).toBeGreaterThan(5); // it really followed a moving car
 });
+
+// ── Gold r3 regressions ──────────────────────────────────────────────────
+
+async function zoomedPausedWithVehicles(page: Page): Promise<[number, number][]> {
+  await page.goto('/');
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 60_000 }).toBeGreaterThanOrEqual(450);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Space');
+  await expect.poll(async () => (await snap(page)).running).toBe(false);
+  const box = (await page.locator('canvas').first().boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect
+    .poll(async () => {
+      if ((await snap(page)).camera.zoom >= 1.5) return true;
+      await page.mouse.wheel(0, -100);
+      return false;
+    }, { intervals: [100], timeout: 30_000 })
+    .toBe(true);
+  await page.mouse.move(5, 400);
+  await sleep(200);
+  return page.evaluate(() => {
+    const h = window.__livingcity!;
+    const out: [number, number][] = [];
+    for (let i = 0; i < h.snapshot().frameRecords && out.length < 6; i++) {
+      const p = h.vehicleScreenCenter(i);
+      if (p && document.elementFromPoint(p[0], p[1])?.tagName === 'CANVAS' && h.pickAt(p[0], p[1]).vehicle === i) out.push(p);
+    }
+    return out;
+  });
+}
+
+/** Block the page's main thread for `ms` (ordinary jank), starting in its next task. */
+const jank = (page: Page, ms: number) =>
+  page.evaluate((ms) => {
+    setTimeout(() => {
+      const t = performance.now();
+      while (performance.now() - t < ms) {
+        /* busy */
+      }
+    }, 0);
+  }, ms);
+
+// M-C: Escape then an immediate pick on another vehicle must track the new vehicle
+test('fix M-C: a pick right after clearing a vehicle is not lost (also under jank)', async ({ page }) => {
+  test.setTimeout(120_000);
+  const vs = await zoomedPausedWithVehicles(page);
+  expect(vs.length).toBeGreaterThanOrEqual(2);
+  await page.mouse.click(vs[0]![0], vs[0]![1]);
+  await expect.poll(async () => (await snap(page)).trackedTrip).not.toBeNull();
+  const first = (await snap(page)).trackedTrip;
+  await page.mouse.move(5, 400);
+  // When the main thread stalls while the user presses Escape and at once clicks another car
+  await jank(page, 400);
+  await page.keyboard.press('Escape');
+  await page.mouse.click(vs[1]![0], vs[1]![1]);
+  // Then the new car is tracked (not lost, not the old one)
+  await expect.poll(async () => (await snap(page)).trackedTrip, { timeout: 5_000 }).not.toBeNull();
+  expect((await snap(page)).trackedTrip).not.toBe(first);
+  // And inspection keeps working afterwards
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await snap(page)).trackedTrip).toBeNull();
+  await page.mouse.click(vs[0]![0], vs[0]![1]);
+  await expect.poll(async () => (await snap(page)).trackedTrip, { timeout: 5_000 }).toBe(first);
+});
+
+// M-B: two quick Escapes clear the vehicle, then the road (frames in flight must not resurrect the car)
+test('fix M-B: two Escapes under jank clear the vehicle and then the road', async ({ page }) => {
+  test.setTimeout(120_000);
+  const vs = await zoomedPausedWithVehicles(page);
+  const s0 = await snap(page);
+  const road = s0.landmarks!.central_bridge[0];
+  // select a road at a point without a vehicle, then a vehicle
+  const p = await page.evaluate((l) => {
+    const h = window.__livingcity!;
+    for (let k = 1; k < 40; k++) {
+      const q = h.linkScreenPoint(l, k / 40);
+      if (q && document.elementFromPoint(q[0], q[1])?.tagName === 'CANVAS') {
+        const pick = h.pickAt(q[0], q[1]);
+        if (pick.vehicle === null && pick.link === l) return q;
+      }
+    }
+    return null;
+  }, road);
+  expect(p).not.toBeNull();
+  await page.mouse.click(p![0], p![1]);
+  await expect.poll(async () => (await snap(page)).selectedLink).toBe(road);
+  await page.mouse.click(vs[0]![0], vs[0]![1]);
+  await expect.poll(async () => (await snap(page)).trackedTrip).not.toBeNull();
+  await page.mouse.move(5, 400);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // When Escape is pressed twice while the main thread stalls
+  await jank(page, 400);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  // Then both selections are gone and stay gone
+  await expect.poll(async () => (await snap(page)).selectedLink, { timeout: 5_000 }).toBeNull();
+  await sleep(500);
+  const s = await snap(page);
+  expect(s.trackedTrip).toBeNull();
+  expect(s.selectedLink).toBeNull();
+});
