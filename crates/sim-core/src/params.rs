@@ -8,6 +8,7 @@ pub const JAM_SPACING: f64 = 7.5;
 /// Intersection discharge capacity per lane (veh/s), i.e. 1800 veh/h.
 pub const SAT_FLOW_PER_LANE: f64 = 0.5;
 /// Discharge credit a lane earns per tick.
+/// The credit increment of a default link. Links use `sat_flow_per_lane * DT` (contract C1).
 pub const LANE_CREDIT_PER_TICK: f64 = SAT_FLOW_PER_LANE * DT;
 /// Maximum banked discharge credit per lane.
 pub const LANE_CREDIT_CAP: f64 = 1.0;

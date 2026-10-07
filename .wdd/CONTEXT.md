@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-07: the user approved epic core at the epic gate; epic city is planned (city-001…005 specced)
+2026-10-07: city-001 complete (Gold approved, gold-2); next city-002
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -10,7 +10,8 @@
   - `crates/sim-wasm`: thin `Sim` adapter.
   - `web/`: worker host + `SimClock`, WebGL2 renderer, React UI, Playwright e2e.
   - Tests: Rust 85, Vitest 45, Playwright 17. Review logs are in `.wdd/reviews/`.
-- **Epic city: planned.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`. Next: city-001 Red.
+- **Epic city: active.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
+  - **city-001 complete**: per-link `sat_flow_per_lane` (`set_sat_flow`) and gridlock relief (`blocked_ticks`; reroute every 60 s with the blocked link excluded; removal at 10 min → `removed_gridlock`, `unserved`). `frame::EXTENDED_METRIC_NAMES` is used by sim-wasm, and `METRIC_NAMES` is unchanged. Example `gridlock`. Rust 113 tests. Red took 4 rounds (r4 auto), Gold 2 (r1: clippy on the example). three_bridges stays bit-identical.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. The sandbox blocked writing this into CLAUDE.md.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -26,7 +27,8 @@
 | Router cache is derived (not hashed/snapshotted) | pure function of costs + closures + epoch | core-002 |
 | AoS 16-byte vehicle records; link stats per frame; no x/y from Rust | compact transfer; renderer maps link+s | core-004 |
 | Visibility minima in CSS px (road 2.5/closed 9, halo 3/2, vehicles 5×1.8 vs 3.4×3.4) | metric sizes collapse at fit zoom | core-005 |
-| Per-link saturation flow; gridlock relief (reroute 60 s, remove 10 min) | limited-capacity Old Bridge; oversaturation must not freeze | city (plan) |
+| Per-link saturation flow; gridlock relief (reroute 60 s, remove 10 min) | limited-capacity Old Bridge; oversaturation must not freeze | city-001 |
+| New metrics in `EXTENDED_METRIC_NAMES`, not `METRIC_NAMES` | core_004 pins the core list; the web reads metrics by name | city-001 |
 
 ## Active Constraints
 - The contracts `.wdd/epics/core.md` and `.wdd/epics/city.md` are binding. Change them explicitly (with the reason), never silently in code.
@@ -48,7 +50,7 @@
 | three_bridges central closure | N+S exits ~6 → ~40/min; mean tt 242 → 264 s | core-003 |
 
 ## Known Limitations
-- Gridlock in cycles is unresolved until city-001. three_bridges demand is mild (it peaks around 225 vehicles).
+- three_bridges demand is mild (it peaks around 225 vehicles) and never triggers gridlock relief.
 - `World::clone` copies the `Network` and the unbounded `completed_log` (timeline: share via `Arc`, window the log).
 - **Restore (timeline)** must invalidate the RouterCache and snapshot the reroute queues and their flags.
 - `World::metrics()` dominates per-frame cost at high demand (make it incremental or sample it).
@@ -65,7 +67,6 @@
   - no-WebGL2 path is silent.
 
 ## What Comes Next
-- **city-001** (Rust): per-link sat flow + gridlock relief. 16 tests in `crates/sim-core/tests/city_001_relief.rs`.
 - **city-002**: River City + calibration tests; the app switches to River City.
 - **city-003**: inspect/follow vehicles, road stats.
 - **city-004**: miniature-city look + MINOR fixes.

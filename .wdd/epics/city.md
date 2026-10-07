@@ -21,7 +21,7 @@ Timeline, branching and comparison stay in epic `timeline`. Accessibility pass, 
 ## Wards
 | Ward | Name | Status |
 |------|------|--------|
-| city-001 | Capacity attributes and gridlock relief | planned |
+| city-001 | Capacity attributes and gridlock relief | complete |
 | city-002 | River City network and calibrated demand | planned |
 | city-003 | Inspect vehicles and roads | planned |
 | city-004 | The miniature city look | planned |

@@ -3,12 +3,12 @@ ward: 1
 revision: null
 name: "Capacity attributes and gridlock relief"
 epic: "city"
-status: "gold"
+status: "complete"
 dependencies: ["core-005"]
 layer: "rust"
 estimated_tests: 28
 created: "2026-10-07"
-completed: null
+completed: "2026-10-07"
 ---
 # Ward city-001: Capacity attributes and gridlock relief
 
