@@ -270,6 +270,8 @@ fn check_reopen(c: &City) {
     let base = run(c, &[], 60, None, None);
     let r = run(c, &cmds, minutes, None, None);
     let (a_base, a_after) = (mean(&base.active[30..60]), mean(&r.active[70..80]));
+    // (the closure really built a backlog, so the recovery check is not trivial; Red r3 m1)
+    assert!(mean(&r.active[40..50]) > 1.15 * a_base, "the closure built no backlog");
     assert!(a_after <= 1.1 * a_base, "active 20–30 min after the reopen {a_after} vs baseline {a_base}");
     let sum: [u64; 3] = r.we_exits[70..80].iter().fold([0; 3], |a, e| [a[0] + e[0], a[1] + e[1], a[2] + e[2]]);
     let total = sum.iter().sum::<u64>() as f64;
