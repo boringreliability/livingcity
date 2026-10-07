@@ -3,10 +3,10 @@ ward: 2
 revision: null
 name: "River City network and calibrated demand"
 epic: "city"
-status: "planned"
+status: "red"
 dependencies: ["city-001"]
 layer: "rust"
-estimated_tests: 12
+estimated_tests: 16
 created: "2026-10-07"
 completed: null
 ---
@@ -22,7 +22,16 @@ The final, hand-designed demo city (`.wdd/epics/city.md` § C3), as simulation d
 ## Outputs
 - `sim_core::cities::river_city(demand_seed, behavior_seed) -> City`. `City` gains `name: &'static str` (`"river_city"` / `"three_bridges"`) and `river: (f64, f64)` (the corridor's west and east x).
 - Example `river`: river_city, 20 min baseline, then the Main Bridge closed for 30 min, then reopened for 30 min. Per minute it prints `active`, `queued`, `unserved`, `removed_gridlock`, exits per bridge, the mean west→east trip time of the last 5 min, and the fullest approach links.
-- `sim-wasm`: `Sim::river_city(demand_seed, behavior_seed)`, `Sim::river()` (west_x, east_x), `Sim::city_name()`. The worker builds the city from `{ city: 'river_city' | 'three_bridges' }` in its init message (default `river_city`). `ReadyMessage` gains `city` and `river`.
+- `sim-wasm`: `Sim::river_city(demand_seed, behavior_seed)`, `Sim::river() -> Vec<f64>` (`[west_x, east_x]`), `Sim::city_name() -> String`.
+- **Protocol and host:**
+  - `ToWorker` `init` gains an optional `city?: CityName` (`'river_city' | 'three_bridges'`), default `river_city`.
+  - `HostDeps.createSim(demandSeed, behaviorSeed, city)` gets a third argument.
+  - `SimLike` gains the **optional** `city_name?()` and `river?()`, so existing fakes keep working.
+  - `ReadyMessage` gains `city: string` and `river: [number, number]`, read from the sim, with `'unknown'` / `[0, 0]` when absent.
+  - The worker passes the city through.
+- **App and hook:**
+  - The app reads `?city=` (unknown → `river_city`) and sends it in `init`.
+  - `LivingCitySnapshot` gains `city: string | null`.
 - `decor.ts`: `riverDecor(network, bounds, river)` draws the corridor as water (generic) and replaces `threeBridgesDecor` in the app. The core e2e tests that need three_bridges ids keep working: they read landmarks, never hard-coded ids. If a core e2e test depends on three_bridges geometry, the app accepts `?city=three_bridges` and that test's harness keeps the default. **Approved test files are not edited.** If one needs editing, escalate.
 
 ## Specification
@@ -40,7 +49,7 @@ The final, hand-designed demo city (`.wdd/epics/city.md` § C3), as simulation d
 
 ## Tests
 
-All in `crates/sim-core/tests/city_002_river.rs`. "Baseline" means seeds (2026, 7) without interventions. "Closure" means both Main Bridge links closed at 20 min. Windows are measured in sim minutes.
+Rust tests 1–12 are in `crates/sim-core/tests/city_002_river.rs`. Vitest tests 13–14 are in `web/tests/river.test.ts`, and Playwright tests 15–16 are in `web/e2e/river.spec.ts`. "Baseline" means seeds (2026, 7) without interventions. "Closure" means both Main Bridge links closed at 20 min. Windows are measured in sim minutes.
 
 | # | Test Name | Verifies |
 |---|-----------|----------|
@@ -56,6 +65,10 @@ All in `crates/sim-core/tests/city_002_river.rs`. "Baseline" means seeds (2026, 
 | 10 | `reopen_recovers` | reopened 30 min after the closure: mean `queued` over minutes 25–30 after the reopen ≤ 1.5 × baseline over the same minutes |
 | 11 | `calibration_holds_for_another_seed` | tests 4 and 6 hold for seeds (11, 3) too |
 | 12 | `river_city_is_deterministic` | two builds with the same seeds and the closure command have equal `state_hash` at every minute for 60 min. A different `demand_seed` gives different `generated_trips` |
+| 13 | `river city runs through wasm with the extended metrics` (vitest) | `Sim.river_city` names itself, exposes its corridor, uses the extended metric list (ending `removed_gridlock`, `unserved`), its Main Bridge crosses the corridor, and after 20 min it has > 500 active vehicles with frame count = on_network |
+| 14 | `the host reports the city and its river in ready` (vitest) | init without a city creates River City (`createSim` receives `'river_city'`). `ready.city`, `ready.river` and `metricNames` include `unserved`, with ≥ 8 zones. Frames carry the extended metrics. An explicit `city: 'three_bridges'` is honoured |
+| 15 | `the app opens on River City and closes its Main Bridge` (e2e) | the hook shows `city == 'river_city'`, there is traffic, and the metrics include `unserved`. The button closes both River City Main Bridge links (confirmed by a frame), and both are on screen |
+| 16 | `?city=three_bridges opens the core test city` (e2e) | `?city=three_bridges` opens the core city, and an unknown name falls back to River City |
 
 ## Must NOT
 - Script outcomes: no time-varying capacities, no demand that reacts to closures, no special cases for landmarks in the model.
