@@ -12,8 +12,10 @@ const panel = (page: Page) => page.getByRole('region', { name: 'Selected vehicle
 async function ready(page: Page): Promise<LivingCitySnapshot> {
   await page.goto('/');
   await expect.poll(async () => (await snap(page))?.tick ?? 0, { timeout: 30_000 }).toBeGreaterThan(10);
-  // let traffic build up a little
+  // let traffic build up: from tick ≈ 450 the zoomed view at the centre (Main Bridge) holds
+  // 13–26 vehicles; at the default 20× this is ~11 s (Red r2 B1)
   await expect.poll(async () => (await snap(page))!.frameRecords, { timeout: 30_000 }).toBeGreaterThan(300);
+  await expect.poll(async () => (await snap(page))!.tick, { timeout: 60_000 }).toBeGreaterThanOrEqual(450);
   return (await snap(page))!;
 }
 
@@ -99,15 +101,16 @@ async function luminance(page: Page, [x, y]: [number, number], w: number, h: num
 }
 const light = (lum: number[]) => lum.filter((v) => v >= 235).length;
 
-/** Near-white pixels farther than `band` px from the line through the box centre along unit `dir`. */
-async function lightOffAxis(page: Page, at: [number, number], w: number, h: number, dir: [number, number], band = 4) {
-  const lum = await luminance(page, at, w, h);
-  let n = 0;
+/** Near-white pixels on each side, farther than `band` px from the line through the box centre
+ * along unit `dir`. A ring is symmetric; a route line beside the vehicle is one-sided (Red r2). */
+function lightOffAxisSides(lum: number[], w: number, h: number, dir: [number, number], band = 4): [number, number] {
+  const n: [number, number] = [0, 0];
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const dx = x + 0.5 - w / 2;
       const dy = y + 0.5 - h / 2;
-      if (Math.abs(dx * dir[1] - dy * dir[0]) > band && lum[y * w + x]! >= 235) n++;
+      const perp = dx * dir[1] - dy * dir[0];
+      if (Math.abs(perp) > band && lum[y * w + x]! >= 235) n[perp > 0 ? 0 : 1]++;
     }
   return n;
 }
@@ -171,18 +174,13 @@ test('tracked_vehicle_ring_and_route_visible', async ({ page }) => {
     const b = (await page.evaluate((l) => window.__livingcity!.linkScreenPoint(l, 1), route[0]!))!;
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const dir: [number, number] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
-    const offAxis = (lum: number[]) => {
-      let n = 0;
-      for (let y = 0; y < 30; y++)
-        for (let x = 0; x < 30; x++) {
-          const dx = x + 0.5 - 15;
-          const dy = y + 0.5 - 15;
-          if (Math.abs(dx * dir[1] - dy * dir[0]) > 4 && lum[y * 30 + x]! >= 235) n++;
-        }
-      return n;
-    };
-    const ringAfter = await lightOffAxis(page, v.at, 30, 30, dir);
-    expect(ringAfter - offAxis(ringBeforeLum)).toBeGreaterThanOrEqual(12);
+    const before = lightOffAxisSides(ringBeforeLum, 30, 30, dir);
+    const after = lightOffAxisSides(await luminance(page, v.at, 30, 30), 30, 30, dir);
+    const delta: [number, number] = [after[0] - before[0], after[1] - before[1]];
+    // on both sides of the vehicle (a one-sided route line cannot fake it), and in total
+    expect(delta[0]).toBeGreaterThanOrEqual(4);
+    expect(delta[1]).toBeGreaterThanOrEqual(4);
+    expect(delta[0] + delta[1]).toBeGreaterThanOrEqual(12);
     // And a near-white dashed line runs along a remaining route link ≥ 30 px away
     const routeAfter = light(await luminance(page, target.mid, 24, 24));
     await blur(page);
@@ -207,7 +205,8 @@ test('follow_keeps_vehicle_centred', async ({ page }) => {
   for (const v of await clickableVehicles(page, 20)) {
     await page.mouse.click(v.at[0], v.at[1]);
     await expect.poll(async () => (await snap(page))!.trackedTrip).not.toBeNull();
-    if ((await snap(page))!.trackedState === 'driving') {
+    const st = (await snap(page))!;
+    if (st.trackedState === 'driving' && st.trackedRoute.length >= 2) {
       found = true;
       break;
     }

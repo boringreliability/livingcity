@@ -71,7 +71,7 @@ Data follows `.wdd/epics/city.md` § C4: on-demand queries, one tracked vehicle 
   - **Hook additions:**
     - `snapshot()` gains `trackedTrip: number | null`, `trackedRoute: number[]`, `trackedState: string | null`, `following: boolean`, `frameRecords: number` and `camera: { cx, cy, zoom }`;
     - `vehicleScreenCenter(record) -> [x, y] | null` for the current frame, unextrapolated;
-    - `trackedScreenCenter() -> [x, y] | null`;
+    - `trackedScreenCenter() -> [x, y] | null`: where the tracked vehicle is drawn now, i.e. the same extrapolated position the renderer and Follow use (null when not tracked or not on a link);
     - `linkScreenPoint(link, t) -> [x, y] | null`, the point at fraction t along the drawn link;
     - `pickAt(x, y) -> { vehicle: number | null; link: number | null }`, exactly what a click there would select, without selecting.
   - **`TrackedVehicle.state`** is a string: `'waiting' | 'driving' | 'queued' | 'stranded' | 'no_route'`, mapped from the detail's state code.
@@ -82,7 +82,7 @@ Data follows `.wdd/epics/city.md` § C4: on-demand queries, one tracked vehicle 
 - **Panel text.** The vehicle panel title is `Trip #<id>: <origin zone name> → <destination zone name>` (names from `ReadyMessage.zones`; a non-zone node shows `node <id>`). State is shown as text plus an icon, never colour alone. It also shows speed in km/h, time on trip (sim), road (link id), route switches, and "waiting for space <n> s" when `blockedTicks > 0`. "Follow" and "Stop following" buttons are keyboard reachable.
 - **Gone.** After `TrackedGone` the panel shows "Arrived after m:ss" (completed), "Removed: no route" or "Removed: gridlock", follow turns off, and the selection clears when the user dismisses the panel or presses Escape.
 - **Route highlight.** A dashed centre line ≥ 2 CSS px along the remaining route links, near-white (luminance ≥ 235) and not hue-coded. It is drawn above the roads and below the vehicles.
-- **Tracked ring.** A ring around the tracked vehicle: line width ≥ 2 px, outer radius ≥ 7 CSS px, near-white (luminance ≥ 235) with a dark edge, visible in grayscale.
+- **Tracked ring.** A ring around the tracked vehicle, symmetric about the vehicle: line width ≥ 2 px, outer radius 7–12 CSS px in screen space (independent of zoom), near-white (luminance ≥ 235) with a dark edge, visible in grayscale.
 - **Road panel formats.** Capacity is a plain integer plus ` veh/h` (e.g. `900 veh/h`). Travel times are seconds as an integer or one decimal plus ` s` (e.g. `57 s`, `57.5 s`).
 - **Budget.** At most one `vehicle_detail`, one `trip_outcome` (only when the detail says not live) and one `link_detail` per encoded frame. The trip table costs O(on-network) per encode, and that work is already done in `write_vehicle_records`.
 - **Determinism.** The queries are read-only. `removed_log` is the only new state (needed for `trip_outcome`).
@@ -103,8 +103,8 @@ Rust tests are in `crates/sim-core/tests/city_003_inspect.rs`, Vitest in `web/te
 | 9 | `pickVehicle_nearest_within_tolerance` (vitest) | the nearest centre within 8 px wins, ties go to the lower record, and nothing is picked beyond the tolerance |
 | 10 | `link_detail_capacity` (vitest, real wasm) | the Old Bridge link detail shows `capacityVph ≤ 900`. A 2-lane default road shows 3600. `cost_s ≥ free_flow_s`. `NetworkArrays.linkSatFlow` matches |
 | 11 | `click_vehicle_opens_panel` (e2e) | paused at fit zoom, clicking a vehicle's screen centre opens the vehicle panel titled "Trip #… : origin → destination" with zone names, and `trackedTrip` is set |
-| 12 | `tracked_vehicle_ring_and_route_visible` (e2e, grayscale pixels) | zoomed in and paused: after selecting, near-white pixels appear around the tracked vehicle off the road axis (the ring, not the route line), and around the midpoint of a remaining route link ≥ 30 px away. The boxes are verified to be canvas, and the pixels are absent before selecting |
-| 13 | `follow_keeps_vehicle_centred` (e2e) | zoomed to ≥ 2 px/m, a *driving* vehicle followed at 1×: ≥ 4 samples within 12 px of the canvas centre over 3 s, and the camera centre moves ≥ 5 m. A drag turns follow off |
+| 12 | `tracked_vehicle_ring_and_route_visible` (e2e, grayscale pixels) | from tick ≥ 450, zoomed in and paused: after selecting, near-white pixels appear around the tracked vehicle off the road axis on *both* sides (≥ 4 each, ≥ 12 total; the ring, not a one-sided route line), and around the midpoint of a remaining route link ≥ 30 px away. The boxes are verified to be canvas, and the pixels are absent before selecting |
+| 13 | `follow_keeps_vehicle_centred` (e2e) | from tick ≥ 450, zoomed to ≥ 2 px/m, a *driving* vehicle with ≥ 2 route links left, followed at 1×: ≥ 4 samples within 12 px of the canvas centre over 3 s, and the camera centre moves ≥ 5 m. A drag turns follow off |
 | 14 | `vehicle_gone_message` (e2e) | following a vehicle to its destination at 60× shows "Arrived after m:ss" (or a removal reason) and stops following |
 | 15 | `road_panel_real_stats` (e2e) | selecting the Old Bridge shows capacity ≤ 900 veh/h and travel time now vs free flow, in the pinned formats. It is not congested before. After closing the main bridge, "travel time now" exceeds free flow within 6 sim min at 20× |
 | 16 | `keyboard_escape_order` (e2e) | with a road selected at fit zoom and a vehicle tracked after zooming in: Escape first clears the vehicle selection (and following), then the road selection. The Follow button is reachable with Tab and works with Enter |
