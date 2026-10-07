@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-07, after core-004 completed (Gold approved, gold-2)
+2026-10-07, after core-005 completed (Gold approved, gold-2): epic core awaits the human epic gate
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). `main` holds only the initial commit.
@@ -12,7 +12,8 @@
 - **core-003 complete**: commands/closures, budgeted + staggered rerouting with hysteresis, forced decisions, NoRoute/stranded retries with removal, `state_hash`, `cities::three_bridges`, `bridge` example. 80 tests green (20 + 24 + 36). The Red gate took 7 rounds and was auto-approved under the user's convergence rule (see `.wdd/reviews/core-003-red-7-auto.md`). Gold was approved in round 1, and the differential run against an independent reference was identical over 10 scenarios.
 - **User decision (2026-10-06): convergence rule for gates.** From round 4 on, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved once the fix tests are incorporated. It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement. (Not written into CLAUDE.md: the sandbox blocks self-modification of instructions; the user may add it.)
 - **core-004 complete**: `sim_core::frame` (AoS vehicle records, link stats, NetworkExport, METRIC_NAMES), `crates/sim-wasm` (thin adapter), `web/` (pnpm, Vite 8, React 19, Vitest 5): `SimClock` (honest behind, option (ii) after lowering speed), worker host (16 ms frames, transfer, exact-size pool, link-id validation, halt on panic), client, debug readout. Rust 85 + Vitest 37 green. Red took 4 rounds (2 spec BLOCKERs in round 1: an impossible decoder API, an achieved-rate tolerance). Gold took 2 rounds (F1: wasm-bindgen coerces NaN/1.7 ids onto real links → validate in the host). Browser smoke: 51 fps, frame bytes = 16 × on-network, close/reopen works, 300× achieved.
-- Next: core-005 (WebGL2 renderer + React UI + Playwright e2e). This is the **integration ward**, followed by the **human epic gate**.
+- **core-005 complete** (integration ward): `web/src/render/` (`geometry.ts`, `camera.ts` CSS px / y up / zoom about cursor, `picking.ts`, `decor.ts` river + zone pads, `renderer.ts` WebGL2: link table texture of 3 RGBA32F texels per link, link state texture, instanced vehicles straight from the AoS buffer, two road passes with a px halo for selected/hovered, closed = screen-space hatch + barrier glyphs, per-class min px vehicle shapes), `web/src/ui/` (ControlPanel, MetricsStrip, SelectionPanel, `window.__livingcity` test hook), `App.tsx`. Rust 85 + Vitest 45 + Playwright 17 green. Red took 4 rounds, Gold 2 (r1: selected road invisible and queued/moving same shape at fit zoom → fixed in px, mutation-checked).
+- **Next: the human epic gate for `core`**: present the demo and wait for "godkendt" before epic `city`.
 
 ## Architecture Decisions Made
 | Decision | Rationale | Ward |
@@ -26,6 +27,7 @@
 | Router cache is derived data (not hashed/snapshotted, rebuilt) | brief allows dropping caches that are pure functions of state | core-002 |
 | Shared test city `sim_core::cities::three_bridges` | same city in tests, WASM and browser (integration) | core-003 |
 | Zone centroids: trips start/end at zones, no route passes through a zone | origin admission at a junction starves through traffic (Red r6) | core-001 |
+| Visibility minima in CSS px, not metres (road 2.5/closed 9 px, halo 3/2 px, vehicles 5×1.8 vs 3.4×3.4 px) | at fit zoom (~0.48 px/m) metric sizes collapse to 1 px (Gold r1) | core-005 |
 
 ## Active Constraints
 - Model contract `.wdd/epics/core.md` is binding. Change it explicitly (and note why), never silently in code.
@@ -36,6 +38,7 @@
 ## Key Metrics
 | Metric | Value | Ward |
 |--------|-------|------|
+| Browser app (75 Hz display) | ~13 ms rAF interval, ~7 % main-thread busy; JS 244 kB (77 kB gzip) | core-005 |
 | wasm bundle | 119 kB (47 kB gzip) | core-004 |
 | Per-frame cost (native, ~2.1k on network) | encode 5 µs, link stats 6 µs, `metrics()` 0.25 ms (dominant; 1–3 ms at saturation) | core-004 |
 | Browser debug page | 51 frames/s; 300× achieved with three_bridges | core-004 |
@@ -63,7 +66,8 @@
 - Browser `performance.now()` is coarse (0.1 ms), so the ms/tick readout shows ~0 for cheap ticks. For the perf epic, aggregate over time or enable cross-origin isolation.
 - After a wasm trap the host halts; reloading requires a new worker (full module reload), not just a new `Sim`.
 - three_bridges at natural demand peaks around 225 vehicles, so the 2k/10k targets need the epic-city network and demand.
+- Renderer MINORs open (see `.wdd/reviews/core-005-gold-{1,2}.md`): fit ignores the overlay panels; the hatch overpaints cross roads at junctions and swims while panning; barrier glyphs in metres are ~1 px slivers at fit zoom; a selected/hovered road's halo covers the closure hatch of its opposite direction when only one direction is closed; B key repeat toggles the bridge; zone labels move only on frames; link texture width = link count (texture size limit); `laneOffset` export and `FrameMessage.perf` unused; no-WebGL2 path leaves controls silent; `v_core` dead varying; vehicle-shape test checks constants, not pixels.
 
 ## What Comes Next
-- core-005 Red: WebGL2 renderer (link table texture, instanced vehicles from the AoS buffer), camera/picking/geometry, React shell, Playwright e2e. Spec in `.wdd/wards/core/ward-005.md` (update: AoS decoder API, debug readout replaced).
-- Then the **epic gate (human)**: demo + run commands + review log.
+- **Epic gate (human)** for `core`: demo + run commands + review log. Wait for "godkendt".
+- Then epic `city`: the final river city (calibrated so a closure visibly saturates the alternatives), gridlock relief, renderer MINORs above, polish of the 2D look.

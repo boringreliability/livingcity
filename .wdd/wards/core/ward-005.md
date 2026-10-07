@@ -3,12 +3,12 @@ ward: 5
 revision: null
 name: "First closure in the browser"
 epic: "core"
-status: "gold"
+status: "complete"
 dependencies: ["core-004"]
 layer: "typescript"
 estimated_tests: 20
 created: "2026-10-06"
-completed: null
+completed: "2026-10-07"
 ---
 # Ward core-005: First closure in the browser (integration ward)
 
