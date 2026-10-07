@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "First closure in the browser"
 epic: "core"
-status: "approved"
+status: "gold"
 dependencies: ["core-004"]
 layer: "typescript"
 estimated_tests: 20
