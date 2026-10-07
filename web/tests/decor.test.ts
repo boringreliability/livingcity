@@ -1,5 +1,5 @@
 // Ward city-004: render-side city decor, fit with insets, the 2D link table.
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 
 import { expect, test } from 'vitest';
 
@@ -54,10 +54,18 @@ test('decor_is_deterministic', () => {
   expect(a.riverProfile).toEqual(b.riverProfile);
   expect(a.buildingBoxes).toEqual(b.buildingBoxes);
   // no randomness in the decor sources
-  const dir = new URL('../src/render/cities/', import.meta.url);
-  for (const f of readdirSync(dir)) {
-    const src = readFileSync(new URL(f, dir), 'utf8');
-    expect(src.includes('Math.random'), f).toBe(false);
+  const files: URL[] = [new URL('../src/render/decor.ts', import.meta.url)];
+  const walk = (dir: URL) => {
+    for (const f of readdirSync(dir)) {
+      const u = new URL(f, dir);
+      if (statSync(u).isDirectory()) walk(new URL(`${f}/`, dir));
+      else files.push(u);
+    }
+  };
+  walk(new URL('../src/render/cities/', import.meta.url));
+  for (const u of files) {
+    if (!statSync(u, { throwIfNoEntry: false })) continue;
+    expect(readFileSync(u, 'utf8').includes('Math.random'), u.pathname).toBe(false);
   }
   // and the dispatcher picks River City by name
   const ready = { city: 'river_city', network: c.network, landmarks: c.landmarks, zones: c.zones, river: c.corridor };
@@ -86,9 +94,32 @@ test('river_stays_in_corridor', () => {
     expect(s.x1).toBeLessThanOrEqual(east + 1e-6);
     if (i > 0) expect(s.y - p[i - 1]!.y).toBeLessThanOrEqual(50 + 1e-9);
   }
-  // and it actually meanders (not just the straight corridor)
-  const widths = new Set(p.map((s) => Math.round(s.x0)));
-  expect(widths.size).toBeGreaterThan(3);
+  // the drawn water is the profile: every vertex inside the profile at its y (Red r1 M2) …
+  const edge = (y: number): [number, number] => {
+    let i = p.findIndex((s) => s.y >= y);
+    if (i <= 0) i = 1;
+    const a = p[i - 1]!;
+    const q = p[Math.min(i, p.length - 1)]!;
+    const t = q.y === a.y ? 0 : Math.min(1, Math.max(0, (y - a.y) / (q.y - a.y)));
+    return [a.x0 + (q.x0 - a.x0) * t, a.x1 + (q.x1 - a.x1) * t];
+  };
+  for (let i = 0; i < d.water.length; i += 2) {
+    const [x0, x1] = edge(d.water[i + 1]!);
+    expect(d.water[i]!).toBeGreaterThanOrEqual(x0 - 2);
+    expect(d.water[i]!).toBeLessThanOrEqual(x1 + 2);
+  }
+  // … and it fills the profile (area within 5 %)
+  let area = 0;
+  for (let i = 0; i < d.water.length; i += 6) {
+    const [ax, ay, bx, by, cx, cy] = Array.from(d.water.subarray(i, i + 6));
+    area += Math.abs((bx! - ax!) * (cy! - ay!) - (cx! - ax!) * (by! - ay!)) / 2;
+  }
+  let prof = 0;
+  for (let i = 1; i < p.length; i++) prof += ((p[i]!.x1 - p[i]!.x0 + p[i - 1]!.x1 - p[i - 1]!.x0) / 2) * (p[i]!.y - p[i - 1]!.y);
+  expect(Math.abs(area - prof) / prof).toBeLessThan(0.05);
+  // and it visibly meanders: the centre line swings ≥ 20 m
+  const mids = p.map((s) => (s.x0 + s.x1) / 2);
+  expect(Math.max(...mids) - Math.min(...mids)).toBeGreaterThanOrEqual(20);
 }, 30_000);
 
 // 3
@@ -126,8 +157,9 @@ test('buildings_avoid_roads_water_and_each_other', () => {
     Math.hypot(Math.max(x0 - x, 0, x - x1), Math.max(y0 - y, 0, y - y1));
   for (const box of boxes) {
     const [x0, y0, x1, y1] = box;
-    expect(x1).toBeGreaterThan(x0);
-    expect(y1).toBeGreaterThan(y0);
+    // real footprints, not slivers (≥ 6 m a side)
+    expect(x1 - x0).toBeGreaterThanOrEqual(6);
+    expect(y1 - y0).toBeGreaterThanOrEqual(6);
     expect(x1 < west || x0 > east, `box ${box} in the river`).toBe(true);
     expect(x0 >= b.minX && x1 <= b.maxX && y0 >= b.minY && y1 <= b.maxY, `box ${box} outside bounds`).toBe(true);
     for (const s of segs) {

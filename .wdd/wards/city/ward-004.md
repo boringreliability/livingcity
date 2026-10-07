@@ -46,12 +46,12 @@ It also fixes the renderer MINORs that were left open in core-005. All visual da
   - The texture is 1024 × 3·ceil(n/1024) texels, so it never exceeds `MAX_TEXTURE_SIZE` for any realistic n. The vertex shader uses the same mapping.
 - **Renderer**
   - **Draw order:** water → banks → parks → buildings → bridge decks → pads → roads → route/halo → closed hatch + barriers → vehicles → ring.
-  - **Congestion level of detail:** while zoom < `LOD_OVERVIEW_PX_PER_M` (0.5), a road's drawn width grows by up to +3 CSS px with its queued share, and its lightness rises. Above `LOD_DETAIL_PX_PER_M` (2), lane markings and building outlines show.
+  - **Congestion level of detail:** while zoom < `LOD_OVERVIEW_PX_PER_M` (0.5), a road's drawn width grows by up to +3 CSS px with its **occupancy** (vehicles ÷ capacity), and its lightness rises. It is not driven by the queued share: that drops to about 0 for a few ticks whenever the front car leaves, even on a full link, which would make congestion blink (Red r1 M1). Congested links are drawn after uncongested ones, so an overlapping reverse direction cannot hide the cue. Above `LOD_DETAIL_PX_PER_M` (2), lane markings and building outlines show.
   - **Closed roads:** the hatch is drawn in its own pass, after roads and halos, and only on the closed link's quad shortened by ≥ 6 CSS px at each end, so junctions keep showing the cross roads. The hatch is anchored to world space: it moves with the map, and its period is constant in px.
-  - **Barriers:** bars across each closed link at 12 % and 88 % of its length, ≥ 3 CSS px thick and ≥ (road width + 6 px) long, near-white with a dark edge, sized in screen px.
+  - **Barriers:** bars across each closed link at 12 % and 88 % of its length, with a near-white core ≥ 4 CSS px thick and ≥ (road width + 6 px) long, near-white with a dark edge, sized in screen px.
   - A selected or hovered road's halo never covers the hatch of the opposite closed direction, because the hatch pass is drawn later.
 - **UI**
-  - **District labels:** a DOM overlay positioned on every rAF (they follow the camera even while paused or before the next frame). Each shows its icon and text.
+  - **District labels:** a DOM overlay positioned on every rAF (they follow the camera even while paused or before the next frame). Each shows its icon and text, and its box is **centred on its point**.
   - **Legend:** a region labelled "Legend" with a toggle button (`aria-expanded`), expanded by default. It lists closed road, queued car, moving car, congestion and selection, each with a drawn sample (an inline SVG). The collapsed state persists in localStorage, guarded by try/catch.
   - **No WebGL2:** a `role="alert"` message that says WebGL2 is unavailable, and every control is disabled (not silent).
   - **B key:** ignores key repeat.
@@ -59,6 +59,9 @@ It also fixes the renderer MINORs that were left open in core-005. All visual da
   - `setDebug({ hideVehicles: boolean })` skips drawing vehicles, so road pixels can be measured.
   - `linkCapacity(link) -> number` returns `lanes × max(1, floor(length / 7.5))`, the simulation's storage capacity.
   - `approachLinks(link) -> number[]` returns the links that end at `link`'s start node, excluding the reverse of `link` and zone connectors, ascending.
+- **Notes from Red r1 for Gold:**
+  - Don't animate the water, because a paused canvas must stay static (`city.spec`).
+  - Keep the legend clear of the Old Bridge approach at fit zoom (around x 554–599, y 692–716 on 1280 × 800).
 - **Cleanup:** remove the dead `v_core` varying and the orphan `laneOffset` export (keep the lane math inside `vehiclePosition`). `FrameMessage.perf` stays reserved for city-005.
 
 ## Specification
@@ -83,20 +86,20 @@ Vitest tests are in `web/tests/decor.test.ts` (1–7), against the real River Ci
 | # | Test Name | Verifies |
 |---|-----------|----------|
 | 1 | `decor_is_deterministic` | two calls with the same inputs give identical arrays and labels. The decor module sources contain no `Math.random` |
-| 2 | `river_stays_in_corridor` | every water vertex x ∈ [west, east]. `riverProfile` samples are ≤ 50 m apart, cover the city's y range ± 500 m, and are each ≥ 60 m wide and inside the corridor |
+| 2 | `river_stays_in_corridor` | every water vertex x ∈ [west, east]. `riverProfile` samples are ≤ 50 m apart, cover the city's y range ± 500 m, and are each ≥ 60 m wide and inside the corridor. The drawn water lies inside the profile (± 2 m) and fills it (area within 5 %), and the centre line swings ≥ 20 m (Red r1 M2) |
 | 3 | `every_bridge_spans_water` | each landmark bridge segment spans the profile at its y (from x < x0 to x > x1). No non-bridge road segment has a point inside the corridor |
-| 4 | `buildings_avoid_roads_water_and_each_other` | there are buildings (≥ 200). Each box keeps ≥ (half width + 4 m) from every road segment (sampled every 5 m), lies outside the corridor and inside the bounds, and overlaps no other box. `buildings` has 6 vertices per box |
+| 4 | `buildings_avoid_roads_water_and_each_other` | there are buildings (≥ 200, each ≥ 6 m a side). Each box keeps ≥ (half width + 4 m) from every road segment (sampled every 5 m), lies outside the corridor and inside the bounds, and overlaps no other box. `buildings` has 6 vertices per box |
 | 5 | `district_labels_cover_all_zones` | one label per zone with the zone's name, kind and `LABEL_ICONS[kind]`. After `fitInsets(bounds, FIT_INSETS)` on 1280 × 800, no two estimated label boxes overlap, and every box lies inside the canvas |
 | 6 | `fit_insets_keeps_bounds_clear_of_panels` | `fitInsets` puts the bounds inside the inset rectangle, touching it on one axis and centred there. With zero insets it equals `fit(bounds, 0)` |
 | 7 | `link_texture_is_2d` | `linkTexel` maps 5,000 links × 3 rows to distinct texels within 1024 × 15. n = 300 stays within 1024 × 3 |
-| 8 | `b_key_repeat_ignored` (e2e) | a dispatched `keydown` for `b` with `repeat: true` does not toggle the main bridge |
+| 8 | `b_key_repeat_ignored` (e2e) | a dispatched `keydown` for `b` with `repeat: true` does not toggle the main bridge: it stays open, the button has `aria-pressed="false"`, and nothing is pending |
 | 9 | `hatch_leaves_junctions_clear` (e2e, pixels) | with the Main Bridge closed, paused and with vehicles hidden, a 5 × 5 clip at the east end junction has no hatch-yellow pixels, while a clip at the bridge's middle does. The black stripes match the ground, so only yellow is checked |
 | 10 | `hatch_moves_with_the_map` (e2e, pixels) | after a 37 px drag, the clip that moved with the map is identical (± 2 per pixel) to the clip before |
 | 11 | `barriers_visible_at_fit_zoom` (e2e, pixels) | at 12 % along each closed Main Bridge link, a run of near-white pixels ≥ 3 px long crosses the bar along the road direction |
 | 12 | `selected_halo_keeps_opposite_hatch` (e2e, pixels) | with only the east→west Main Bridge closed and the west→east one selected, the yellow hatch pixel count in the clip is ≥ 90 % of the count before selecting |
-| 13 | `labels_follow_camera_while_paused` (e2e) | while paused, after a drag, every district label moves by the drag delta (± 1 px) by the next animation frame |
-| 14 | `congestion_reads_in_grayscale` (e2e, pixels) | with vehicles hidden at fit zoom, the Old Bridge's west approach is ≥ 1 px wider and ≥ 10 lighter (mean luminance of the road core) once it is ≥ 60 % full after closing the Main Bridge, compared with before the closure |
-| 15 | `legend_explains_symbols` (e2e) | the legend is keyboard reachable and lists the five symbols with samples. Collapsing it keeps it collapsed after a reload |
+| 13 | `labels_follow_camera_while_paused` (e2e) | while paused, after a drag, every district label moves by the drag delta (± 1 px) by the next animation frame. (Red r1 m3: frames also arrive while paused, so this does not separate rAF-driven positioning from frame-driven positioning. The Gold reviewer checks the code) |
+| 14 | `congestion_reads_in_grayscale` (e2e, pixels) | with vehicles hidden at fit zoom, the Old Bridge's west approach is ≥ 1 px wider and ≥ 10 lighter (mean luminance of the road core) once it is ≥ 60 % full after closing the Main Bridge (still ≥ 55 % in the measured paused frame), compared with before the closure. The clip is verified to be on the canvas |
+| 15 | `legend_explains_symbols` (e2e) | the legend is keyboard reachable and lists the five symbols, each with a drawn SVG sample (containing a shape). Collapsing it keeps it collapsed after a reload |
 | 16 | `no_webgl2_fallback` (e2e) | with `getContext('webgl2')` stubbed to null, an alert names WebGL2, and Play and "Close the main bridge" are disabled |
 
 ## Must NOT

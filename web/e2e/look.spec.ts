@@ -60,7 +60,9 @@ test('b_key_repeat_ignored', async ({ page }) => {
   await sleep(600);
   const c = (await snap(page)).closed;
   expect(main.some((l) => c.includes(l))).toBe(false);
-  await expect(page.getByRole('button', { name: /close the main bridge/i })).toBeVisible();
+  const btn = page.getByRole('button', { name: /close the main bridge/i });
+  await expect(btn).toHaveAttribute('aria-pressed', 'false');
+  await expect(btn).not.toContainText(/pending/i);
 });
 
 // 9
@@ -221,6 +223,15 @@ test('congestion_reads_in_grayscale', async ({ page }) => {
     await page.mouse.move(5, 400);
     await sleep(300);
     const m = await point(page, link, 0.5);
+    // (the clip must be on the canvas, not under an overlay)
+    const onCanvas = await page.evaluate(
+      ([x, y]) =>
+        [[x - 12, y - 12], [x + 12, y - 12], [x - 12, y + 12], [x + 12, y + 12]].every(
+          ([a, b]) => document.elementFromPoint(a!, b!)?.tagName === 'CANVAS',
+        ),
+      m,
+    );
+    expect(onCanvas).toBe(true);
     const n = 25;
     const px = await pixels(page, m, n, n);
     // a line across the road through the clip centre; road pixels are clearly lighter than the ground
@@ -241,6 +252,8 @@ test('congestion_reads_in_grayscale', async ({ page }) => {
   const cap = await page.evaluate((l) => window.__livingcity!.linkCapacity(l), link);
   await expect.poll(async () => (await snap(page)).linkCounts[link]! / cap, { timeout: 180_000, intervals: [1000] }).toBeGreaterThanOrEqual(0.6);
   const after = await measure();
+  // the paused frame that was measured is itself congested (occupancy drives the look, Red r1 M1)
+  expect((await snap(page)).linkCounts[link]! / cap).toBeGreaterThanOrEqual(0.55);
   // Then the congested road reads wider and lighter, without hue
   expect(after.width).toBeGreaterThanOrEqual(before.width + 1);
   expect(after.light).toBeGreaterThanOrEqual(before.light + 10);
@@ -253,7 +266,11 @@ test('legend_explains_symbols', async ({ page }) => {
   await expect(legend).toBeVisible();
   const toggle = legend.getByRole('button');
   for (const text of [/closed road/i, /queued/i, /moving/i, /congest/i, /select/i]) await expect(legend).toContainText(text);
-  expect(await legend.locator('svg').count()).toBeGreaterThanOrEqual(5);
+  // each of the five items has a drawn sample (an SVG with at least one shape)
+  const drawn = await legend.locator('svg').evaluateAll((svgs) =>
+    svgs.filter((s) => s.querySelector('rect, path, line, circle, polygon, polyline')).length,
+  );
+  expect(drawn).toBeGreaterThanOrEqual(5);
   // keyboard reachable
   await blur(page);
   let onToggle = false;
