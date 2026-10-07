@@ -62,7 +62,9 @@ Data follows `.wdd/epics/city.md` § C4: on-demand queries, one tracked vehicle 
   - `NetworkArrays` gains the **optional** `linkSatFlow?: Float32Array`, because frozen test literals lack it.
   - The new `SimLike` methods (`vehicle_detail`, `trip_outcome`, `link_detail`, `trip_at_record`, `link_sat_flow`) are **optional**, because existing fakes lack them. The host guards their use.
 - **TS / UI**
-  - `picking.pickVehicle(vehicles: DecodedVehicles, links: LinkGeom[], camera, sx, sy, tolerancePx = 8) -> number | null` returns a record index: the nearest record centre (`vehiclePosition`, no extrapolation) within the tolerance, with ties going to the lower index.
+  - `picking.pickVehicle(vehicles: DecodedVehicles, links: LinkGeom[], camera, sx, sy, tolerancePx = 8, dtSim = 0) -> number | null` returns a record index: the nearest record centre within the tolerance, with ties going to the lower index. `dtSim` extrapolates like the renderer (s + v·dtSim, capped at the link end), so a click hits a car where it is drawn while the sim runs. It is 0 when paused, which gives the frame positions (Gold r1 m1).
+  - **Extrapolation anchor (Gold r1 M1, r2 M-A).** The renderer restarts extrapolation when a frame brings a new tick or when the sim resumes from pause. It extrapolates at the requested speed (the clock's `multiplier`) unless the clock reports *behind*, in which case it uses the achieved rate.
+  - **Clearing a vehicle (Gold r2 M-B).** After a local clear, the UI ignores tracking data in frames already in flight until the worker confirms the clear with `tracked === null`.
   - App keeps a copy of the latest frame's records, because the transferred buffer is returned to the worker.
   - **Picking rule (Red r1 M3).** Vehicles are pickable only when `camera.zoom ≥ VEHICLE_PICK_MIN_ZOOM` = 1.0 px/m. Then a click tries vehicles first (8 px), then roads. Below that, as at fit zoom, clicks select roads only: the network dominates at wide zoom (level of detail), busy roads stay selectable, and earlier road-click tests are unaffected.
   - `VehiclePanel` and the route highlight + tracked ring in the renderer.

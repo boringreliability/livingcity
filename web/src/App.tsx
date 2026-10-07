@@ -59,6 +59,9 @@ export function App() {
   /** A copy of the latest frame's records (the transferred buffer goes back to the worker). */
   const recordsRef = useRef<{ tick: number; vehicles: DecodedVehicles } | null>(null);
   const trackedRef = useRef<TrackedVehicle | null>(null);
+  /** After a local clear, frames already in flight may still carry the old vehicle: ignore
+   * tracking data until the worker confirms the clear with a frame whose `tracked` is null. */
+  const awaitingClearRef = useRef(false);
   const followingRef = useRef(false);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
@@ -105,6 +108,7 @@ export function App() {
   /** Stop inspecting the vehicle (also clears a `gone` notice). */
   const clearVehicle = useCallback(() => {
     client.current?.clearInspectedVehicle();
+    awaitingClearRef.current = true;
     trackedRef.current = null;
     renderer.current?.setTracked(null);
     setTracked(null);
@@ -135,10 +139,12 @@ export function App() {
       c.setRunning(true);
     });
     c.onFrame((f: FrameMessage) => {
-      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick);
+      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running);
       // keep a copy for picking before the buffer goes back to the worker
       recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count) };
-      if (f.tracked && 'gone' in f.tracked) {
+      if (awaitingClearRef.current) {
+        if (f.tracked === null) awaitingClearRef.current = false; // the worker has dropped it
+      } else if (f.tracked && 'gone' in f.tracked) {
         trackedRef.current = null;
         renderer.current?.setTracked(null);
         setTracked(null);
@@ -222,7 +228,10 @@ export function App() {
     let raf = 0;
     const loop = (now: number) => {
       const f = frameRef.current;
-      const simPerMs = f && f.clock.running ? (f.clock.achievedTicksPerS * DT) / 1000 : 0;
+      // Extrapolate at the requested speed; only when the engine is behind, at the achieved rate.
+      // (The achieved rate is a 1-s window: right after Play it is still ~0, which made motion lurch.)
+      const simPerMs =
+        f && f.clock.running ? (f.clock.behind ? f.clock.achievedTicksPerS * DT : f.clock.multiplier) / 1000 : 0;
       simPerMsRef.current = simPerMs;
       if (followingRef.current) {
         const at = renderer.current?.trackedWorldPosition(now, simPerMs);

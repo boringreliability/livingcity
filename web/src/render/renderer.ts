@@ -284,6 +284,7 @@ export class CityRenderer {
   private geometry: RoadGeometry | null = null;
   private frameAtMs = 0;
   private frameTick: number | null = null;
+  private frameRunning = false;
   private dpr = 1;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -438,14 +439,18 @@ export class CityRenderer {
   }
 
   /** Upload one frame's records (the AoS buffer as is). The caller may then return the buffer. */
-  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number): void {
+  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number, running = true): void {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vehBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(words.buffer, words.byteOffset, count * VEHICLE_RECORD_BYTES), gl.STREAM_DRAW);
     this.vehCount = count;
     // Extrapolation restarts only when the simulation advanced: frames repeat while the tick
     // is unchanged (they come every 16 ms), and resetting then would make motion lurch.
-    if (tick === undefined || tick !== this.frameTick) {
+    // Also restart on resume: while paused the tick stands still, so the anchor would be stale
+    // and the first frames after Play would extrapolate over the whole pause.
+    const resumed = running && !this.frameRunning;
+    this.frameRunning = running;
+    if (tick === undefined || tick !== this.frameTick || resumed) {
       this.frameAtMs = receivedAtMs;
       this.frameTick = tick ?? null;
     }
@@ -523,20 +528,20 @@ export class CityRenderer {
     this.route = { vao, buf, count: v.length / 6 };
   }
 
-  /**
-   * Where the tracked vehicle is drawn at `nowMs` (world m): its frame position extrapolated
-   * like every vehicle in the vertex shader, so Follow and the ring agree with the picture.
-   */
   /** Sim seconds the drawn picture is ahead of the last frame (0 while paused). */
   extrapolationS(nowMs: number, simSecondsPerMs: number): number {
     return Math.min(2, Math.max(0, (nowMs - this.frameAtMs) * simSecondsPerMs));
   }
 
+  /**
+   * Where the tracked vehicle is drawn at `nowMs` (world m): its frame position extrapolated
+   * like every vehicle in the vertex shader, so Follow and the ring agree with the picture.
+   */
   trackedWorldPosition(nowMs: number, simSecondsPerMs: number): [number, number] | null {
     const t = this.tracked;
     const l = t && t.link >= 0 ? this.geometry?.links[t.link] : undefined;
     if (!t || !l) return null;
-    const dtSim = Math.min(2, Math.max(0, (nowMs - this.frameAtMs) * simSecondsPerMs));
+    const dtSim = this.extrapolationS(nowMs, simSecondsPerMs);
     return vehiclePosition(l, Math.min(t.s + t.v * dtSim, l.length), t.lane);
   }
 
@@ -644,7 +649,7 @@ export class CityRenderer {
       gl.uniform2f(uV['u_center']!, camera.cx, camera.cy);
       gl.uniform2f(uV['u_scale']!, ...scale);
       gl.uniform1f(uV['u_pxPerM']!, camera.zoom);
-      const dtSim = Math.min(2, Math.max(0, (nowMs - this.frameAtMs) * simSecondsPerMs));
+      const dtSim = this.extrapolationS(nowMs, simSecondsPerMs);
       gl.uniform1f(uV['u_dtSim']!, dtSim);
       gl.bindTexture(gl.TEXTURE_2D, this.linkTex);
       gl.uniform1i(uV['u_links']!, 0);

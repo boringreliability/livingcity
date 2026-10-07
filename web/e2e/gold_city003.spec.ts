@@ -50,10 +50,9 @@ test('fix M1: following at 1x moves the camera smoothly (no jump per tick)', asy
   expect(ok).toBe(true);
   await page.getByRole('button', { name: /^follow$/i }).click();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // When the sim starts (Play) and the camera centre is sampled every animation frame for 2 s,
+  // from the moment of Play (Gold r2 M-A: the first ticks after Play must not lurch either)
   await page.keyboard.press('Space');
-  await expect.poll(async () => (await snap(page)).running).toBe(true);
-  await sleep(500);
-  // When the camera centre is sampled every animation frame for 2 s
   const samples = await page.evaluate(
     () =>
       new Promise<{ d: number; dt: number }[]>((resolve) => {
