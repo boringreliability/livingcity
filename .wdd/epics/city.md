@@ -51,9 +51,10 @@ The core contract allows gridlock in cycles. With oversaturation (closing the Ma
   - In an evaluation where the front is blocked: `blocked_ticks += 1`.
   - In any other evaluation of that vehicle as a front (no reach, transfer, completion, credit-limited with space available, stranded, forced decision without route): `blocked_ticks = 0`.
   - It is 0 on entering a link. Vehicles that are not lane fronts keep the value 0.
-- **Relief 1: reroute.** When an evaluation leaves `blocked_ticks` at a positive multiple of `GRIDLOCK_REROUTE_TICKS` = 120 (60 s), the front is rerouted from its decision point (the current link's `to` node, keeping `route[..=route_pos]`).
+- **Evaluation order.** Within one evaluation: decide whether the front is blocked → apply the counter (at most one increment per evaluation) → if `blocked_ticks == GRIDLOCK_REMOVE_TICKS`, remove (Relief 2; no reroute attempt) → else, if it is a positive multiple of 120, attempt Relief 1.
+- **Relief 1: reroute.** When an evaluation leaves `blocked_ticks` at a positive multiple of `GRIDLOCK_REROUTE_TICKS` = 120 (60 s) **below** `GRIDLOCK_REMOVE_TICKS`, the front is rerouted from its decision point (the current link's `to` node, keeping `route[..=route_pos]`).
   - The search uses current costs and closures, plus the **blocked next link treated as closed for this one search**. It is a fresh Dijkstra with the same algorithm and tie rules as the router, and it is neither cached nor written to the cache.
-  - If a path exists, it is assigned (it counts as a switch iff the route changes), and `gridlock_reroutes += 1`. The normal crossing rules then apply to the new next link in the same evaluation. If that new next link also has no space, the vehicle stays blocked: the count continues, it is **not** reset.
+  - If a path exists, it is assigned (it counts as a switch iff the route changes), and `gridlock_reroutes += 1`. The normal crossing rules then apply to the new next link in the same evaluation. If that new next link also has no space, the vehicle stays blocked: the count continues, it is **not** reset. If it has space but credit < 1, the vehicle stays on its link with the count unchanged in this evaluation (and the next evaluation resets it, credit-limited with space).
   - If no path exists, the route is kept.
   - No hysteresis applies. Gridlock reroutes spend no reroute budget.
 - **Relief 2: removal (last resort).** When an evaluation leaves `blocked_ticks == GRIDLOCK_REMOVE_TICKS` = 1200 (10 min), the vehicle is removed from its lane:

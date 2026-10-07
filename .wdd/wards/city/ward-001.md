@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Capacity attributes and gridlock relief"
 epic: "city"
-status: "planned"
+status: "red"
 dependencies: ["core-005"]
 layer: "rust"
 estimated_tests: 16
@@ -38,26 +38,31 @@ Rust only. Nothing changes for existing scenarios unless they actually gridlock.
 
 ## Tests
 
-All in `crates/sim-core/tests/city_001_relief.rs`. A "ring" is 4 junctions in a square, with one-lane links between them in one direction. It is fed from zones via connectors and filled by `spawn_with_route` so that every ring link is full and every ring front's next link is the next ring link. This is a real deadlock.
+All in `crates/sim-core/tests/city_001_relief.rs`. Two constructions:
+
+- **Ring.** 4 junctions in a 75 m square with one-lane ring links. A zone feeds each junction, and each junction has an exit to a dead-end sink. 40 vehicles per zone circle once and exit at their own junction. Probed against the core implementation, it deadlocks deterministically at tick 346, with 4 × 10 vehicles and no movement afterwards.
+- **Fork.** Zone Z ─L1 (200 m)─▶ A. From A, P (A→B, 10 m, lane capacity 1) or optionally Q1 (A→E, 10 m) + Q2 (E→B, 10 m). Then R (B→D, 200 m), plus CX (B→X) and CY (E→Y), both closed at tick 0. Blocker b1 (route L1,P,CX) and, optionally, b2 (L1,Q1,CY) strand on their 10 m links. The probe vehicle v (L1,P,R) then reaches A's stop line with P full.
 
 | # | Test Name | Verifies |
 |---|-----------|----------|
-| 1 | `default_sat_flow_is_core_value` | links without an override have `sat_flow_per_lane == SAT_FLOW_PER_LANE`. A standing 1-lane queue still discharges with exactly 4-tick headways |
+| 1 | `default_sat_flow_is_core_value` | links without an override have `sat_flow_per_lane == SAT_FLOW_PER_LANE`. Explicitly setting 0.5 on every link of three_bridges gives an identical `state_hash` every tick for 30 min |
 | 2 | `set_sat_flow_last_call_wins` | the last override is the one stored. Other links are unaffected |
-| 3 | `invalid_sat_flow_rejected` | NaN, ±∞, 0, −0.1 and `2.0 + 1e-9` → `InvalidSatFlow { from, to }`; 2.0 and 1e-6 accepted. On the same link `InvalidLanes` is reported first. An earlier link's error is reported before a later link's sat-flow error |
+| 3 | `invalid_sat_flow_rejected` | NaN, ±∞, 0, −0.1 and `2.0 + 1e-9` → `InvalidSatFlow { from, to }`; 2.0 and 1e-6 accepted. On the same link `InvalidLanes` is reported first. An earlier link's error is reported before a later link's sat-flow error, and an earlier link's sat-flow error before a later link's `TooShort` |
 | 4 | `unknown_link_override_rejected` | overrides for nonexistent ids → `UnknownLink(lowest id)`, reported only when every link is otherwise valid |
-| 5 | `reduced_sat_flow_discharge_headway` | a standing queue of 10 on a 1-lane link discharging into an empty long link: sat 0.25 → consecutive transfers exactly 8 ticks apart; 0.125 → 16 |
-| 6 | `sat_flow_scales_costs` | `free_flow = length / vmax + 1 / (lanes × sat)`, and the epoch's `queue_term` uses `lanes × sat` (exact value with a known queued count) |
-| 7 | `blocked_counter_counts_downstream_full_only` | a front at the stop line whose next link is full gets `blocked_ticks` 1, 2, 3, … on consecutive ticks. When space appears and it transfers, its `blocked_ticks` is 0 on the new link |
-| 8 | `credit_limited_front_is_not_blocked` | with sat 0.125 and space downstream, a front waiting for credit keeps `blocked_ticks == 0` |
-| 9 | `closed_next_link_and_stranded_fronts_are_not_blocked` | a front whose next link is closed (forced decision, rerouted or stranded) and a stranded front keep `blocked_ticks == 0`. A front on its final link is never blocked |
-| 10 | `gridlock_reroute_after_60s` | ring with one alternative exit at a ring node: at the evaluation where the front's `blocked_ticks` reaches 120, it switches to the alternative from the stop-line node and keeps the driven prefix. `gridlock_reroutes == 1` and `switches_total` +1. If the alternative has space it crosses in the same evaluation |
-| 11 | `gridlock_reroute_repeats_without_reset` | if the new next link is also full, the counter continues (not reset). Further attempts happen at 240, 360, …, and `gridlock_reroutes` counts only attempts that found a path |
-| 12 | `gridlock_removal_after_10_minutes` | pure deadlock ring (no alternative): a front is removed exactly at the evaluation where its `blocked_ticks` reaches 1200. `removed_gridlock` +1; it is not completed, not an exit (`link_exit_count` unchanged), and its slot is freed. Afterwards the ring moves again, and the remaining ring vehicles complete within 30 min |
-| 13 | `gridlock_metrics_and_conservation` | every tick: `spawned == active + completed + removed_unreachable + removed_gridlock`; `Counts.removed == removed_unreachable + removed_gridlock`; `unserved == unreachable + removed_gridlock`. `METRIC_NAMES` ends with `removed_gridlock`, `unserved`, and `metrics_to_array` matches by index |
-| 14 | `state_hash_covers_gridlock_state` | the hash differs for worlds that differ only in a vehicle's `blocked_ticks`, and for worlds that differ only in `removed_gridlock` / `gridlock_reroutes` history |
-| 15 | `relief_is_deterministic_and_clone_safe` | two runs of the deadlock ring have equal `state_hash` every tick for 30 min. A clone taken while fronts are blocked matches the original every tick |
+| 5 | `reduced_sat_flow_discharge_headway` | demand far above capacity through a 1-lane 300 m link: with sat 0.25, consecutive exits are exactly 8 ticks apart over 600 ticks after warm-up; with 0.125, 16 |
+| 6 | `sat_flow_scales_costs` | initial cost = `length / vmax + 1 / (lanes × sat)`. At an epoch with no exits on a link holding a known queued count `q`, the new cost = `max(ff, 0.5 × (length / vmax + q / (lanes × sat)) + 0.5 × previous)` |
+| 7 | `blocked_counter_counts_downstream_full_only` | fork without Q: v's `blocked_ticks` rises by exactly 1 per tick from its first blocked evaluation. At 120, 240, … there is no path, so it keeps counting. When b1 is removed (unreachable, T+600) v crosses in the same tick, and its `blocked_ticks` is 0 on P |
+| 8 | `credit_limited_front_is_not_blocked` | a 1-lane link with sat 0.125 and an empty downstream link: fronts wait at the stop line for credit, and every vehicle's `blocked_ticks` stays 0 throughout |
+| 9 | `stranded_and_final_link_fronts_are_never_blocked` | in the fork and ring runs: stranded vehicles (b1, b2) and vehicles on their final link always have `blocked_ticks == 0` |
+| 10 | `gridlock_reroute_after_60s_crosses_when_free` | fork with Q free: in the step where v's count reaches 120 (119 before), v switches to (L1,Q1,Q2,R), keeping the driven prefix, and crosses onto Q1 in the same evaluation (`blocked_ticks` 0 there). `gridlock_reroutes` +1 and `switches_total` +1 |
+| 11 | `gridlock_reroute_without_space_keeps_counting` | fork with Q blocked by b2: at 120 v switches to the Q route but stays (count 120, not reset). At 240 it switches back to P. At 360 to Q again, each time `gridlock_reroutes` +1. When the blockers are removed, v crosses and its count resets to 0 |
+| 12 | `gridlock_removal_after_10_minutes` | pure ring: no gridlock reroute ever finds a path. Every vehicle that disappears without completing is a front whose count was 1199 before the step, and `removed_gridlock` rises by exactly their number. The removed vehicle's link gets no exit in that step. No count ever reaches 1200. All ring vehicles have completed or been removed within 30 min after the first removal |
+| 13 | `gridlock_metrics_and_conservation` | every tick in the ring and fork runs: `spawned == active + completed + removed_unreachable + removed_gridlock`; `Counts.removed == removed_unreachable + removed_gridlock`; `unserved == unreachable + removed_gridlock`. `METRIC_NAMES` ends with `removed_gridlock`, `unserved`, and `metrics_to_array` matches by index |
+| 14 | `gridlock_reroute_spends_no_budget` | in test 10's relief step (with no periodic reroute due): `budgeted_total` and `forced_total` are unchanged |
+| 15 | `relief_is_deterministic_and_clone_safe` | two ring runs have equal `state_hash` and per-vehicle `blocked_ticks` every tick for 4,000 ticks. A clone taken at tick 700 (fronts blocked) matches the original every tick |
 | 16 | `normal_traffic_untouched_by_relief` | three_bridges, 1 h baseline and a 1 h run with the central bridge closed at 10 min: `gridlock_reroutes == 0` and `removed_gridlock == 0` |
+
+`state_hash` coverage of `blocked_ticks`, `removed_gridlock` and `gridlock_reroutes` is checked by the Gold reviewer in the hash code. Worlds differing only in those fields cannot be built through the public API.
 
 ## Must NOT
 - Change any earlier test or any core reference value. Default-sat-flow worlds must behave bit-identically wherever no front is blocked for 60 s.
