@@ -2,6 +2,8 @@
 //! in `.wdd/epics/core.md` (tick order steps 4–7).
 
 use std::collections::VecDeque;
+use std::mem::size_of;
+use std::sync::Arc;
 
 use crate::command::{Command, CommandError, CommandKind};
 use crate::demand::{trips_at, DemandError, DemandModel};
@@ -14,6 +16,7 @@ use crate::params::{
 };
 use crate::rng::BehaviorRng;
 use crate::routing::{cost_key, free_flow_cost, RouterCache, Tree};
+use crate::timeline::{LogLens, Logs, Snapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VehicleId(pub u32);
@@ -121,8 +124,11 @@ pub enum TripOutcome {
     Unknown,
 }
 
+/// Every removal in order: (trip id, kind).
+pub(crate) type RemovalLog = Vec<(u64, RemovalKind)>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RemovalKind {
+pub(crate) enum RemovalKind {
     Unreachable,
     Gridlock,
 }
@@ -268,7 +274,8 @@ impl Vehicle {
 
 #[derive(Clone, Debug)]
 pub struct World {
-    network: Network,
+    /// Immutable and shared (clones, snapshots and branches share it: ward timeline-001).
+    network: Arc<Network>,
     tick: u64,
     /// Slot table; `None` = free slot. Freed slots are reused LIFO.
     slots: Vec<Option<Vehicle>>,
@@ -286,11 +293,12 @@ pub struct World {
     removed: u64,
     removed_gridlock: u64,
     /// Every removal in order: (trip id, kind). World state (hashed); serves `trip_outcome`.
-    removed_log: Vec<(u64, RemovalKind)>,
+    removed_log: RemovalLog,
     completed_log: Vec<CompletedTrip>,
     /// Running Σ travel time (s) over `completed_log`, in log order.
     completed_tt_sum: f64,
-    demand: DemandModel,
+    /// Immutable and shared, like the network.
+    demand: Arc<DemandModel>,
     demand_seed: u64,
     behavior_rng: BehaviorRng,
     generated: Vec<GeneratedTrip>,
@@ -336,7 +344,7 @@ impl World {
         let n_nodes = network.nodes().len();
         let n_links = network.links().len();
         World {
-            network,
+            network: Arc::new(network),
             tick: 0,
             slots: Vec::new(),
             free: Vec::new(),
@@ -353,7 +361,7 @@ impl World {
             removed_log: Vec::new(),
             completed_log: Vec::new(),
             completed_tt_sum: 0.0,
-            demand,
+            demand: Arc::new(demand),
             demand_seed,
             behavior_rng: BehaviorRng::new(behavior_seed),
             generated: Vec::new(),
@@ -374,6 +382,11 @@ impl World {
 
     pub fn network(&self) -> &Network {
         &self.network
+    }
+
+    /// The demand model (shared, immutable).
+    pub fn demand(&self) -> &DemandModel {
+        &self.demand
     }
 
     pub fn generated_trips(&self) -> &[GeneratedTrip] {
@@ -529,6 +542,13 @@ impl World {
 
     /// Accept a command for `cmd.tick >= tick()`; applied in step 1 of that tick.
     pub fn schedule(&mut self, cmd: Command) -> Result<(), CommandError> {
+        self.validate(&cmd)?;
+        self.command_log.push(cmd);
+        Ok(())
+    }
+
+    /// The checks of `schedule`, without accepting the command.
+    pub(crate) fn validate(&self, cmd: &Command) -> Result<(), CommandError> {
         if cmd.tick < self.tick {
             return Err(CommandError::InPast);
         }
@@ -536,8 +556,121 @@ impl World {
         if l.index() >= self.network.links().len() {
             return Err(CommandError::UnknownLink(l));
         }
-        self.command_log.push(cmd);
         Ok(())
+    }
+
+    /// Drop the commands for ticks after `tick` (editing the future: ward timeline-001).
+    pub(crate) fn drop_commands_after(&mut self, tick: u64) {
+        self.command_log.retain(|c| c.tick <= tick);
+    }
+
+    /// A snapshot of everything that affects the future, without the append-only logs, the
+    /// command log (the timeline owns both) and the derived router (rebuilt on demand).
+    ///
+    /// Field classification (every `World` field; keep it complete when adding fields):
+    /// - snapshotted: tick, slots (vehicles incl. routes, retry schedule, blocked ticks,
+    ///   reroute flags), free, lanes, credit, rr_next, origin_buffers, exit_count,
+    ///   next_trip_id, spawned, completed, removed, removed_gridlock, completed_tt_sum,
+    ///   demand_seed, behavior_rng, free_flow, smoothed, cost_keys, exit_time_sum,
+    ///   exit_time_n, cost_epoch, closed, priority_queue, periodic_queue, reroute_stats;
+    /// - shared (`Arc`, not counted): network, demand;
+    /// - logs (lengths only): generated, completed_log, removed_log;
+    /// - owned by the timeline: command_log;
+    /// - derived (empty in the snapshot): router.
+    pub fn snapshot(&self) -> Snapshot {
+        let state = World {
+            network: Arc::clone(&self.network),
+            tick: self.tick,
+            slots: self.slots.clone(),
+            free: self.free.clone(),
+            lanes: self.lanes.clone(),
+            credit: self.credit.clone(),
+            rr_next: self.rr_next.clone(),
+            origin_buffers: self.origin_buffers.clone(),
+            exit_count: self.exit_count.clone(),
+            next_trip_id: self.next_trip_id,
+            spawned: self.spawned,
+            completed: self.completed,
+            removed: self.removed,
+            removed_gridlock: self.removed_gridlock,
+            removed_log: Vec::new(),
+            completed_log: Vec::new(),
+            completed_tt_sum: self.completed_tt_sum,
+            demand: Arc::clone(&self.demand),
+            demand_seed: self.demand_seed,
+            behavior_rng: self.behavior_rng.clone(),
+            generated: Vec::new(),
+            free_flow: self.free_flow.clone(),
+            smoothed: self.smoothed.clone(),
+            cost_keys: self.cost_keys.clone(),
+            exit_time_sum: self.exit_time_sum.clone(),
+            exit_time_n: self.exit_time_n.clone(),
+            cost_epoch: self.cost_epoch,
+            closed: self.closed.clone(),
+            command_log: Vec::new(),
+            priority_queue: self.priority_queue.clone(),
+            periodic_queue: self.periodic_queue.clone(),
+            reroute_stats: self.reroute_stats,
+            router: RouterCache::default(),
+        };
+        let lens = LogLens { generated: self.generated.len(), completed: self.completed_log.len(), removed: self.removed_log.len() };
+        Snapshot::new(state, lens)
+    }
+
+    /// Owned bytes of the snapshotted fields (capacity × element size, routes included).
+    pub(crate) fn state_bytes(&self) -> usize {
+        fn vec<T>(v: &Vec<T>) -> usize {
+            v.capacity() * size_of::<T>()
+        }
+        fn deque<T>(v: &VecDeque<T>) -> usize {
+            v.capacity() * size_of::<T>()
+        }
+        let routes: usize = self.slots.iter().flatten().map(|v| vec(&v.route)).sum();
+        let lanes: usize = self.lanes.iter().map(|l| vec(l) + l.iter().map(deque).sum::<usize>()).sum();
+        let credit: usize = self.credit.iter().map(vec).sum::<usize>() + vec(&self.credit);
+        size_of::<World>()
+            + vec(&self.slots)
+            + routes
+            + vec(&self.free)
+            + vec(&self.lanes)
+            + lanes
+            + credit
+            + vec(&self.rr_next)
+            + vec(&self.origin_buffers)
+            + self.origin_buffers.iter().map(deque).sum::<usize>()
+            + vec(&self.exit_count)
+            + vec(&self.free_flow)
+            + vec(&self.smoothed)
+            + vec(&self.cost_keys)
+            + vec(&self.exit_time_sum)
+            + vec(&self.exit_time_n)
+            + vec(&self.closed)
+            + deque(&self.priority_queue)
+            + deque(&self.periodic_queue)
+    }
+
+    /// Move the logs out (an empty set stays behind).
+    pub(crate) fn take_logs(&mut self) -> Logs {
+        Logs {
+            generated: std::mem::take(&mut self.generated),
+            completed: std::mem::take(&mut self.completed_log),
+            removed: std::mem::take(&mut self.removed_log),
+        }
+    }
+
+    /// A world restored from a snapshot's state with the given command log and logs.
+    pub(crate) fn restored(state: &World, command_log: Vec<Command>, logs: Logs) -> World {
+        let mut w = state.clone();
+        w.command_log = command_log;
+        w.generated = logs.generated;
+        w.completed_log = logs.completed;
+        w.removed_log = logs.removed;
+        w.router = RouterCache::default();
+        w
+    }
+
+    pub(crate) fn log_lens(&self) -> LogLens {
+        LogLens { generated: self.generated.len(), completed: self.completed_log.len(), removed: self.removed_log.len() }
     }
 
     /// Every accepted command, in acceptance order (applied or pending).
