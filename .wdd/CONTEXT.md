@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-08: timeline-003 complete (Red 3, Gold 2). Next: timeline-004 (lockstep A/B, split view, comparison panel).
+2026-10-09: timeline-004 complete (Red approved by user after r3, Gold 3). Next: timeline-005 (integration ward, then the epic gate).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -22,17 +22,18 @@
 - **Epic timeline: active.** Spec `.wdd/epics/timeline.md` (T1–T5, measured basis).
   - **timeline-001 complete**: `Timeline` with snapshots (353 KB every 120 ticks, budget eviction); seek = restore + replay; edits below the head cut the future; `Arc` network/demand.
   - **timeline-002 complete**: `Timeline::branch` and `World::window_metrics` (cohort; incomplete). Gold fuzz found no divergence.
-  - **timeline-003 complete**:
-    - wasm `Sim` wraps a `Timeline` (48 MiB) and adds `seek`, `branch`, `timeline_info`, `window_metrics`, `forget_frames`;
-    - the host holds scenarios A/B with seek, branch, viewScenario and discardBranch; jumps pause and reset clock, perf and inspection; A is never edited in its past (the UI branches instead); a dropped B is freed;
-    - UI: `TimelineBar` (bottom row with a slider), `ScenarioPanel` (top band, centred), inline "Replace the branch?" confirmation; running is requested during the warm-up;
-    - seek takes 2 ms and branch 6 ms (wasm, at a full window).
-    - MINORs for timeline-004:
-      - the scenario panel covers the control panel below ~1,150 px width;
-      - Cancel/Replace leave focus on body;
-      - replacing B peaks at A + 2 Bs;
-      - (002) branch clones all snapshots;
-      - throttle `window_metrics`.
+  - **timeline-003 complete**: wasm `Sim` wraps a `Timeline` (seek/branch/info/window_metrics/forget_frames/free); host scenarios A/B; `TimelineBar`, `ScenarioPanel` and an inline replace confirmation; A is never edited in its past (the UI branches instead).
+  - **timeline-004 complete**:
+    - host `compare` runs lockstep (strict A/B frame pairs, shared window from the branch tick, comparison messages ≤ 2/s);
+    - split view: two canvases with one camera (B's context exists only while comparing), `ComparisonPanel` (Δ by sign plus ▲/▼, incomplete always shown);
+    - interventions, the view switch and vehicle picks are off while comparing.
+    - Lockstep costs ×1.7–1.9 per tick; render unchanged.
+    - Known issues:
+      - no refit on resize;
+      - the road panel can cover B's top-right corner (the inset is pinned by a frozen test);
+      - B's frame buffer is never reused;
+      - "Viewing B" stays in the panel while comparing;
+      - district labels are clipped at the halves' edges.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -79,13 +80,12 @@
   - **10,000 on the network: missed.** River City peaks at 7,615 (×6, 3 h), limited by intersection/entry throughput.
   - **~60 FPS: missed on SwiftShader (20 FPS), met on the hardware GPU (120 FPS).**
   - Tick mean is 0.06 ms at ~1.7k and 0.25 ms at ~5.7k on the network.
-- city-005 MINORs:
-  - The legend covers the `unserved` value at viewports narrower than ~1,255 px.
-  - A re-init resets only `executedTicks`, not the backlog or rate window (the app inits once).
-- Open MINORs from city-004:
-  - The hover halo (0.72 grey) is close in lightness to a fully congested road core (it still reads by its +2 px width).
-  - The hatch is dropped on closed links shorter than 14 px on screen (zoom < 0.07); the barriers remain.
-  - The e2e harness has no browser test for "close while paused → shows on resume" (Vitest G4b covers it; checked manually by Gold).
+- Polish backlog (city MINORs):
+  - the legend covers `unserved` below ~1,255 px;
+  - re-init resets only `executedTicks`;
+  - the hover halo is close in lightness to congestion;
+  - the hatch is dropped below zoom 0.07;
+  - no e2e test for close-while-paused.
 - `World::metrics()` dominates per-frame cost at high demand (make it incremental or sample it).
 - Browser `performance.now()` is coarse (0.1 ms). After a wasm trap the host halts, and recovery needs a new worker.
 

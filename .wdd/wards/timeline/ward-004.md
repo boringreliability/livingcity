@@ -3,12 +3,12 @@ ward: 4
 revision: null
 name: "Two scenarios side by side"
 epic: "timeline"
-status: "approved"
+status: "complete"
 dependencies: ["timeline-003"]
 layer: "fullstack"
 estimated_tests: 18
 created: "2026-10-08"
-completed: null
+completed: "2026-10-09"
 ---
 # Ward timeline-004: Two scenarios side by side
 
