@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-08: **epic city human-approved** ("ja" at the epic gate). Next: plan epic `timeline`.
+2026-10-08: timeline-001 complete (Red 3, Gold 1). Next: timeline-002 (branch + window metrics).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -11,12 +11,23 @@
   - `web/`: worker host + `SimClock`, WebGL2 renderer, React UI, Playwright e2e.
   - Tests: Rust 85, Vitest 45, Playwright 17. Review logs are in `.wdd/reviews/`.
 - **Epic city: complete, human-approved 2026-10-08.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
-  - **city-001 complete**: per-link `sat_flow_per_lane`; gridlock relief (reroute at 60 s blocked, removal at 10 min → `removed_gridlock` / `unserved`); `EXTENDED_METRIC_NAMES`. Red 4 rounds (auto), Gold 2.
-  - **city-002 complete**: `cities::river_city` (Main / North / Old Bridge, 22 zones, calibrated demand), the app defaults to River City (`?city=three_bridges`). Red 3, Gold 1. See `.wdd/memory/decisions/river-city-calibration.md`.
-  - **city-003 complete**: inspect/follow vehicles, road stats; `tracked`/`linkDetail` omitted until first used; extrapolation anchor restarts on new tick/resume/speed change. Red 3, Gold 4.
-  - **city-004 complete**: miniature-city look (`render/cities/` decor, `FIT_INSETS` 120/24/120/24 symmetric, 2D link texture, occupancy congestion, hatch/bars/decks passes, compact `Legend`). Red 3, Gold 3.
-  - **city-005 complete**: 900 s warm-up (init `warmupS`; chunked ≤ 32 ticks/40 ms, commands deferred), `perf.ts` + `PerfStats`, DiagnosticsPanel (`D`), unserved metric, `?demand=` stress, perf harness `e2e:perf` → `docs/performance.md`. Red 4 (user chose r4; C1 spec amendment accepted), Gold 2. Core `review1` "fix G4" superseded by city.e2e test 15 (user decision).
+  - Wards 001–005 (details: `.wdd/wards/city/`, snapshot `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`):
+    - per-link sat flow and gridlock relief;
+    - River City (3 bridges, 22 zones, calibrated);
+    - inspect and follow;
+    - the miniature look (symmetric `FIT_INSETS`);
+    - a 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, and the perf report in `docs/performance.md`.
+    - Core `review1` "fix G4" was superseded by city.e2e test 15 (user decision).
   - Tests now: Rust 134 (release), Vitest 80, Playwright 46 + 1 skipped (+3 @perf).
+- **Epic timeline: active.** Spec `.wdd/epics/timeline.md` (T1–T5, measured basis).
+  - **timeline-001 complete:**
+    - `sim_core::timeline::{Timeline, Snapshot, WindowInfo, TimelineError}`;
+    - `World` holds `Arc<Network>` / `Arc<DemandModel>`;
+    - a snapshot holds state without logs, command log or router (353 KB on River City), taken every 120 ticks;
+    - the budget evicts the oldest snapshots; seek = newest snapshot ≤ t + replay; editing below the head cuts the future (commands *at* the position stay).
+    - Probe: a 48 MiB budget gives 2.35 sim h; seek median 1.7 ms.
+    - Gold fuzz: 36k checks, no divergence.
+    - MINORs carried to timeline-002: `log_lens` is dead (tautological debug_assert); the field classification sits on `World::snapshot`; seek copies the head-log prefix, O(trips); the `head_logs` doc should state "None ⇒ position == head".
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.

@@ -18,7 +18,7 @@ Out of scope (brief): more than two scenarios, a general branching editor, persi
 ## Wards
 | Ward | Name | Status |
 |------|------|--------|
-| timeline-001 | Snapshots and seek in sim-core (budgeted snapshot store, restore ≡ uninterrupted) | planned |
+| timeline-001 | Snapshots and seek in sim-core (budgeted snapshot store, restore ≡ uninterrupted) | complete |
 | timeline-002 | Branch and window metrics in sim-core (independent scenario B, identical demand, incomplete trips) | planned |
 | timeline-003 | Timeline in the worker and UI (seek / scrub, replay window and memory budget shown, branch on a past intervention) | planned |
 | timeline-004 | Two scenarios side by side (lockstep A/B, split view, linked cameras, comparison metrics) | planned |

@@ -3,12 +3,12 @@ ward: 1
 revision: null
 name: "Snapshots and seek in sim-core"
 epic: "timeline"
-status: "approved"
+status: "complete"
 dependencies: []
 layer: "rust"
 estimated_tests: 18
 created: "2026-10-08"
-completed: null
+completed: "2026-10-08"
 ---
 # Ward timeline-001: Snapshots and seek in sim-core
 
