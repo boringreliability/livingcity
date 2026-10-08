@@ -262,8 +262,7 @@ test('picking_per_side', async ({ page }) => {
   await expect(selected).toContainText('(A)');
   await expect(selected).toContainText(/state\s*open/i);
   // vehicles are not picked while comparing, even zoomed in far enough to pick them in single view
-  const a = (await page.locator('canvas.city').first().boundingBox())!;
-  await zoomInAt(page, a.x + a.width / 2, a.y + a.height / 2, 1.5);
+  await zoomInAt(page, pa![0], pa![1], 1.5); // at A's central bridge, where the traffic is
   const centres = await page.evaluate(() => {
     const h = window.__livingcity!;
     const out: [number, number][] = [];
@@ -297,6 +296,7 @@ test('interventions_disabled_while_comparing', async ({ page }) => {
   await expect(action).toHaveAttribute('title', 'Exit comparison to change roads');
   // the B key does nothing: no confirmation, no pending cue, no change after running
   const before = await snap(page);
+  expect(before.scenario).toBe('B'); // the scenario viewed before entering (B) is still reported
   await blur(page);
   await page.keyboard.press('b');
   await expect(page.getByRole('button', { name: 'Replace the branch' })).toHaveCount(0);
@@ -338,7 +338,8 @@ test('exit_compare_returns_to_single_view', async ({ page }) => {
     if (k % 2 === 1) {
       const lostB = await page.evaluate(() => {
         const c = (window as unknown as { __b?: HTMLCanvasElement | null }).__b;
-        return c ? c.getContext('webgl2')?.isContextLost() ?? true : null;
+        const gl = c ? c.getContext('webgl2') : null;
+        return gl ? gl.isContextLost() : null;
       });
       expect(lostB, `toggle ${k}: B's context was released`).toBe(true);
     }

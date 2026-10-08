@@ -97,6 +97,7 @@ It also clears the timeline-003 MINORs that touch the same code.
   - `linkScreenPointB(link, t)`: like `linkScreenPoint`, but in page coordinates of the B canvas (null when not comparing).
 
 ## Specification
+- **Mode flips after layout.** `snapshot().compare` changes only after the canvases are laid out and the camera is refitted for the new mode, so reads right after the flip see the new layout.
 - **Aligning on entry.** Let `t` = the viewed scenario's position. Aligning happens synchronously inside the `compare` message: a seek, or a forward step of at most the distance between the heads. Right after it, the host posts the first frame pair and a comparison at once.
   - The other scenario seeks to `t` if `t` is in its window.
   - If `t` is beyond its head, it steps forward to `t`, unpaced.
@@ -127,7 +128,7 @@ It also clears the timeline-003 MINORs that touch the same code.
 | 12 | `comparison_matches_host_numbers` (e2e) | right after entering, an undefined mean shows "—" (with a "—" Δ). Past branch + 700, both means are defined. Generated / Completed / Incomplete equal `comparison()`, and their Δ text is exact ("+n ▲" / "−n ▼" / "0"). Unserved = 4 + 5. Mean and p95 cells are exactly A m:ss, B m:ss and the time Δ. The sim-time and since lines match |
 | 13 | `matching_sim_time_and_scrub` (e2e) | at 20×, `sides.a.tick === sides.b.tick` in 10 samples (pairs are committed together), and the panel's sim time is the shared tick. ← on the slider moves both sides by 120, and the panel follows |
 | 14 | `linked_cameras` (e2e) | a wheel zoom anchored at a point on the right half keeps that point (±2 px). A drag on the right half pans B's points by exactly the drag. `drawnCameras.a` equals `drawnCameras.b` |
-| 15 | `picking_per_side` (e2e) | the closed central bridge picked on the right gives side B, the bridge link, and a road panel with "(B)" and "state closed". On the left it gives "(A)" and "state open". Zoomed to ≥ 1.5 px/m, real vehicle centres pick no vehicle, and a click opens no vehicle panel |
+| 15 | `picking_per_side` (e2e) | the closed central bridge picked on the right gives side B, the bridge link, and a road panel with "(B)" and "state closed". On the left it gives "(A)" and "state open". Zoomed to ≥ 1.5 px/m at A's central bridge, real vehicle centres pick no vehicle, and a click opens no vehicle panel |
 | 16 | `interventions_disabled_while_comparing` (e2e) | the bridge button and the road panel's Close/Reopen are disabled with the title. The B key gives no confirmation and no pending cue; after running, the closed sets and the scenario are unchanged and there is no alert |
 | 17 | `exit_compare_returns_to_single_view` (e2e) | exiting gives one full-width canvas with the B canvas **removed**, no comparison region, the strip and legend back, and the camera refitted to the single-view fit. On each of 9 exits, the removed B canvas's context is lost (released). After 18 toggles, A's context is not lost, it keeps rendering, there is exactly one canvas, and the console shows no context-loss messages. Discarding while comparing returns to the single view |
 | 18 | `layout_and_focus_fixes` (e2e) | at 1024×768 with B present, the scenario panel covers no control-panel control. The confirmation focuses its primary button on opening. Both Cancel and Replace return focus to the slider |

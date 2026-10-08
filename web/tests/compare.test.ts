@@ -315,11 +315,13 @@ describe('timeline-004 host: lockstep comparison', () => {
 
   test('9 view_switch_and_vehicle_picks_refused_in_compare', () => {
     const { x } = scenario();
-    // tracked in single view …
+    // tracked (and a road inspected) in single view …
     const f0 = x.frames().at(-1)!;
     x.send({ type: 'inspectVehicle', frameTick: f0.tick, record: 0, seq: 1 });
+    x.send({ type: 'inspectLink', link: 0 });
     x.iterate(2);
     expect(x.frames().at(-1)!.tracked).not.toBeNull();
+    expect(x.frames().at(-1)!.linkDetail).not.toBeNull();
     // … and no longer once comparing
     x.send({ type: 'compare', on: true });
     x.iterate(2);
@@ -343,7 +345,6 @@ describe('timeline-004 host: lockstep comparison', () => {
   test('10 replace_order_and_compare_end', () => {
     const { x } = scenario();
     x.send({ type: 'compare', on: true });
-    const before = x.calls.length;
     // out of A's window: refused before anything is built or freed; compare stays on
     x.send({ type: 'viewScenario', scenario: 0 }); // refused in compare (test 9): stay on B
     x.send({ type: 'compare', on: false });
@@ -367,6 +368,5 @@ describe('timeline-004 host: lockstep comparison', () => {
     const f = x.frames().at(-1)!;
     expect(f.timeline.compare).toBe(0);
     expect(f.timeline.branchTick).toBe(700);
-    expect(before).toBeGreaterThan(0);
   });
 });
