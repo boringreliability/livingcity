@@ -95,6 +95,11 @@ impl Sim {
         ok
     }
 
+    /// Forget the retained record → trip tables (picks from before a view switch resolve nothing).
+    pub fn forget_frames(&mut self) {
+        self.frame_trips.clear();
+    }
+
     /// `[window_start, head_tick, position_tick, snapshot_bytes, budget_bytes, snapshots]`.
     pub fn timeline_info(&self) -> Vec<f64> {
         let w = self.timeline.window();

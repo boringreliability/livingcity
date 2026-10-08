@@ -106,7 +106,9 @@ export function App() {
   const pendingSeekRef = useRef<number | null>(null);
   const [pendingSeek, setPendingSeek] = useState<number | null>(null);
   /** An intervention in A's past that would replace B, waiting for the user's confirmation. */
-  const [confirmReplace, setConfirmReplace] = useState<Intervention[] | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState<{ then: Intervention[]; at: number; onBranched?: () => void } | null>(null);
+  const confirmRef = useRef(confirmReplace);
+  confirmRef.current = confirmReplace;
   const computeRenderStats = (): RenderStats => {
     const i = renderIntervals.current.stats();
     const d = drawTimes.current.stats();
@@ -199,6 +201,9 @@ export function App() {
       warmupS: WARMUP_SIM_S,
       demandScale: DEMAND,
     });
+    // requested at once (the host keeps them through the warm-up): the first frame already runs
+    c.setSpeed(speedRef.current);
+    c.setRunning(true);
     client.current = c;
     c.onError((m) => {
       setError(m);
@@ -371,11 +376,21 @@ export function App() {
   /** The viewed scenario's position as the user last requested it (a seek may be on its way). */
   const currentPosition = useCallback(() => pendingSeekRef.current ?? frameRef.current?.timeline.positionTick ?? 0, []);
 
-  const requestSeek = useCallback((tick: number) => {
-    pendingSeekRef.current = tick;
-    setPendingSeek(tick);
-    client.current?.seek(tick);
+  /** Every jump (seek, view switch, discard, branch) drops what referred to the old position. */
+  const forgetPosition = useCallback(() => {
+    setMainPending(null);
+    setConfirmReplace(null);
   }, []);
+
+  const requestSeek = useCallback(
+    (tick: number) => {
+      forgetPosition();
+      pendingSeekRef.current = tick;
+      setPendingSeek(tick);
+      client.current?.seek(tick);
+    },
+    [forgetPosition],
+  );
 
   /**
    * Close/open roads in the viewed scenario (contract T3): at the head, or anywhere in B, an
@@ -383,20 +398,25 @@ export function App() {
    * Returns whether the commands went to the viewed scenario directly.
    */
   const intervene = useCallback(
-    (then: Intervention[]): boolean => {
+    (then: Intervention[], onApplied?: () => void) => {
       const f = frameRef.current;
       const c = client.current;
-      if (!f || !c) return false;
+      if (!f || !c) return;
       const pos = currentPosition();
       if (f.scenario === 0 && pos < f.timeline.headTick) {
-        if (f.timeline.branchTick >= 0) setConfirmReplace(then);
-        else c.branch(pos, then);
-        return false;
+        if (f.timeline.branchTick >= 0) {
+          setConfirmReplace({ then, at: pos, ...(onApplied ? { onBranched: onApplied } : {}) });
+        } else {
+          forgetPosition();
+          c.branch(pos, then);
+          onApplied?.();
+        }
+        return;
       }
       for (const t of then) (t.kind === 'close' ? c.closeLink(t.link) : c.openLink(t.link));
-      return true;
+      onApplied?.();
     },
-    [currentPosition],
+    [currentPosition, forgetPosition],
   );
 
   const toggleMainBridge = useCallback(() => {
@@ -405,8 +425,11 @@ export function App() {
     if (!r || !client.current) return;
     const links = r.landmarks.central_bridge;
     const closedNow = mainPending ?? !!(f && links.every((l) => f.closed.includes(l)));
-    const direct = intervene(links.map((link) => ({ kind: closedNow ? 'open' : 'close', link })));
-    if (direct) setMainPending(!closedNow);
+    // the pending cue also covers a branch: B shows "(pending)" until it runs the command
+    intervene(
+      links.map((link) => ({ kind: closedNow ? 'open' : 'close', link })),
+      () => setMainPending(!closedNow),
+    );
   }, [mainPending, intervene]);
 
   const goneRef = useRef<TrackedGone | null>(null);
@@ -728,20 +751,28 @@ export function App() {
           onView={(sc) => {
             pendingSeekRef.current = null;
             setPendingSeek(null);
+            forgetPosition();
             client.current?.viewScenario(sc);
           }}
           onDiscard={() => {
             pendingSeekRef.current = null;
             setPendingSeek(null);
+            forgetPosition();
             client.current?.discardBranch();
+            // keep keyboard users in place: the discard button disappears
+            document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
           }}
         />
       )}
       {confirmReplace && (
         <ConfirmReplace
           onReplace={() => {
-            client.current?.branch(currentPosition(), confirmReplace);
+            const c = confirmRef.current;
+            if (!c) return;
             setConfirmReplace(null);
+            setMainPending(null);
+            client.current?.branch(c.at, c.then); // the position the user intervened at
+            c.onBranched?.();
           }}
           onCancel={() => setConfirmReplace(null)}
         />

@@ -330,7 +330,7 @@ button.bridge.closed {
 }
 
 .error {
-  top: 16px;
+  top: 64px;
   left: 50%;
   transform: translateX(-50%);
   max-width: 420px;
@@ -413,6 +413,15 @@ button.bridge.closed {
   box-shadow: 0 0 0 1px #000;
 }
 
+.timeline-head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 0;
+  border-right: 3px double #f4f4f4;
+}
+
 .timeline-branch {
   position: absolute;
   top: 0;
@@ -424,18 +433,32 @@ button.bridge.closed {
   text-shadow: 0 0 2px #000, 0 0 2px #000;
 }
 
+.timeline-branch.to-left {
+  transform: translateX(calc(-100% + 0.45em));
+}
+
 .timeline-memory {
   white-space: nowrap;
   color: var(--muted);
 }
 
-/* Scenarios (once B exists): top right; the viewed one is named in text inside a pattern frame. */
+/* Scenarios (once B exists): one row in the top band, centred: clear of the control panel (left),
+   the road/vehicle panels (right) and the city (below the band). The viewed one is named in text
+   inside a pattern frame. */
 .scenarios {
   top: 16px;
-  right: 16px;
-  display: grid;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
   gap: 6px;
-  width: 250px;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.scenarios .row {
+  display: flex;
+  gap: 4px;
 }
 
 .scenario-label {

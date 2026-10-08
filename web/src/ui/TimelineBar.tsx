@@ -3,7 +3,7 @@ import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { DT, type TimelineStatus } from '../sim/protocol';
 
 /** One step of the arrow keys and the ±1 min buttons: 1 sim minute. */
-export const STEP_TICKS = 120;
+const STEP_TICKS = 120;
 /** While dragging, at most one seek per this many ms (plus a final one on release). */
 const DRAG_SEEK_MS = 100;
 
@@ -79,6 +79,12 @@ export function TimelineBar({ timeline, position, onSeek }: Props) {
     flush();
     drag.current = null;
   };
+  /** A lost release (cancel, capture lost) ends the drag without a further seek. */
+  const endDrag = () => {
+    const d = drag.current;
+    if (d?.timer != null) window.clearTimeout(d.timer);
+    drag.current = null;
+  };
   useEffect(() => () => {
     if (drag.current?.timer) window.clearTimeout(drag.current.timer);
   }, []);
@@ -118,11 +124,18 @@ export function TimelineBar({ timeline, position, onSeek }: Props) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
       >
         <div className="timeline-retained" />
+        <div className="timeline-head" title="Head: the newest simulated tick" />
         <div className="timeline-playhead" style={{ left: `${frac(position) * 100}%` }} />
         {branchTick >= lo && branchTick <= hi && (
-          <div className="timeline-branch" style={{ left: `${frac(branchTick) * 100}%` }}>
+          // the label points away from the near edge, so it stays inside the track
+          <div
+            className={`timeline-branch ${frac(branchTick) > 0.6 ? 'to-left' : ''}`}
+            style={{ left: `${frac(branchTick) * 100}%` }}
+          >
             <span aria-hidden="true">◆</span> branch {simClock(branchTick)}
           </div>
         )}

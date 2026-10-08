@@ -57,6 +57,9 @@ export interface SimLike {
   seek?(tick: number): boolean;
   timeline_info?(): ArrayLike<number>;
   branch?(at: number): SimLike;
+  forget_frames?(): void;
+  /** wasm-bindgen's explicit release (a dropped scenario must not wait for GC: 48 MiB each). */
+  free?(): void;
 }
 
 export interface HostDeps {
@@ -151,6 +154,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     tickWindow = new TickWindow();
     sinceFrameMs = 0;
     sinceFrameTicks = 0;
+    for (const old of scenarios) old.free?.();
+    scenarios = [];
     try {
       sim = deps.createSim(demandSeed, behaviorSeed, city, demandScale);
     } catch (e) {
@@ -299,6 +304,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       error(`branch outside the replay window: tick ${fromTick} not in ${st.windowStartTick}…${st.headTick}`);
       return;
     }
+    scenarios[1]?.free?.(); // the replaced B
     scenarios = [a, b];
     viewed = 1;
     sim = b;
@@ -318,12 +324,14 @@ export function createSimHost(deps: HostDeps): SimHost {
     clock.setRunning(false);
     viewed = scenario;
     sim = target;
+    target.forget_frames?.(); // picks from the other scenario's frames must not resolve here
     afterJump(target);
   };
 
   const discardBranch = () => {
     if (!ready('discardBranch') || scenarios.length < 2) return;
     clock.setRunning(false);
+    scenarios[1]!.free?.();
     scenarios = [scenarios[0]!];
     viewed = 0;
     branchTick = -1;
