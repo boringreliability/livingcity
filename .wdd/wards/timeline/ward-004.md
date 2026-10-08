@@ -3,7 +3,7 @@ ward: 4
 revision: null
 name: "Two scenarios side by side"
 epic: "timeline"
-status: "red"
+status: "approved"
 dependencies: ["timeline-003"]
 layer: "fullstack"
 estimated_tests: 18
