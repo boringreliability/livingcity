@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-08: timeline-002 complete (Red 4 auto, Gold 1). Next: timeline-003 (worker + timeline UI).
+2026-10-08: timeline-003 complete (Red 3, Gold 2). Next: timeline-004 (lockstep A/B, split view, comparison panel).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -20,13 +20,19 @@
     - Core `review1` "fix G4" was superseded by city.e2e test 15 (user decision).
   - Tests now: Rust 134 (release), Vitest 80, Playwright 46 + 1 skipped (+3 @perf).
 - **Epic timeline: active.** Spec `.wdd/epics/timeline.md` (T1–T5, measured basis).
-  - **timeline-001 complete**: `Timeline` (snapshots without logs, commands or router, 353 KB every 120 ticks; budget eviction; seek = newest snapshot ≤ t + replay, 1.7 ms; editing below the head cuts the future); `World` holds `Arc` network/demand.
-  - **timeline-002 complete:**
-    - `Timeline::branch(at, budget)` (`&self`; commands < at; logs and snapshots as of at);
-    - `World::window_metrics(from)` (cohort of demand trips created ≥ from: generated / completed / removed / incomplete / mean / p95);
-    - probe: branch median 4 ms; at +20 min with the main bridge closed, B has 2,039 incomplete vs A's 1,741;
-    - Gold fuzz: 173k timeline checks and 866k metric checks, no divergence.
-    - MINORs for timeline-003/004: branch clones all snapshots < at before evicting (10–13 ms when B's budget < A's; clone only the fitting suffix or `Arc<Snapshot>`); `window_metrics` takes ≈ 1.7 ms at 3 h, so throttle it in the UI.
+  - **timeline-001 complete**: `Timeline` with snapshots (353 KB every 120 ticks, budget eviction); seek = restore + replay; edits below the head cut the future; `Arc` network/demand.
+  - **timeline-002 complete**: `Timeline::branch` and `World::window_metrics` (cohort; incomplete). Gold fuzz found no divergence.
+  - **timeline-003 complete**:
+    - wasm `Sim` wraps a `Timeline` (48 MiB) and adds `seek`, `branch`, `timeline_info`, `window_metrics`, `forget_frames`;
+    - the host holds scenarios A/B with seek, branch, viewScenario and discardBranch; jumps pause and reset clock, perf and inspection; A is never edited in its past (the UI branches instead); a dropped B is freed;
+    - UI: `TimelineBar` (bottom row with a slider), `ScenarioPanel` (top band, centred), inline "Replace the branch?" confirmation; running is requested during the warm-up;
+    - seek takes 2 ms and branch 6 ms (wasm, at a full window).
+    - MINORs for timeline-004:
+      - the scenario panel covers the control panel below ~1,150 px width;
+      - Cancel/Replace leave focus on body;
+      - replacing B peaks at A + 2 Bs;
+      - (002) branch clones all snapshots;
+      - throttle `window_metrics`.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.

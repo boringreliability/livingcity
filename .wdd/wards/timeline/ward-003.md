@@ -3,12 +3,12 @@ ward: 3
 revision: null
 name: "Timeline in the worker and UI"
 epic: "timeline"
-status: "approved"
+status: "complete"
 dependencies: ["timeline-002"]
 layer: "fullstack"
 estimated_tests: 20
 created: "2026-10-08"
-completed: null
+completed: "2026-10-08"
 ---
 # Ward timeline-003: Timeline in the worker and UI
 
@@ -127,7 +127,7 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
   - `seek {tick}` and `command` apply to the **viewed** scenario instead of carrying a `scenario` field.
   - `viewScenario` and `branch.then` are new: `then` applies the triggering intervention to B atomically.
 - **Seek runs synchronously.** It replays at most 119 ticks (about 5 ms in wasm), so the bounded batches T3 asks for for long resimulation are unnecessary.
-- **Memory.** Each scenario has its own 48 MiB budget, at most 96 MiB in total. The bar shows the viewed scenario's memory and says "per scenario".
+- **Memory.** Each scenario has its own 48 MiB budget, so up to 96 MiB in steady state. Replacing B briefly holds A plus two Bs: the new B is built before the old one is freed. The bar shows the viewed scenario's memory and says "per scenario".
 - **`Sim.window_metrics`** is added here, with a layout test (test 20); its consumer is timeline-004's comparison panel.
 
 ## Must NOT
