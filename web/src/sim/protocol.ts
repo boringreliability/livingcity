@@ -54,7 +54,26 @@ export type ToWorker =
   /** Track the vehicle at `record` of the frame encoded at `frameTick` (resolved in the worker). */
   | { type: 'inspectVehicle'; frameTick: number; record: number; seq?: number }
   | { type: 'inspectVehicle'; clear: true; seq?: number }
-  | { type: 'inspectLink'; link: number | null };
+  | { type: 'inspectLink'; link: number | null }
+  /** Restore + replay the viewed scenario to `tick` (within its window); pauses (ward timeline-003). */
+  | { type: 'seek'; tick: number }
+  /** Create (or replace) scenario B from A at `fromTick`, apply `then` to B, and view B. */
+  | { type: 'branch'; fromTick: number; then: { kind: 'close' | 'open'; link: number }[] }
+  | { type: 'viewScenario'; scenario: 0 | 1 }
+  | { type: 'discardBranch' };
+
+/** Replay memory per scenario (snapshot budget); mirrors sim-wasm. */
+export const REPLAY_BUDGET_BYTES = 48 * 1024 * 1024;
+
+/** The viewed scenario's replay window (numbers only; `branchTick` −1 without a branch). */
+export interface TimelineStatus {
+  windowStartTick: number;
+  headTick: number;
+  positionTick: number;
+  branchTick: number;
+  snapshotBytes: number;
+  budgetBytes: number;
+}
 
 export interface NetworkArrays {
   /** x0, y0, x1, y1, … in world metres. */
@@ -142,6 +161,9 @@ export interface FrameMessage {
   metrics: Float64Array;
   clock: ClockStatus;
   perf: PerfStats;
+  /** The viewed scenario: 0 = A (original), 1 = B (branch). */
+  scenario: 0 | 1;
+  timeline: TimelineStatus;
   /**
    * The inspected vehicle, its one-time `gone` notice, or null. At runtime the key is omitted
    * until the UI first sends `inspectVehicle`, so a session that never inspects keeps purely

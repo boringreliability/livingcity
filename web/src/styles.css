@@ -176,7 +176,7 @@ button.bridge.closed {
 
 .metrics {
   left: 16px;
-  bottom: 16px;
+  bottom: 50px;
   display: flex;
   gap: 18px;
 }
@@ -301,7 +301,7 @@ button.bridge.closed {
 /* Compact and wide: it fits inside the bottom inset band (FIT_INSETS.bottom), so it never covers the city. */
 .legend {
   right: 16px;
-  bottom: 16px;
+  bottom: 50px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -344,4 +344,132 @@ button.bridge.closed {
     left: 16px;
     right: auto;
   }
+}
+
+/* Replay timeline: one compact row across the bottom of the bottom inset band (ward timeline-003). */
+.timeline {
+  left: 16px;
+  right: 16px;
+  bottom: 10px;
+  height: 32px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+}
+
+.timeline-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.timeline-buttons button {
+  padding: 2px 7px;
+  font-size: 11.5px;
+}
+
+.timeline-label {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.timeline-caption {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.timeline-track {
+  position: relative;
+  flex: 1;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.timeline-track:focus-visible {
+  outline: 2px solid var(--text, #e6e6e6);
+  outline-offset: 1px;
+}
+
+/* the retained (replayable) range: a diagonal pattern, not a hue */
+.timeline-retained {
+  position: absolute;
+  inset: 3px 0;
+  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.16) 0 3px, transparent 3px 7px);
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  margin-left: -1.5px;
+  background: #f4f4f4;
+  box-shadow: 0 0 0 1px #000;
+}
+
+.timeline-branch {
+  position: absolute;
+  top: 0;
+  transform: translateX(-0.45em);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 2px #000, 0 0 2px #000;
+}
+
+.timeline-memory {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+/* Scenarios (once B exists): top right; the viewed one is named in text inside a pattern frame. */
+.scenarios {
+  top: 16px;
+  right: 16px;
+  display: grid;
+  gap: 6px;
+  width: 250px;
+}
+
+.scenario-label {
+  margin: 0;
+  padding: 3px 8px;
+  font-weight: 600;
+  border: 2px solid currentColor;
+}
+
+.viewing-b .scenario-label {
+  border-style: dashed;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 4px, transparent 4px 9px);
+}
+
+.scenarios button[aria-pressed='true'] {
+  outline: 2px solid var(--text, #e6e6e6);
+  outline-offset: -2px;
+  font-weight: 600;
+}
+
+.confirm {
+  top: 140px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 360px;
+  display: grid;
+  gap: 6px;
+}
+
+.confirm p {
+  margin: 0;
+}
+
+.confirm .hint {
+  color: var(--muted);
+  font-size: 12px;
 }

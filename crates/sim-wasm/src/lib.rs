@@ -10,14 +10,18 @@ use sim_core::frame::{
     metrics_to_extended_array, write_link_stats, write_vehicle_records, NetworkExport, EXTENDED_METRIC_NAMES,
 };
 use sim_core::params::{DT, QUEUED_SPEED};
-use sim_core::{Command, CommandKind, LinkId, TripOutcome, VehicleState, World};
+use sim_core::{Command, CommandKind, LinkId, Timeline, TripOutcome, VehicleState, World};
 
 /// Encoded frames whose record → trip tables are kept for picking (contract C4).
 const RETAINED_FRAMES: usize = 8;
 
+/// Replay memory per scenario (snapshot budget, ward timeline-003); mirrored in protocol.ts.
+const REPLAY_BUDGET_BYTES: usize = 48 * 1024 * 1024;
+
 #[wasm_bindgen]
 pub struct Sim {
-    world: World,
+    /// The scenario: its position world, snapshots and command log (sim-core T1/T2).
+    timeline: Timeline,
     frame: Vec<u32>,
     export: NetworkExport,
     link_counts: Vec<u16>,
@@ -35,7 +39,7 @@ impl Sim {
         let export = NetworkExport::new(&city.scenario.network);
         let world = World::from_scenario(city.scenario).expect("built-in cities are valid");
         Sim {
-            world,
+            timeline: Timeline::new(world, REPLAY_BUDGET_BYTES),
             frame: Vec::new(),
             export,
             link_counts: Vec::new(),
@@ -78,13 +82,71 @@ impl Sim {
     }
 
     pub fn step(&mut self, n: u32) {
-        for _ in 0..n {
-            self.world.step();
+        self.timeline.step_n(n as u64);
+    }
+
+    /// Restore + replay to `tick` within the retained window; `false` (nothing changed) outside it.
+    pub fn seek(&mut self, tick: u32) -> bool {
+        let ok = self.timeline.seek(tick as u64).is_ok();
+        if ok {
+            // picks refer to frames of the old timeline position
+            self.frame_trips.clear();
         }
+        ok
+    }
+
+    /// `[window_start, head_tick, position_tick, snapshot_bytes, budget_bytes, snapshots]`.
+    pub fn timeline_info(&self) -> Vec<f64> {
+        let w = self.timeline.window();
+        vec![
+            w.window_start as f64,
+            w.head_tick as f64,
+            w.position_tick as f64,
+            w.snapshot_bytes as f64,
+            w.budget_bytes as f64,
+            w.snapshots as f64,
+        ]
+    }
+
+    /// An independent scenario from `at` (sim-core T2): same city, own timeline and frame state.
+    pub fn branch(&self, at: u32) -> Result<Sim, JsError> {
+        let timeline = self
+            .timeline
+            .branch(at as u64, REPLAY_BUDGET_BYTES)
+            .map_err(|e| JsError::new(&format!("{e:?}")))?;
+        Ok(Sim {
+            export: NetworkExport::new(timeline.world().network()),
+            timeline,
+            frame: Vec::new(),
+            link_counts: Vec::new(),
+            link_queued: Vec::new(),
+            landmarks: self.landmarks,
+            zones: self.zones.clone(),
+            city_name: self.city_name,
+            river: self.river,
+            frame_trips: VecDeque::with_capacity(RETAINED_FRAMES),
+        })
+    }
+
+    /// `[from, to, generated, completed, removed_unreachable, removed_gridlock, incomplete,
+    /// mean_s | NaN, p95_s | NaN]` over the cohort created at or after `from` (sim-core T2).
+    pub fn window_metrics(&self, from: u32) -> Vec<f64> {
+        let m = self.timeline.world().window_metrics(from as u64);
+        vec![
+            m.from_tick as f64,
+            m.to_tick as f64,
+            m.generated as f64,
+            m.completed as f64,
+            m.removed_unreachable as f64,
+            m.removed_gridlock as f64,
+            m.incomplete as f64,
+            m.mean_travel_time_s.unwrap_or(f64::NAN),
+            m.p95_travel_time_s.unwrap_or(f64::NAN),
+        ]
     }
 
     pub fn tick(&self) -> f64 {
-        self.world.tick() as f64
+        self.timeline.world().tick() as f64
     }
 
     /// Close a link at the current tick; `false` for unknown ids.
@@ -98,15 +160,15 @@ impl Sim {
 
     fn command(&mut self, id: u32, kind: CommandKind) -> bool {
         (id as usize) < self.export.link_from.len()
-            && self.world.schedule(Command { tick: self.world.tick(), kind }).is_ok()
+            && self.timeline.schedule(Command { tick: self.timeline.world().tick(), kind }).is_ok()
     }
 
     /// Encode the vehicle records and the per-link stats (one pass each);
     /// returns the record count. `link_counts`/`link_queued` return the stats
     /// of the last encoded frame.
     pub fn encode_frame(&mut self) -> u32 {
-        write_link_stats(&self.world, &mut self.link_counts, &mut self.link_queued);
-        let count = write_vehicle_records(&self.world, &mut self.frame);
+        write_link_stats(self.timeline.world(), &mut self.link_counts, &mut self.link_queued);
+        let count = write_vehicle_records(self.timeline.world(), &mut self.frame);
         // Record → trip table of this frame (same order as the records), reusing the oldest table.
         let mut trips = if self.frame_trips.len() == RETAINED_FRAMES {
             self.frame_trips.pop_front().map(|(_, v)| v).unwrap_or_default()
@@ -114,8 +176,8 @@ impl Sim {
             Vec::new()
         };
         trips.clear();
-        self.world.for_each_on_network_trip(|t| trips.push(t));
-        let tick = self.world.tick();
+        self.timeline.world().for_each_on_network_trip(|t| trips.push(t));
+        let tick = self.timeline.world().tick();
         self.frame_trips.retain(|&(t, _)| t != tick);
         self.frame_trips.push_back((tick, trips));
         count
@@ -136,7 +198,7 @@ impl Sim {
         let header = 13;
         let not_found = || vec![0.0; header];
         let Some(trip) = as_trip_id(trip_id) else { return not_found() };
-        let Some(i) = self.world.vehicle_by_trip(trip) else { return not_found() };
+        let Some(i) = self.timeline.world().vehicle_by_trip(trip) else { return not_found() };
         let (state, link, route): (f64, f64, &[LinkId]) = match i.state {
             VehicleState::WaitingAtOrigin => (0.0, -1.0, &[]),
             VehicleState::NoRoute => (4.0, -1.0, &[]),
@@ -161,7 +223,7 @@ impl Sim {
             i.lane as f64,
             i.s,
             i.v,
-            (self.world.tick() - i.created_tick) as f64 * DT,
+            (self.timeline.world().tick() - i.created_tick) as f64 * DT,
             i.route_switches as f64,
             i.blocked_ticks as f64,
             route.len() as f64,
@@ -174,7 +236,7 @@ impl Sim {
     /// 4 unknown; `travel_time_s` is NaN unless completed.
     pub fn trip_outcome(&self, trip_id: f64) -> Vec<f64> {
         let Some(trip) = as_trip_id(trip_id) else { return vec![4.0, f64::NAN] };
-        match self.world.trip_outcome(trip) {
+        match self.timeline.world().trip_outcome(trip) {
             TripOutcome::Live => vec![0.0, f64::NAN],
             TripOutcome::Completed { travel_time_s } => vec![1.0, travel_time_s],
             TripOutcome::RemovedUnreachable => vec![2.0, f64::NAN],
@@ -188,8 +250,8 @@ impl Sim {
         if link as usize >= self.export.link_from.len() {
             return Vec::new();
         }
-        let l = self.world.network().link(LinkId(link));
-        let st = self.world.link_stats(LinkId(link));
+        let l = self.timeline.world().network().link(LinkId(link));
+        let st = self.timeline.world().link_stats(LinkId(link));
         vec![
             st.vehicles as f64,
             st.queued as f64,
@@ -221,7 +283,7 @@ impl Sim {
     }
 
     pub fn metrics(&self) -> Vec<f64> {
-        metrics_to_extended_array(&self.world.metrics())
+        metrics_to_extended_array(&self.timeline.world().metrics())
     }
 
     pub fn metric_names(&self) -> Vec<String> {
@@ -229,11 +291,11 @@ impl Sim {
     }
 
     pub fn closed_links(&self) -> Vec<u32> {
-        self.world.closed_links().into_iter().map(|l| l.0).collect()
+        self.timeline.world().closed_links().into_iter().map(|l| l.0).collect()
     }
 
     pub fn state_hash_hex(&self) -> String {
-        format!("{:016x}", self.world.state_hash())
+        format!("{:016x}", self.timeline.world().state_hash())
     }
 
     pub fn node_xy(&self) -> Vec<f32> {

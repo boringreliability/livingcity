@@ -18,6 +18,7 @@ import {
   type ClockStatus,
   type FrameMessage,
   type PerfStats,
+  type TimelineStatus,
   type LinkDetail,
   type ReadyMessage,
   type TrackedGone,
@@ -28,6 +29,8 @@ import { DiagnosticsPanel, type RenderStats } from './ui/DiagnosticsPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
 import { Legend } from './ui/Legend';
+import { ConfirmReplace, ScenarioPanel } from './ui/ScenarioPanel';
+import { TimelineBar } from './ui/TimelineBar';
 import { VehiclePanel } from './ui/VehiclePanel';
 import type { LivingCitySnapshot, PerfRecording } from './ui/testHook';
 import './styles.css';
@@ -50,7 +53,11 @@ interface FrameView {
   clock: ClockStatus;
   perf: PerfStats;
   frameBytes: number;
+  scenario: 0 | 1;
+  timeline: TimelineStatus;
 }
+
+type Intervention = { kind: 'close' | 'open'; link: number };
 
 /** `?demand=` for stress measurements, read once (an invalid value falls back to 1 with a warning). */
 const DEMAND = (() => {
@@ -95,6 +102,11 @@ export function App() {
   const [drawTimes] = useState(() => ({ current: new SampleWindow(RENDER_WINDOW) }));
   const recordingRef = useRef<Recording | null>(null);
   const [diagOpen, setDiagOpen] = useState(false);
+  /** The last requested seek target until a frame shows it (keys and interventions use it). */
+  const pendingSeekRef = useRef<number | null>(null);
+  const [pendingSeek, setPendingSeek] = useState<number | null>(null);
+  /** An intervention in A's past that would replace B, waiting for the user's confirmation. */
+  const [confirmReplace, setConfirmReplace] = useState<Intervention[] | null>(null);
   const computeRenderStats = (): RenderStats => {
     const i = renderIntervals.current.stats();
     const d = drawTimes.current.stats();
@@ -188,7 +200,12 @@ export function App() {
       demandScale: DEMAND,
     });
     client.current = c;
-    c.onError(setError);
+    c.onError((m) => {
+      setError(m);
+      // a refused seek never arrives: stop waiting for it
+      pendingSeekRef.current = null;
+      setPendingSeek(null);
+    });
     c.onReady((r) => {
       readyRef.current = r;
       const g = buildRoadGeometry(r.network);
@@ -252,7 +269,13 @@ export function App() {
         clock: f.clock,
         perf: f.perf,
         frameBytes,
+        scenario: f.scenario,
+        timeline: f.timeline,
       };
+      if (pendingSeekRef.current !== null && f.timeline.positionTick === pendingSeekRef.current) {
+        pendingSeekRef.current = null;
+        setPendingSeek(null);
+      }
       frameRef.current = view;
       pushLinkState();
       setFrame(view);
@@ -345,15 +368,46 @@ export function App() {
     setSpeed(s);
     client.current?.setSpeed(s);
   }, []);
+  /** The viewed scenario's position as the user last requested it (a seek may be on its way). */
+  const currentPosition = useCallback(() => pendingSeekRef.current ?? frameRef.current?.timeline.positionTick ?? 0, []);
+
+  const requestSeek = useCallback((tick: number) => {
+    pendingSeekRef.current = tick;
+    setPendingSeek(tick);
+    client.current?.seek(tick);
+  }, []);
+
+  /**
+   * Close/open roads in the viewed scenario (contract T3): at the head, or anywhere in B, an
+   * ordinary command; in A's past, a branch B from the position (after confirming if B exists).
+   * Returns whether the commands went to the viewed scenario directly.
+   */
+  const intervene = useCallback(
+    (then: Intervention[]): boolean => {
+      const f = frameRef.current;
+      const c = client.current;
+      if (!f || !c) return false;
+      const pos = currentPosition();
+      if (f.scenario === 0 && pos < f.timeline.headTick) {
+        if (f.timeline.branchTick >= 0) setConfirmReplace(then);
+        else c.branch(pos, then);
+        return false;
+      }
+      for (const t of then) (t.kind === 'close' ? c.closeLink(t.link) : c.openLink(t.link));
+      return true;
+    },
+    [currentPosition],
+  );
+
   const toggleMainBridge = useCallback(() => {
     const r = readyRef.current;
     const f = frameRef.current;
     if (!r || !client.current) return;
     const links = r.landmarks.central_bridge;
     const closedNow = mainPending ?? !!(f && links.every((l) => f.closed.includes(l)));
-    for (const l of links) (closedNow ? client.current.openLink(l) : client.current.closeLink(l));
-    setMainPending(!closedNow);
-  }, [mainPending]);
+    const direct = intervene(links.map((link) => ({ kind: closedNow ? 'open' : 'close', link })));
+    if (direct) setMainPending(!closedNow);
+  }, [mainPending, intervene]);
 
   const goneRef = useRef<TrackedGone | null>(null);
   /** Origin/destination of the last tracked vehicle, so a `gone` notice keeps its names. */
@@ -496,6 +550,11 @@ export function App() {
           frameRecords: recordsRef.current?.vehicles.count ?? 0,
           camera: { cx: camera.cx, cy: camera.cy, zoom: camera.zoom },
           demandScale: DEMAND,
+          scenario: f?.scenario === 1 ? 'B' : 'A',
+          timeline: f
+            ? { ...f.timeline }
+            : { windowStartTick: 0, headTick: 0, positionTick: 0, branchTick: -1, snapshotBytes: 0, budgetBytes: 0 },
+          branchTick: f && f.timeline.branchTick >= 0 ? f.timeline.branchTick : null,
         };
       },
       diagnostics: () => {
@@ -642,8 +701,8 @@ export function App() {
             queued={frame.linkQueued[sel.id] ?? 0}
             closed={frame.closed.includes(sel.id)}
             detail={linkDetail && linkDetail.link === sel.id ? linkDetail : null}
-            onClose={() => client.current?.closeLink(sel.id)}
-            onReopen={() => client.current?.openLink(sel.id)}
+            onClose={() => intervene([{ kind: 'close', link: sel.id }])}
+            onReopen={() => intervene([{ kind: 'open', link: sel.id }])}
           />
         )}
         {ready && (tracked || gone) && (
@@ -661,6 +720,32 @@ export function App() {
       </div>
       <MetricsStrip simTimeS={frame?.simTimeS ?? 0} metrics={frame?.metrics ?? {}} />
       <Legend />
+      {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} />}
+      {frame && frame.timeline.branchTick >= 0 && (
+        <ScenarioPanel
+          scenario={frame.scenario}
+          branchTick={frame.timeline.branchTick}
+          onView={(sc) => {
+            pendingSeekRef.current = null;
+            setPendingSeek(null);
+            client.current?.viewScenario(sc);
+          }}
+          onDiscard={() => {
+            pendingSeekRef.current = null;
+            setPendingSeek(null);
+            client.current?.discardBranch();
+          }}
+        />
+      )}
+      {confirmReplace && (
+        <ConfirmReplace
+          onReplace={() => {
+            client.current?.branch(currentPosition(), confirmReplace);
+            setConfirmReplace(null);
+          }}
+          onCancel={() => setConfirmReplace(null)}
+        />
+      )}
       {error && (
         <p role="alert" className="panel error">
           {error}

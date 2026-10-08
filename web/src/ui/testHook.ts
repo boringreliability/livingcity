@@ -1,4 +1,4 @@
-import type { Landmarks, PerfStats } from '../sim/protocol';
+import type { Landmarks, PerfStats, TimelineStatus } from '../sim/protocol';
 import type { RenderStats } from './DiagnosticsPanel';
 
 /** Read-only state exposed for end-to-end tests (`window.__livingcity`). */
@@ -25,6 +25,12 @@ export interface LivingCitySnapshot {
   camera: { cx: number; cy: number; zoom: number };
   /** The `?demand=` scale in force (1 = the normal city). */
   demandScale: number;
+  /** The viewed scenario (ward timeline-003). */
+  scenario: 'A' | 'B';
+  /** The viewed scenario's replay window, as the latest frame reports it. */
+  timeline: TimelineStatus;
+  /** The tick B was branched from, or null without a branch. */
+  branchTick: number | null;
 }
 
 export interface LivingCityDiagnostics {

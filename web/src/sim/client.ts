@@ -16,6 +16,11 @@ export interface SimClient {
   inspectVehicle(frameTick: number, record: number, seq?: number): void;
   clearInspectedVehicle(seq?: number): void;
   inspectLink(link: number | null): void;
+  /** Timeline (ward timeline-003): seek the viewed scenario, branch B from A, switch, discard B. */
+  seek(tick: number): void;
+  branch(fromTick: number, then: { kind: 'close' | 'open'; link: number }[]): void;
+  viewScenario(scenario: 0 | 1): void;
+  discardBranch(): void;
   dispose(): void;
 }
 
@@ -61,6 +66,10 @@ export function createSimClient(
       send({ type: 'inspectVehicle', frameTick, record, ...(seq === undefined ? {} : { seq }) }),
     clearInspectedVehicle: (seq) => send({ type: 'inspectVehicle', clear: true, ...(seq === undefined ? {} : { seq }) }),
     inspectLink: (link) => send({ type: 'inspectLink', link }),
+    seek: (tick) => send({ type: 'seek', tick }),
+    branch: (fromTick, then) => send({ type: 'branch', fromTick, then }),
+    viewScenario: (scenario) => send({ type: 'viewScenario', scenario }),
+    discardBranch: () => send({ type: 'discardBranch' }),
     dispose: () => worker.terminate(),
   };
 }

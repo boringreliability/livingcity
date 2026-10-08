@@ -13,6 +13,8 @@ import {
   decodeVehicleDetail,
   type CityName,
   type LinkDetail,
+  REPLAY_BUDGET_BYTES,
+  type TimelineStatus,
   type TrackedGone,
   type TrackedVehicle,
   type ToWorker,
@@ -51,6 +53,10 @@ export interface SimLike {
   trip_outcome?(tripId: number): Float64Array;
   link_detail?(link: number): Float64Array;
   link_sat_flow?(): Float32Array;
+  /** Timeline (since timeline-003); optional so older fakes keep working. */
+  seek?(tick: number): boolean;
+  timeline_info?(): ArrayLike<number>;
+  branch?(at: number): SimLike;
 }
 
 export interface HostDeps {
@@ -116,6 +122,10 @@ export function createSimHost(deps: HostDeps): SimHost {
   /** Echoed in frames so the UI can tell which of its requests a frame already reflects. */
   let inspectSeq = 0;
   let linkInspectionUsed = false;
+  /** Scenario A (index 0) and, after a branch, B (index 1); `sim` is the viewed one. */
+  let scenarios: SimLike[] = [];
+  let viewed: 0 | 1 = 0;
+  let branchTick = -1;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
   let pool: ArrayBuffer[] = [];
   // Per-tick ms over the newest 1,000 ticks, one sample per batch (perf clock). Browsers coarsen
@@ -150,6 +160,9 @@ export function createSimHost(deps: HostDeps): SimHost {
     }
     lastPost = Number.NEGATIVE_INFINITY;
     linkCount = sim.link_from().length;
+    scenarios = [sim];
+    viewed = 0;
+    branchTick = -1;
     clock.resetExecuted(sim.tick());
     const ticks = Number.isFinite(warmupS) && warmupS > 0 ? Math.round(warmupS / DT) : 0;
     if (ticks > 0) warmup = { remaining: ticks, ran: 0 };
@@ -218,8 +231,104 @@ export function createSimHost(deps: HostDeps): SimHost {
       deferred.push({ kind, link });
       return;
     }
+    if (viewed === 0 && typeof sim.timeline_info === 'function') {
+      const st = timelineStatus(sim);
+      if (st.positionTick < st.headTick) {
+        error(`scenario A cannot be edited in its past (tick ${st.positionTick} < head ${st.headTick}): branch instead`);
+        return;
+      }
+    }
     const ok = kind === 'close' ? sim.close_link(link) : sim.open_link(link);
     if (!ok) error(`unknown link ${link}`);
+  };
+
+  /** The viewed scenario's window (a sim without a timeline reports a window of its tick). */
+  const timelineStatus = (s: SimLike): TimelineStatus => {
+    if (typeof s.timeline_info !== 'function') {
+      const t = s.tick();
+      return { windowStartTick: t, headTick: t, positionTick: t, branchTick, snapshotBytes: 0, budgetBytes: REPLAY_BUDGET_BYTES };
+    }
+    const i = s.timeline_info();
+    return { windowStartTick: i[0]!, headTick: i[1]!, positionTick: i[2]!, branchTick, snapshotBytes: i[3]!, budgetBytes: i[4]! };
+  };
+
+  /** The timeline messages need a ready world (not during the warm-up). */
+  const ready = (what: string): SimLike | undefined => {
+    if (!sim || warmup) {
+      error(`${what} before the city is ready`);
+      return undefined;
+    }
+    return sim;
+  };
+
+  /** After the viewed position jumped (seek, branch, view switch): the clock, perf and
+   * inspection start afresh at the new position, and a frame shows it at once. */
+  const afterJump = (s: SimLike) => {
+    clock.resetExecuted(s.tick());
+    clock.resync();
+    tickWindow = new TickWindow();
+    sinceFrameMs = 0;
+    sinceFrameTicks = 0;
+    trackedTrip = null;
+    const t = deps.now();
+    postFrame(s, t);
+    lastPost = t;
+  };
+
+  const seek = (tick: number) => {
+    const s = ready('seek');
+    if (!s) return;
+    if (typeof s.seek !== 'function' || !Number.isInteger(tick) || tick < 0 || !s.seek(tick)) {
+      const st = timelineStatus(s);
+      error(`seek outside the replay window: tick ${tick} not in ${st.windowStartTick}…${st.headTick}`);
+      return;
+    }
+    clock.setRunning(false);
+    afterJump(s);
+  };
+
+  const branch = (fromTick: number, then: { kind: 'close' | 'open'; link: number }[]) => {
+    if (!ready('branch')) return;
+    const a = scenarios[0]!;
+    let b: SimLike;
+    try {
+      if (typeof a.branch !== 'function' || !Number.isInteger(fromTick) || fromTick < 0) throw new Error('no timeline');
+      b = a.branch(fromTick);
+    } catch {
+      const st = timelineStatus(a);
+      error(`branch outside the replay window: tick ${fromTick} not in ${st.windowStartTick}…${st.headTick}`);
+      return;
+    }
+    scenarios = [a, b];
+    viewed = 1;
+    sim = b;
+    branchTick = fromTick;
+    for (const c of then) command(c.kind, c.link);
+    clock.setRunning(false);
+    afterJump(b);
+  };
+
+  const viewScenario = (scenario: 0 | 1) => {
+    if (!ready('viewScenario')) return;
+    const target = scenarios[scenario];
+    if (!target || (scenario !== 0 && scenario !== 1)) {
+      error(`no scenario ${String(scenario)}`);
+      return;
+    }
+    clock.setRunning(false);
+    viewed = scenario;
+    sim = target;
+    afterJump(target);
+  };
+
+  const discardBranch = () => {
+    if (!ready('discardBranch') || scenarios.length < 2) return;
+    clock.setRunning(false);
+    scenarios = [scenarios[0]!];
+    viewed = 0;
+    branchTick = -1;
+    sim = scenarios[0]!;
+    afterJump(sim);
   };
 
   const inspectVehicle = (msg: Extract<ToWorker, { type: 'inspectVehicle' }>) => {
@@ -303,6 +412,8 @@ export function createSimHost(deps: HostDeps): SimHost {
       metrics: s.metrics(),
       clock: clock.status(),
       perf: perf(t),
+      scenario: viewed,
+      timeline: timelineStatus(s),
       ...(vehicleInspectionUsed ? { tracked: tracked(s), trackedSeq: inspectSeq } : {}),
       ...(linkInspectionUsed ? { linkDetail: linkDetail(s) } : {}),
     } as FrameMessage;
@@ -336,6 +447,18 @@ export function createSimHost(deps: HostDeps): SimHost {
           case 'inspectLink':
             linkInspectionUsed = true;
             inspectLink(msg.link);
+            break;
+          case 'seek':
+            seek(msg.tick);
+            break;
+          case 'branch':
+            branch(msg.fromTick, msg.then ?? []);
+            break;
+          case 'viewScenario':
+            viewScenario(msg.scenario);
+            break;
+          case 'discardBranch':
+            discardBranch();
             break;
         }
       } catch (e) {
