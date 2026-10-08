@@ -51,9 +51,8 @@ Measured natively in release on River City at seed 2026/7, with a scratch probe 
 
 ### T1. Snapshots, restore and seek (sim-core; timeline-001)
 - **Shared data.** `World` holds `Network` and `DemandModel` behind `Arc`. Accessors and behaviour stay the same, and cloning a world no longer copies them.
-- **A `Snapshot`** is everything in `World` that affects the future, without the append-only logs (`generated`, `completed_log`, `removed_log`). It keeps:
+- **A `Snapshot`** is everything in `World` that affects the future, without the append-only logs (`generated`, `completed_log`, `removed_log`) and without the command log. It keeps:
   - the logs' lengths at that tick;
-  - the full `command_log`, including commands scheduled for later ticks;
   - its `tick`;
   - its byte size, from `Snapshot::bytes()`: the sum of owned capacities × element sizes. This is accounting, not an estimate of allocator overhead.
   The `RouterCache` is **not** stored. Restore starts it empty.
@@ -61,8 +60,9 @@ Measured natively in release on River City at seed 2026/7, with a scratch probe 
   - Snapshots are taken at tick 0 and at every multiple of `SNAPSHOT_INTERVAL_TICKS = 120` (1 sim minute) that the timeline steps through.
   - A step never takes a second snapshot of a tick it already holds.
   - `head_tick` is the furthest tick simulated with the current command log. `position_tick` ≤ `head_tick`.
+- **Authoritative data.** The timeline owns the authoritative command log and the logs as of `head_tick`.
 - **`seek(tick)`** for `window_start ≤ tick ≤ head_tick`:
-  - restores the newest snapshot ≤ `tick`: the state is cloned, the logs are truncated to the snapshot's lengths, and the router is emptied;
+  - restores the newest snapshot ≤ `tick`. The state is cloned from the snapshot, the timeline's current command log is installed, the logs become the head logs' prefix at the snapshot's lengths, and the router is emptied;
   - then steps to `tick`;
   - the result equals the uninterrupted run at that tick (equal `state_hash`, equal logs);
   - seeking outside the window is an error, and nothing changes.
@@ -72,8 +72,10 @@ Measured natively in release on River City at seed 2026/7, with a scratch probe 
   - `window_start` is the tick of the oldest retained snapshot. The window is reported with the total bytes and the budget.
   - No full world is ever stored per frame or per tick.
 - **Editing the future.** `schedule(command)` at `position_tick < head_tick`:
-  - truncates every snapshot after `position_tick`, sets `head_tick = position_tick`, and drops the command log's commands for ticks > `position_tick`;
+  - first validates the command (`InPast`, `UnknownLink`); an invalid command changes nothing;
+  - then truncates every snapshot after `position_tick`, the head logs at `position_tick`, and the command log's commands for ticks > `position_tick`, and sets `head_tick = position_tick`;
   - then schedules the command.
+  - Later steps take snapshots again as usual.
   This is how scenario B is edited. Scenario A is never edited in the past (T3).
 - **Determinism.** Restore + replay must be bit-identical to the uninterrupted run, including the RNG state, the reroute queues and flags, gridlock `blocked_ticks`, the EMA accumulators, `rr_next`, credits and origin buffers.
 

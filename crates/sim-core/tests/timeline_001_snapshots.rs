@@ -1,12 +1,12 @@
 //! Ward timeline-001: snapshots, restore and seek (contract `.wdd/epics/timeline.md` § T1).
-//! The River City tests simulate hours with a hash per tick: run them in release
-//! (`cargo test -p sim-core --release --test timeline_001_snapshots`); debug builds skip them.
+//! Runs in the default test profile (opt-level 2): the River City tests take a few seconds.
 #![allow(clippy::needless_range_loop)]
 
 use sim_core::cities::{river_city, three_bridges};
+use sim_core::params::REROUTE_BUDGET_PER_TICK;
 use sim_core::{
-    Command, CommandError, CommandKind, LinkId, NetworkBuilder, Scenario, Timeline, TimelineError, VehicleInfo, World,
-    SNAPSHOT_INTERVAL_TICKS,
+    Command, CommandError, CommandKind, LinkId, NetworkBuilder, OdFlow, Scenario, Timeline, TimelineError, VehicleInfo,
+    World, SNAPSHOT_INTERVAL_TICKS,
 };
 
 const UNLIMITED: usize = usize::MAX;
@@ -70,7 +70,6 @@ fn river() -> (Scenario, [LinkId; 2]) {
 
 // ─── 1 ───────────────────────────────────────────────────────────────────
 #[test]
-#[cfg_attr(debug_assertions, ignore = "long: run with --release")]
 fn seek_equals_uninterrupted_river_city() {
     let (s, main) = river();
     let cmds = [close(main[0], 1800), close(main[1], 1800), open(main[0], 2700), open(main[1], 2700)];
@@ -88,7 +87,6 @@ fn seek_equals_uninterrupted_river_city() {
 
 // ─── 2 ───────────────────────────────────────────────────────────────────
 #[test]
-#[cfg_attr(debug_assertions, ignore = "long: run with --release")]
 fn replay_after_seek_continues_identically() {
     let (s, main) = river();
     let cmds = [close(main[0], 1800), close(main[1], 1800)];
@@ -103,11 +101,15 @@ fn replay_after_seek_continues_identically() {
         assert_eq!(tl.head_tick(), t.max(3600));
     }
     assert_eq!(observe(tl.world()), r[4800]);
+    // snapshots continue past the old head, and history beyond it can be sought
+    let want: Vec<u64> = (0..=40).map(|k| k * SNAPSHOT_INTERVAL_TICKS).collect();
+    assert_eq!(tl.snapshot_ticks(), want);
+    tl.seek(4500).unwrap();
+    assert_eq!(observe(tl.world()), r[4500]);
 }
 
 // ─── 3 ───────────────────────────────────────────────────────────────────
 #[test]
-#[cfg_attr(debug_assertions, ignore = "long: run with --release")]
 fn seek_mid_epoch_and_mid_reroute() {
     let (s, main) = river();
     let cmds = [close(main[0], 1800), close(main[1], 1800)];
@@ -259,7 +261,6 @@ fn seek_cost_bounded() {
 
 // ─── 8 ───────────────────────────────────────────────────────────────────
 #[test]
-#[cfg_attr(debug_assertions, ignore = "long: run with --release")]
 fn snapshot_bytes_exclude_logs() {
     let (s, _) = river();
     let mut w = World::from_scenario(s).unwrap();
@@ -281,7 +282,6 @@ fn snapshot_bytes_exclude_logs() {
 
 // ─── 9 ───────────────────────────────────────────────────────────────────
 #[test]
-#[cfg_attr(debug_assertions, ignore = "long: run with --release")]
 fn budget_evicts_oldest() {
     let (s, _) = river();
     let mut probe = World::from_scenario(s.clone()).unwrap();
@@ -304,7 +304,11 @@ fn budget_evicts_oldest() {
         last_start = win.window_start;
     }
     assert!(last_start > 0, "precondition: the budget evicted snapshots");
-    assert!(tl.window().snapshots >= 2);
+    assert!(tl.window().snapshots >= 3, "the budget (5 snapshots) must not over-evict: {}", tl.window().snapshots);
+    let target = tl.window().window_start + 7;
+    tl.seek(target).unwrap();
+    assert_eq!(tl.window().position_tick, target);
+    assert_eq!(tl.window().head_tick, 7200);
     // a budget below one snapshot keeps exactly the newest one
     let mut tiny = Timeline::new(World::from_scenario(s).unwrap(), one / 2);
     tiny.step_n(1000);
@@ -319,11 +323,17 @@ fn seek_outside_window_is_refused() {
     for _ in 0..600 {
         sizer.step();
     }
+    let r = reference(World::from_scenario(c.scenario.clone()).unwrap(), 2400);
     let mut tl = Timeline::new(World::from_scenario(c.scenario.clone()).unwrap(), 4 * sizer.snapshot().bytes());
     tl.step_n(2400);
     let start = tl.window().window_start;
     assert!(start > 0, "precondition: eviction happened");
-    tl.seek(1500).unwrap();
+    // inside the window after eviction: equal to the reference
+    for t in [start, start + 37] {
+        tl.seek(t).unwrap();
+        assert_eq!(observe(tl.world()), r[t as usize], "seek({t}) after eviction");
+    }
+    tl.seek(start + 37).unwrap();
     let before = (tl.world().state_hash(), tl.position_tick(), tl.head_tick(), tl.snapshot_ticks());
     for t in [start - 1, 2401, u64::MAX] {
         match tl.seek(t) {
@@ -334,7 +344,6 @@ fn seek_outside_window_is_refused() {
         }
         assert_eq!((tl.world().state_hash(), tl.position_tick(), tl.head_tick(), tl.snapshot_ticks()), before);
     }
-    assert!(tl.seek(start).is_ok());
 }
 
 // ─── 11 ──────────────────────────────────────────────────────────────────
@@ -364,6 +373,11 @@ fn schedule_in_past_edits_future() {
     tl.schedule(open(main[0], 2000)).unwrap(); // later than the edit point: dropped by the edit
     tl.step_n(3600);
     tl.seek(1200).unwrap();
+    let before = (tl.head_tick(), tl.snapshot_ticks(), tl.world().command_log().to_vec(), tl.world().state_hash());
+    // invalid commands are refused before anything is cut
+    assert_eq!(tl.schedule(close(north[0], 1199)), Err(CommandError::InPast));
+    assert_eq!(tl.schedule(close(LinkId(u32::MAX), 1200)), Err(CommandError::UnknownLink(LinkId(u32::MAX))));
+    assert_eq!((tl.head_tick(), tl.snapshot_ticks(), tl.world().command_log().to_vec(), tl.world().state_hash()), before);
     // When a command is scheduled at the position, below the head
     tl.schedule(close(north[0], 1200)).unwrap();
     // Then the future is cut at the position
@@ -380,8 +394,40 @@ fn schedule_in_past_edits_future() {
         assert_eq!(tl.world().state_hash(), r[t as usize].hash, "tick {t}");
     }
     assert!(tl.world().is_closed(main[0]), "the dropped reopen at 2000 never happened");
+    // and snapshots are taken again after the edit
+    let want: Vec<u64> = (0..=20).map(|k| k * SNAPSHOT_INTERVAL_TICKS).collect();
+    assert_eq!(tl.snapshot_ticks(), want);
+    // and the edited history can be sought (the timeline's command log and logs, not stale copies)
+    for t in [1800u64, 1201, 700, 1200, 2400, 1500] {
+        tl.seek(t).unwrap();
+        assert_eq!(observe(tl.world()), r[t as usize], "seek({t}) after the edit");
+    }
     // and a command before the position is still refused
     assert_eq!(tl.schedule(close(main[1], 10)), Err(CommandError::InPast));
+}
+
+#[test]
+fn schedule_in_past_edits_future_off_grid() {
+    let c = three_bridges(2026, 7);
+    let main = c.landmarks.central_bridge;
+    let north = c.landmarks.north_bridge;
+    let mut tl = Timeline::new(World::from_scenario(c.scenario.clone()).unwrap(), UNLIMITED);
+    tl.schedule(close(main[0], 600)).unwrap();
+    tl.schedule(open(main[0], 1280)).unwrap(); // after the edit point: dropped
+    tl.step_n(3000);
+    tl.seek(1250).unwrap();
+    tl.schedule(close(north[1], 1300)).unwrap();
+    assert_eq!((tl.position_tick(), tl.head_tick()), (1250, 1250));
+    assert_eq!(tl.snapshot_ticks().last(), Some(&1200));
+    let r = reference(world(&c.scenario, &[close(main[0], 600), close(north[1], 1300)]), 2400);
+    for t in 1251..=2400u64 {
+        tl.step();
+        assert_eq!(tl.world().state_hash(), r[t as usize].hash, "tick {t}");
+    }
+    for t in [1260u64, 1300, 1299, 2000, 1250] {
+        tl.seek(t).unwrap();
+        assert_eq!(observe(tl.world()), r[t as usize], "seek({t})");
+    }
 }
 
 // ─── 13 ──────────────────────────────────────────────────────────────────
@@ -395,14 +441,19 @@ fn shared_data_not_copied() {
     tl.step_n(500);
     tl.seek(130).unwrap();
     assert!(std::ptr::eq(tl.world().network(), keep.network()), "a restored world shares the network");
-    // the snapshot of an empty world (tick 0) holds no network-sized data: it is far below
-    // the network plus the per-link state of a running city
-    let empty = keep.snapshot().bytes();
-    let mut running = keep.clone();
-    for _ in 0..1200 {
-        running.step();
+    // a much larger demand model (2,000 more profile points and flows) does not change the bytes
+    // of a snapshot: demand is shared data, not snapshotted
+    let mut big = c.scenario.clone();
+    let last = big.demand.profile.points.last().copied().unwrap_or((0.0, 1.0));
+    for k in 1..=2000 {
+        big.demand.profile.points.push((last.0 + k as f64, last.1));
     }
-    assert!(empty < running.snapshot().bytes(), "snapshot bytes grow with vehicles, not with shared data");
+    let f0 = big.demand.flows[0];
+    for _ in 0..2000 {
+        big.demand.flows.push(OdFlow { origin: f0.origin, dest: f0.dest, veh_per_hour: 0.001 });
+    }
+    let big_world = World::from_scenario(big).expect("valid larger demand");
+    assert_eq!(big_world.snapshot().bytes(), keep.snapshot().bytes(), "demand must not be in snapshot bytes");
 }
 
 // ─── 14 ──────────────────────────────────────────────────────────────────
@@ -429,5 +480,75 @@ fn schedule_at_head_is_plain() {
         r.step();
         tl.step();
         assert_eq!(tl.world().state_hash(), r.state_hash());
+    }
+}
+
+// ─── 15 ──────────────────────────────────────────────────────────────────
+#[test]
+fn snapshot_holds_reroute_backlog() {
+    let (s, main) = river();
+    let cmds = [close(main[0], 1919), close(main[1], 1919)];
+    // reference with reroute stats per tick
+    let mut rw = world(&s, &cmds);
+    let mut r = vec![observe(&rw)];
+    let mut stats = vec![rw.reroute_stats()];
+    for _ in 0..2200 {
+        rw.step();
+        r.push(observe(&rw));
+        stats.push(rw.reroute_stats());
+    }
+    // precondition: the snapshot tick 1920 holds a budget-limited backlog that step 1920 → 1921 works on
+    assert_eq!(stats[1920].max_budgeted_in_a_tick, REROUTE_BUDGET_PER_TICK, "precondition: the budget was hit");
+    assert!(stats[1921].switches_total > stats[1920].switches_total, "precondition: the backlog is processed after 1920");
+    let mut tl = Timeline::new(world(&s, &cmds), UNLIMITED);
+    tl.step_n(2200);
+    assert!(tl.snapshot_ticks().contains(&1920));
+    for t in [1920u64, 1921, 1927, 2039] {
+        tl.seek(t).unwrap();
+        assert_eq!(observe(tl.world()), r[t as usize], "seek({t})");
+        let mut probe = Timeline::new(tl.world().clone(), UNLIMITED);
+        for k in 1..=120u64.min(2200 - t) {
+            probe.step();
+            assert_eq!(probe.world().state_hash(), r[(t + k) as usize].hash, "seek({t}) + {k}");
+        }
+    }
+}
+
+// ─── 16 ──────────────────────────────────────────────────────────────────
+#[test]
+fn snapshot_holds_noroute_and_stranded() {
+    let c = three_bridges(2026, 7);
+    let lm = c.landmarks;
+    let bridges = [lm.north_bridge, lm.central_bridge, lm.south_bridge];
+    let mut cmds = Vec::new();
+    for b in bridges {
+        for l in b {
+            cmds.push(close(l, 500));
+            cmds.push(open(l, 1100));
+        }
+    }
+    let mut rw = world(&c.scenario, &cmds);
+    let mut r = vec![observe(&rw)];
+    let mut m = vec![(rw.metrics().no_route, rw.metrics().stranded)];
+    for _ in 0..2400 {
+        rw.step();
+        r.push(observe(&rw));
+        m.push((rw.metrics().no_route, rw.metrics().stranded));
+    }
+    // precondition: snapshots between 600 and 1080 hold no-route and stranded vehicles, and retries ran
+    for snap in (600..=1080).step_by(SNAPSHOT_INTERVAL_TICKS as usize) {
+        assert!(m[snap].0 > 0 && m[snap].1 > 0, "precondition at snapshot {snap}: {:?}", m[snap]);
+    }
+    assert!(rw.reroute_stats().retries_total > 0, "precondition: NoRoute retries happened");
+    let mut tl = Timeline::new(world(&c.scenario, &cmds), UNLIMITED);
+    tl.step_n(2400);
+    for t in [700u64, 1150, 1500] {
+        tl.seek(t).unwrap();
+        assert_eq!(observe(tl.world()), r[t as usize], "seek({t})");
+    }
+    tl.seek(700).unwrap();
+    for t in 701..=2400u64 {
+        tl.step();
+        assert_eq!(tl.world().state_hash(), r[t as usize].hash, "replay from 700: tick {t}");
     }
 }
