@@ -9,6 +9,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: 'list',
+  // the @perf measurement specs run only with PERF=1 (`pnpm -C web e2e:perf`)
+  ...(process.env.PERF ? {} : { grepInvert: /@perf/ }),
   use: {
     baseURL: `http://localhost:${PORT}`,
     ...devices['Desktop Chrome'],

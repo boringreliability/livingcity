@@ -73,7 +73,9 @@ test('fix G3: Esc clears the selection and +/- change the speed', async ({ page 
 });
 
 // G4: a closed road is visibly marked (grayscale), independent of vehicles
-test('fix G4: closing the main bridge changes its grayscale appearance', async ({ page }) => {
+// Superseded in ward city-005 by city.e2e.spec.ts "fix G4 (superseded in city-005)": the warm-up leaves
+// vehicles on the bridge at load (user decision 2026-10-08). Kept for the record.
+test.skip('fix G4: closing the main bridge changes its grayscale appearance', async ({ page }) => {
   const s0 = await ready(page);
   const central = s0.landmarks!.central_bridge;
   await speedSelect(page).selectOption({ label: '1×' });
