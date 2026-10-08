@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-08: timeline-001 complete (Red 3, Gold 1). Next: timeline-002 (branch + window metrics).
+2026-10-08: timeline-002 complete (Red 4 auto, Gold 1). Next: timeline-003 (worker + timeline UI).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -20,14 +20,13 @@
     - Core `review1` "fix G4" was superseded by city.e2e test 15 (user decision).
   - Tests now: Rust 134 (release), Vitest 80, Playwright 46 + 1 skipped (+3 @perf).
 - **Epic timeline: active.** Spec `.wdd/epics/timeline.md` (T1–T5, measured basis).
-  - **timeline-001 complete:**
-    - `sim_core::timeline::{Timeline, Snapshot, WindowInfo, TimelineError}`;
-    - `World` holds `Arc<Network>` / `Arc<DemandModel>`;
-    - a snapshot holds state without logs, command log or router (353 KB on River City), taken every 120 ticks;
-    - the budget evicts the oldest snapshots; seek = newest snapshot ≤ t + replay; editing below the head cuts the future (commands *at* the position stay).
-    - Probe: a 48 MiB budget gives 2.35 sim h; seek median 1.7 ms.
-    - Gold fuzz: 36k checks, no divergence.
-    - MINORs carried to timeline-002: `log_lens` is dead (tautological debug_assert); the field classification sits on `World::snapshot`; seek copies the head-log prefix, O(trips); the `head_logs` doc should state "None ⇒ position == head".
+  - **timeline-001 complete**: `Timeline` (snapshots without logs, commands or router, 353 KB every 120 ticks; budget eviction; seek = newest snapshot ≤ t + replay, 1.7 ms; editing below the head cuts the future); `World` holds `Arc` network/demand.
+  - **timeline-002 complete:**
+    - `Timeline::branch(at, budget)` (`&self`; commands < at; logs and snapshots as of at);
+    - `World::window_metrics(from)` (cohort of demand trips created ≥ from: generated / completed / removed / incomplete / mean / p95);
+    - probe: branch median 4 ms; at +20 min with the main bridge closed, B has 2,039 incomplete vs A's 1,741;
+    - Gold fuzz: 173k timeline checks and 866k metric checks, no divergence.
+    - MINORs for timeline-003/004: branch clones all snapshots < at before evicting (10–13 ms when B's budget < A's; clone only the fitting suffix or `Arc<Snapshot>`); `window_metrics` takes ≈ 1.7 ms at 3 h, so throttle it in the UI.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -81,8 +80,6 @@
   - The hover halo (0.72 grey) is close in lightness to a fully congested road core (it still reads by its +2 px width).
   - The hatch is dropped on closed links shorter than 14 px on screen (zoom < 0.07); the barriers remain.
   - The e2e harness has no browser test for "close while paused → shows on resume" (Vitest G4b covers it; checked manually by Gold).
-- `World::clone` copies the `Network` and the unbounded `completed_log` (timeline: share via `Arc`, window the log).
-- **Restore (timeline)** must invalidate the RouterCache and snapshot the reroute queues and their flags.
 - `World::metrics()` dominates per-frame cost at high demand (make it incremental or sample it).
 - Browser `performance.now()` is coarse (0.1 ms). After a wasm trap the host halts, and recovery needs a new worker.
 

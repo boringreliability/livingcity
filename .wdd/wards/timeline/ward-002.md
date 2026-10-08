@@ -3,12 +3,12 @@ ward: 2
 revision: null
 name: "Branch and window metrics in sim-core"
 epic: "timeline"
-status: "approved"
+status: "complete"
 dependencies: ["timeline-001"]
 layer: "rust"
 estimated_tests: 19
 created: "2026-10-08"
-completed: null
+completed: "2026-10-08"
 ---
 # Ward timeline-002: Branch and window metrics in sim-core
 
