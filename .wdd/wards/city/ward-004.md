@@ -151,3 +151,13 @@ The Gold reviewer inspects screenshots (colour and grayscale) at both zoom level
   - label keys are unique;
   - shader objects are deleted after linking.
 - **Accepted, not changed:** the hatch is dropped on closed links shorter than 14 px on screen (about zoom < 0.07, far below fit zoom); the barriers still mark them.
+
+## Gold refinements (after Gold r2, REJECTED)
+- **Labels (BLOCKER):**
+  - Each label is placed synchronously in its ref callback when it mounts.
+  - The rAF loop repositions an element only when its stored generation (a `WeakMap`) differs from the camera generation.
+  - A new or remounted element is therefore never left unpositioned.
+  - Test 13 now passes 30/30 with `--repeat-each`.
+- **Deck tones:**
+  - The deck lies between the background and the road in lightness, so the bridge's road reads on it.
+  - The railing is two-toned: a dark outer line that reads against water and a mid-grey inner line that reads over land.

@@ -35,7 +35,7 @@ const COLORS = {
   park: [0.085, 0.115, 0.1],
   building: [0.09, 0.1, 0.12],
   outline: [0.16, 0.18, 0.21],
-  deck: [0.27, 0.29, 0.32],
+  deck: [0.17, 0.185, 0.21],
   pad: [0.14, 0.16, 0.19],
 } as const;
 
@@ -203,8 +203,10 @@ in float v_acrossPx;
 flat in float v_halfPx;
 out vec4 o;
 void main() {
-  bool railing = abs(v_acrossPx) > v_halfPx - ${RAILING_PX.toFixed(1)};
-  o = vec4(railing ? vec3(0.02, 0.022, 0.025) : vec3(${COLORS.deck.map((c) => c.toFixed(3)).join(', ')}), 1.0);
+  // two-tone railing: a dark outer line (reads against water) and a mid-grey inner one (reads over land)
+  float e = v_halfPx - abs(v_acrossPx);
+  vec3 c = e < ${RAILING_PX.toFixed(1)} ? vec3(0.02, 0.022, 0.025) : e < ${(2 * RAILING_PX).toFixed(1)} ? vec3(0.42, 0.44, 0.47) : vec3(${COLORS.deck.map((c) => c.toFixed(3)).join(', ')});
+  o = vec4(c, 1.0);
 }`;
 
 // Vehicles: instanced quads from the AoS frame buffer (stride 16 bytes).
