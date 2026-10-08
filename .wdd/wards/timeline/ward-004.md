@@ -58,7 +58,7 @@ It also clears the timeline-003 MINORs that touch the same code.
 - **Compare button.** A "Compare side by side" button (`aria-pressed`) sits in the scenario panel and is shown when B exists.
 - **While comparing:**
   - Two canvases sit side by side, 50 % each, with a 2 px divider. The left one is A (`canvas.city`, unchanged), the right one B (`canvas.city.city-b`, `aria-label="City map, branch B"`). Each has its own `CityRenderer` and the same `Camera` object, so the **cameras are linked**: pan or zoom on either side moves both.
-  - Each side has a corner label, "A: original" or "B: branch", in a pattern frame (text, not hue).
+  - Each side has a corner label (`.side-label`), "A: original" or "B: branch". A's frame is solid and B's is dashed with a hatch: text and pattern, never hue.
   - District labels are drawn on both sides.
   - **Road picking knows the side.** A click on the right half picks in B's geometry and frame.
     - The road panel heading names the side ("Link N (B)").
@@ -79,7 +79,8 @@ It also clears the timeline-003 MINORs that touch the same code.
     - times are "m:ss" of the rounded seconds;
     - an undefined value (NaN) shows "—", and so does its Δ;
     - a count Δ is "+n ▲", "−n ▼" or "0";
-    - a time Δ is "+m:ss ▲", "−m:ss ▼" or "0:00".
+    - a time Δ is round(B) − round(A) in seconds, shown as "+m:ss ▲", "−m:ss ▼" or "0:00", and "—" if either side is undefined;
+  - **The viewed scenario during compare.** `snapshot().scenario` keeps reporting the scenario viewed before entering; the UI keeps it from the last single-view frame. `frame.scenario` names the side of each frame in a pair.
   - The panel is a `<table>`: a header row of `columnheader`s ("", "A", "B", "Δ"), then one row per metric whose first cell is a `rowheader` ("Generated", "Completed", "Incomplete", "Unserved", "Mean trip", "p95 trip") followed by the A, B and Δ cells. Counts are plain integers; times are "m:ss".
   - The camera fits with `COMPARE_FIT_INSETS = { top: 120, right: 16, bottom: 230, left: 16 }` per half, on entering and on leaving (the single view uses `FIT_INSETS` again).
 - **Exiting** via the button, a discard or a replace returns to the single view of the viewed scenario.
@@ -96,9 +97,9 @@ It also clears the timeline-003 MINORs that touch the same code.
   - `linkScreenPointB(link, t)`: like `linkScreenPoint`, but in page coordinates of the B canvas (null when not comparing).
 
 ## Specification
-- **Aligning on entry.** Let `t` = the viewed scenario's position.
+- **Aligning on entry.** Let `t` = the viewed scenario's position. Aligning happens synchronously inside the `compare` message: a seek, or a forward step of at most the distance between the heads. Right after it, the host posts the first frame pair and a comparison at once.
   - The other scenario seeks to `t` if `t` is in its window.
-  - If `t` is beyond its head, it steps forward to `t`, unpaced and in bounded chunks, as in the warm-up.
+  - If `t` is beyond its head, it steps forward to `t`, unpaced.
   - If `t` is below its window, compare is refused with an error.
   - Both are paused after aligning.
 - **Lockstep.** On every iteration both sims advance by the same `n`, and every pair of frames has equal ticks. Each side's state equals a separate run of that scenario: A with its commands; B with A's commands < branch tick plus its own.
@@ -122,13 +123,13 @@ It also clears the timeline-003 MINORs that touch the same code.
 | 8 | `compare_refused_without_branch` | without B: an error, `compare 0`, and no comparison |
 | 9 | `view_switch_and_vehicle_picks_refused_in_compare` | `viewScenario` while comparing produces an error. `inspectVehicle` is ignored (no `tracked`), and the pairs continue |
 | 10 | `replace_order_and_compare_end` | an out-of-window `branch` is refused before any `free` or `branch` call, and compare stays on. A valid replace calls `free(B)` **before** `A.branch`, then ends compare |
-| 11 | `compare_split_view` (e2e) | two half-width canvases, with "A: original" and "B: branch" corner labels (not buttons) inside them. The comparison region has the sim-time and since lines, the rows (incl. **Incomplete**) and the A/B/Δ column headers. The metrics strip and legend are hidden. The main bridge lies inside B's `COMPARE_FIT_INSETS` rectangle |
-| 12 | `comparison_matches_host_numbers` (e2e) | right after entering, an undefined mean shows "—" (with a "—" Δ). Later, Generated / Completed / Incomplete equal `comparison()`, and their Δ has the sign, ▲/▼ and number. Unserved = 4 + 5. Mean and p95 are "m:ss". The sim-time and since lines match |
+| 11 | `compare_split_view` (e2e) | two half-width canvases, with "A: original" and "B: branch" corner labels (not buttons) inside them, framed solid and dashed. The comparison region has the sim-time and since lines, the rows (incl. **Incomplete**) and the A/B/Δ column headers. The metrics strip and legend are hidden. The whole network lies inside B's `COMPARE_FIT_INSETS` rectangle and touches it on one axis (a real fit) |
+| 12 | `comparison_matches_host_numbers` (e2e) | right after entering, an undefined mean shows "—" (with a "—" Δ). Past branch + 700, both means are defined. Generated / Completed / Incomplete equal `comparison()`, and their Δ text is exact ("+n ▲" / "−n ▼" / "0"). Unserved = 4 + 5. Mean and p95 cells are exactly A m:ss, B m:ss and the time Δ. The sim-time and since lines match |
 | 13 | `matching_sim_time_and_scrub` (e2e) | at 20×, `sides.a.tick === sides.b.tick` in 10 samples (pairs are committed together), and the panel's sim time is the shared tick. ← on the slider moves both sides by 120, and the panel follows |
 | 14 | `linked_cameras` (e2e) | a wheel zoom anchored at a point on the right half keeps that point (±2 px). A drag on the right half pans B's points by exactly the drag. `drawnCameras.a` equals `drawnCameras.b` |
-| 15 | `picking_per_side` (e2e) | the closed central bridge picked on the right gives side B, the bridge link, and a road panel with "(B)" and "state closed". On the left it gives "(A)" and "state open". No vehicle is picked and no vehicle panel opens |
+| 15 | `picking_per_side` (e2e) | the closed central bridge picked on the right gives side B, the bridge link, and a road panel with "(B)" and "state closed". On the left it gives "(A)" and "state open". Zoomed to ≥ 1.5 px/m, real vehicle centres pick no vehicle, and a click opens no vehicle panel |
 | 16 | `interventions_disabled_while_comparing` (e2e) | the bridge button and the road panel's Close/Reopen are disabled with the title. The B key gives no confirmation and no pending cue; after running, the closed sets and the scenario are unchanged and there is no alert |
-| 17 | `exit_compare_returns_to_single_view` (e2e) | exiting gives one full-width canvas with the B canvas **removed**, no comparison region, and the strip and legend back. After 18 toggles, A's context is not lost, it keeps rendering, there is exactly one canvas, and the console shows no context-loss messages. Discarding while comparing returns to the single view |
+| 17 | `exit_compare_returns_to_single_view` (e2e) | exiting gives one full-width canvas with the B canvas **removed**, no comparison region, the strip and legend back, and the camera refitted to the single-view fit. On each of 9 exits, the removed B canvas's context is lost (released). After 18 toggles, A's context is not lost, it keeps rendering, there is exactly one canvas, and the console shows no context-loss messages. Discarding while comparing returns to the single view |
 | 18 | `layout_and_focus_fixes` (e2e) | at 1024×768 with B present, the scenario panel covers no control-panel control. The confirmation focuses its primary button on opening. Both Cancel and Replace return focus to the slider |
 
 ## Must NOT

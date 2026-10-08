@@ -129,7 +129,7 @@ describe('timeline-004 host: lockstep comparison', () => {
       expect(a.clock.running).toBe(false);
       expect(b.clock.running).toBe(false);
     }
-    expect(ps.at(-1)![0].timeline.headTick).toBeGreaterThanOrEqual(1200); // A was sought (its history kept)
+    expect(x.sims[0]!.timeline_info()[1]).toBeGreaterThanOrEqual(1200); // A was sought (its own head kept)
     // B ahead of A's position: leave, view A at 1,100 (> B's head), re-enter: B steps forward
     x.send({ type: 'compare', on: false });
     x.send({ type: 'viewScenario', scenario: 0 });
@@ -315,13 +315,19 @@ describe('timeline-004 host: lockstep comparison', () => {
 
   test('9 view_switch_and_vehicle_picks_refused_in_compare', () => {
     const { x } = scenario();
+    // tracked in single view …
+    const f0 = x.frames().at(-1)!;
+    x.send({ type: 'inspectVehicle', frameTick: f0.tick, record: 0, seq: 1 });
+    x.iterate(2);
+    expect(x.frames().at(-1)!.tracked).not.toBeNull();
+    // … and no longer once comparing
     x.send({ type: 'compare', on: true });
     x.iterate(2);
     const nErr = x.errors().length;
     x.send({ type: 'viewScenario', scenario: 0 });
     expect(x.errors().length).toBe(nErr + 1);
     const [, fb] = strictPairs(x.frames().slice(-2))[0]!;
-    x.send({ type: 'inspectVehicle', frameTick: fb.tick, record: 0, seq: 1 }); // ignored while comparing
+    x.send({ type: 'inspectVehicle', frameTick: fb.tick, record: 0, seq: 2 }); // ignored while comparing
     const n = x.frames().length;
     x.iterate(4);
     const after = strictPairs(x.frames().slice(n));
@@ -329,6 +335,8 @@ describe('timeline-004 host: lockstep comparison', () => {
     for (const [a, b] of after) {
       expect(a.tracked ?? null).toBeNull();
       expect(b.tracked ?? null).toBeNull();
+      expect(a.linkDetail ?? null).toBeNull(); // no host link detail while comparing
+      expect(b.linkDetail ?? null).toBeNull();
     }
   });
 
@@ -359,6 +367,6 @@ describe('timeline-004 host: lockstep comparison', () => {
     const f = x.frames().at(-1)!;
     expect(f.timeline.compare).toBe(0);
     expect(f.timeline.branchTick).toBe(700);
-    expect(before).toBeLessThan(x.calls.length);
+    expect(before).toBeGreaterThan(0);
   });
 });

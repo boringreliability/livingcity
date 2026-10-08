@@ -18,7 +18,27 @@ function hms(tick: number): string {
 }
 /** "m:ss" of seconds, "—" when undefined (NaN). */
 const mss = (s: number) => (Number.isFinite(s) ? `${Math.floor(Math.round(s) / 60)}:${String(Math.round(s) % 60).padStart(2, '0')}` : '—');
-const fmtDelta = (d: number) => (d > 0 ? `+${d}` : d < 0 ? `−${-d}` : '0');
+/** Count Δ: "+n ▲", "−n ▼" or "0". */
+const fmtDelta = (d: number) => (d > 0 ? `+${d} ▲` : d < 0 ? `−${-d} ▼` : '0');
+/** Time Δ = round(b) − round(a) seconds: "+m:ss ▲", "−m:ss ▼", "0:00"; "—" if either side is undefined. */
+function fmtTimeDelta(a: number, b: number): string {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return '—';
+  const d = Math.round(b) - Math.round(a);
+  const m = mss(Math.abs(d));
+  return d > 0 ? `+${m} ▲` : d < 0 ? `−${m} ▼` : '0:00';
+}
+
+/** Wheel-zoom at a page point until the camera is at least `min` px/m. */
+async function zoomInAt(page: Page, x: number, y: number, min: number) {
+  await page.mouse.move(x, y);
+  await expect
+    .poll(async () => {
+      if ((await snap(page)).camera.zoom >= min) return true;
+      await page.mouse.wheel(0, -100);
+      return false;
+    }, { intervals: [100], timeout: 30_000 })
+    .toBe(true);
+}
 
 async function pause(page: Page) {
   await blur(page);
@@ -35,6 +55,8 @@ async function freshComparison(page: Page) {
 /** Load, step back 2 min, close the main bridge (→ B), and enter the comparison. */
 async function comparing(page: Page) {
   await page.goto('/');
+  await expect.poll(async () => page.evaluate(() => window.__livingcity?.snapshot().tick ?? 0), { timeout: 60_000 }).toBeGreaterThan(1800);
+  singleFit = (await snap(page)).camera;
   await expect.poll(async () => (await snap(page)).timeline.headTick, { timeout: 60_000 }).toBeGreaterThan(2400);
   await pause(page);
   await slider(page).focus();
@@ -54,6 +76,9 @@ async function comparing(page: Page) {
   await expect.poll(async () => (await snap(page)).compare).toBe(true);
   await expect(compareButton(page)).toHaveAttribute('aria-pressed', 'true');
 }
+
+/** The single-view fit seen right after load (exiting the comparison refits to it). */
+let singleFit: { cx: number; cy: number; zoom: number } | null = null;
 
 async function cellsOf(page: Page, name: string): Promise<string[]> {
   return panel(page).getByRole('row', { name: new RegExp(`^${name}`) }).getByRole('cell').allTextContents();
@@ -81,6 +106,14 @@ test('compare_split_view', async ({ page }) => {
     );
     expect(hits.some(([x, y, w, h]) => w! > 0 && x! >= box.x && x! + w! <= box.x + box.width && y! >= box.y && y! + h! <= box.y + box.height), text).toBe(true);
   }
+  // the sides differ by frame style, not by hue: solid for A, dashed for B
+  const styles = await page.evaluate(() =>
+    ['A: original', 'B: branch'].map((t) => {
+      const el = [...document.querySelectorAll('.side-label')].find((e) => e.textContent === t) as HTMLElement | undefined;
+      return el ? getComputedStyle(el).borderTopStyle : null;
+    }),
+  );
+  expect(styles).toEqual(['solid', 'dashed']);
   await expect(panel(page)).toContainText(/sim time \d\d:\d\d:\d\d \(both\)/);
   await expect(panel(page)).toContainText(/measured since \d\d:\d\d:\d\d \(branch\)/);
   for (const name of ['Generated', 'Completed', 'Incomplete', 'Unserved', 'Mean trip', 'p95 trip']) {
@@ -89,12 +122,28 @@ test('compare_split_view', async ({ page }) => {
   for (const col of ['A', 'B', 'Δ']) await expect(panel(page).getByRole('columnheader', { name: col, exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Simulation metrics' })).toBeHidden();
   await expect(page.getByRole('region', { name: 'Legend' })).toBeHidden();
-  // the camera fit leaves the comparison band: the main bridge lies inside B's inset rectangle
-  const q = (await page.evaluate((l) => window.__livingcity!.linkScreenPointB(l, 0.5), (await snap(page)).landmarks!.central_bridge[0]))!;
-  expect(q[0]).toBeGreaterThan(b.x + 16);
-  expect(q[0]).toBeLessThan(b.x + b.width - 16);
-  expect(q[1]).toBeGreaterThan(b.y + 120);
-  expect(q[1]).toBeLessThan(b.y + b.height - 230);
+  // the camera fit leaves the comparison band: the whole network lies inside B's inset rectangle,
+  // and touches it on at least one axis (it is a fit, not just "somewhere inside")
+  const ext = await page.evaluate(() => {
+    const h = window.__livingcity!;
+    const n = h.snapshot().linkCounts.length;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let l = 0; l < n; l++)
+      for (const t of [0, 1]) {
+        const p = h.linkScreenPointB(l, t)!;
+        xs.push(p[0]);
+        ys.push(p[1]);
+      }
+    return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  });
+  expect(ext[0]!).toBeGreaterThanOrEqual(b.x + 16 - 1);
+  expect(ext[1]!).toBeLessThanOrEqual(b.x + b.width - 16 + 1);
+  expect(ext[2]!).toBeGreaterThanOrEqual(b.y + 120 - 1);
+  expect(ext[3]!).toBeLessThanOrEqual(b.y + b.height - 230 + 1);
+  const touchX = Math.abs(ext[0]! - (b.x + 16)) <= 2 && Math.abs(ext[1]! - (b.x + b.width - 16)) <= 2;
+  const touchY = Math.abs(ext[2]! - (b.y + 120)) <= 2 && Math.abs(ext[3]! - (b.y + b.height - 230)) <= 2;
+  expect(touchX || touchY).toBe(true);
 });
 
 // 12
@@ -104,12 +153,15 @@ test('comparison_matches_host_numbers', async ({ page }) => {
   let c = await freshComparison(page);
   const mean0 = await cellsOf(page, 'Mean trip');
   expect(mean0.slice(0, 2)).toEqual([mss(c.a[7]!), mss(c.b[7]!)]);
-  if (!Number.isFinite(c.a[7]!) || !Number.isFinite(c.b[7]!)) expect(mean0[2]).toBe('—');
+  expect(mean0[2]).toBe(fmtTimeDelta(c.a[7]!, c.b[7]!));
   await blur(page);
   await page.keyboard.press('Space');
-  await expect.poll(async () => (await snap(page)).sides!.a.tick, { timeout: 30_000 }).toBeGreaterThan(c.tick + 400);
+  // past branch + 600 both cohorts have completed trips (probed: A from +331…381, B from +450…493)
+  const branch = (await snap(page)).branchTick!;
+  await expect.poll(async () => (await snap(page)).sides!.a.tick, { timeout: 60_000 }).toBeGreaterThan(branch + 700);
   await pause(page);
   c = await freshComparison(page);
+  expect(Number.isFinite(c.a[7]!) && Number.isFinite(c.b[7]!)).toBe(true);
   expect(c.fromTick).toBe((await snap(page)).branchTick);
   for (const [name, i] of [
     ['Generated', 2],
@@ -118,10 +170,7 @@ test('comparison_matches_host_numbers', async ({ page }) => {
   ] as const) {
     const cells = await cellsOf(page, name);
     expect([Number(cells[0]), Number(cells[1])], name).toEqual([c.a[i], c.b[i]]);
-    const d = c.b[i]! - c.a[i]!;
-    expect(cells[2]).toContain(fmtDelta(d));
-    expect(cells[2]!.includes('▲')).toBe(d > 0);
-    expect(cells[2]!.includes('▼')).toBe(d < 0);
+    expect(cells[2]).toBe(fmtDelta(c.b[i]! - c.a[i]!));
   }
   const unserved = await cellsOf(page, 'Unserved');
   expect([Number(unserved[0]), Number(unserved[1])]).toEqual([c.a[4]! + c.a[5]!, c.b[4]! + c.b[5]!]);
@@ -130,7 +179,7 @@ test('comparison_matches_host_numbers', async ({ page }) => {
     ['p95 trip', 8],
   ] as const) {
     const cells = await cellsOf(page, name);
-    expect(cells.slice(0, 2)).toEqual([mss(c.a[i]!), mss(c.b[i]!)]);
+    expect(cells).toEqual([mss(c.a[i]!), mss(c.b[i]!), fmtTimeDelta(c.a[i]!, c.b[i]!)]);
   }
   await expect(panel(page)).toContainText(`sim time ${hms(c.tick)} (both)`);
   await expect(panel(page)).toContainText(`measured since ${hms(c.fromTick)} (branch)`);
@@ -142,12 +191,15 @@ test('matching_sim_time_and_scrub', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Speed' }).selectOption('20');
   await blur(page);
   await page.keyboard.press('Space');
+  const branch = (await snap(page)).branchTick!;
   for (let k = 0; k < 10; k++) {
     await sleep(300);
     const s = await snap(page);
     expect(s.sides).not.toBeNull();
     expect(s.sides!.a.tick).toBe(s.sides!.b.tick); // the UI commits frame pairs together
   }
+  // room for a 1-minute step back inside the shared window (it starts at the branch tick)
+  await expect.poll(async () => (await snap(page)).sides!.a.tick, { timeout: 30_000 }).toBeGreaterThan(branch + 240);
   await pause(page);
   const s = await snap(page);
   await freshComparison(page);
@@ -209,9 +261,25 @@ test('picking_per_side', async ({ page }) => {
   await page.mouse.click(pa![0], pa![1]);
   await expect(selected).toContainText('(A)');
   await expect(selected).toContainText(/state\s*open/i);
-  // vehicles are not picked while comparing (no vehicle panel opens)
-  expect(pickA.vehicle).toBeNull();
+  // vehicles are not picked while comparing, even zoomed in far enough to pick them in single view
+  const a = (await page.locator('canvas.city').first().boundingBox())!;
+  await zoomInAt(page, a.x + a.width / 2, a.y + a.height / 2, 1.5);
+  const centres = await page.evaluate(() => {
+    const h = window.__livingcity!;
+    const out: [number, number][] = [];
+    const ra = document.querySelector('canvas.city')!.getBoundingClientRect();
+    for (let i = 0; i < h.snapshot().frameRecords && out.length < 8; i++) {
+      const p = h.vehicleScreenCenter(i);
+      if (p && p[0] > ra.left + 20 && p[0] < ra.right - 20 && p[1] > ra.top + 140 && p[1] < ra.bottom - 240) out.push(p);
+    }
+    return out;
+  });
+  expect(centres.length).toBeGreaterThan(0); // precondition: cars on screen at a picking zoom
+  for (const p of centres) expect(await page.evaluate(([x, y]) => window.__livingcity!.pickAt(x, y).vehicle, p)).toBeNull();
+  await page.mouse.click(centres[0]![0], centres[0]![1]);
+  await sleep(300);
   await expect(page.getByRole('region', { name: 'Selected vehicle' })).toHaveCount(0);
+  expect((await snap(page)).trackedTrip).toBeNull();
 });
 
 // 16
@@ -258,10 +326,22 @@ test('exit_compare_returns_to_single_view', async ({ page }) => {
   await expect(panel(page)).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Simulation metrics' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Legend' })).toBeVisible();
-  // repeated toggling releases B's context: A's map never loses its own
+  const cam = (await snap(page)).camera;
+  expect(Math.abs(cam.zoom - singleFit!.zoom)).toBeLessThanOrEqual(1e-6 + 1e-3 * singleFit!.zoom);
+  expect(Math.abs(cam.cx - singleFit!.cx)).toBeLessThanOrEqual(1);
+  expect(Math.abs(cam.cy - singleFit!.cy)).toBeLessThanOrEqual(1);
+  // every exit releases B's context (checked on the removed element itself), and A keeps its own
   for (let k = 0; k < 18; k++) {
+    if (k % 2 === 1) await page.evaluate(() => ((window as unknown as { __b?: Element | null }).__b = document.querySelector('canvas.city-b')));
     await compareButton(page).click();
     await expect.poll(async () => (await snap(page)).compare).toBe(k % 2 === 0);
+    if (k % 2 === 1) {
+      const lostB = await page.evaluate(() => {
+        const c = (window as unknown as { __b?: HTMLCanvasElement | null }).__b;
+        return c ? c.getContext('webgl2')?.isContextLost() ?? true : null;
+      });
+      expect(lostB, `toggle ${k}: B's context was released`).toBe(true);
+    }
   }
   expect(
     await page.evaluate(() => (document.querySelector('canvas.city') as HTMLCanvasElement).getContext('webgl2')!.isContextLost()),
