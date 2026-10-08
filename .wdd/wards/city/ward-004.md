@@ -3,12 +3,12 @@ ward: 4
 revision: null
 name: "The miniature city look"
 epic: "city"
-status: "approved"
+status: "complete"
 dependencies: ["city-003"]
 layer: "typescript"
 estimated_tests: 16
 created: "2026-10-07"
-completed: null
+completed: "2026-10-08"
 ---
 # Ward city-004: The miniature city look
 
