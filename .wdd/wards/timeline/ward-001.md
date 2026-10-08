@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Snapshots and seek in sim-core"
 epic: "timeline"
-status: "red"
+status: "approved"
 dependencies: []
 layer: "rust"
 estimated_tests: 18
