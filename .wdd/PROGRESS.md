@@ -1,7 +1,7 @@
 # Progress — livingcity
 
 ## Summary
-10 of 10 Wards complete · 230 estimated tests · 0 blocked
+10 of 11 Wards complete · 244 estimated tests · 0 blocked
 
 ## Ward Status
 | Ward | Name | Tests | Status | Date |
@@ -16,6 +16,7 @@
 | core-003 | Closures, rerouting, commands and determinism | 36 | ✅ Complete | 2026-10-06 |
 | core-004 | WASM worker bridge | 39 | ✅ Complete | 2026-10-07 |
 | core-005 | First closure in the browser | 20 | ✅ Complete | 2026-10-07 |
+| timeline-001 | Snapshots and seek in sim-core | 14 | 📋 Planned | - |
 
 ## Test Summary
-- Estimated total: 230
+- Estimated total: 244
