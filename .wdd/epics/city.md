@@ -25,7 +25,7 @@ Timeline, branching and comparison stay in epic `timeline`. Accessibility pass, 
 | city-002 | River City network and calibrated demand | complete |
 | city-003 | Inspect vehicles and roads | complete |
 | city-004 | The miniature city look | complete |
-| city-005 | Living opening screen, diagnostics and measured performance (integration ward) | planned |
+| city-005 | Living opening screen, diagnostics and measured performance (integration ward) | complete |
 
 ## Contract additions (binding; the core contract in `.wdd/epics/core.md` stays in force)
 

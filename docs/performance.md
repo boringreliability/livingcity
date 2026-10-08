@@ -5,7 +5,7 @@ Every number below comes from a run. The `@perf` harness (`pnpm -C web e2e:perf`
 ## Method
 
 - **Machine:** Mac16,7, Apple M4 Pro (`sysctl hw.model machdep.cpu.brand_string`).
-- **Harness runs (2026-10-08 12:5x UTC):**
+- **Harness runs (2026-10-08, 12:57–13:01 UTC per the JSON timestamps):**
   - Chromium 153.0.8010.12, headless (from the browser's real user agent via CDP), 1280 × 800, DPR 1.
   - Launch args `--use-angle=swiftshader --enable-unsafe-swiftshader`. The app's renderer reports *ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device …), SwiftShader driver)*. This is a **software GPU**, so the harness render numbers measure software rasterisation, not a graphics card.
 - **Hardware-GPU run (2026-10-08 13:03 UTC):**

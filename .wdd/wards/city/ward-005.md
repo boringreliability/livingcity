@@ -3,12 +3,12 @@ ward: 5
 revision: null
 name: "Living opening screen, diagnostics and measured performance"
 epic: "city"
-status: "approved"
+status: "complete"
 dependencies: ["city-004"]
 layer: "typescript"
 estimated_tests: 14
 created: "2026-10-07"
-completed: null
+completed: "2026-10-08"
 ---
 # Ward city-005: Living opening screen, diagnostics and measured performance (integration ward)
 
