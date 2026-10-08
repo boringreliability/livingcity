@@ -90,8 +90,9 @@ export function App() {
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
   /** Render-side measurement (C5): rAF intervals and draw CPU time over the last 300 frames. */
-  const renderIntervals = useRef(new SampleWindow(RENDER_WINDOW));
-  const drawTimes = useRef(new SampleWindow(RENDER_WINDOW));
+  // lazily created once (useRef(new …) would build and discard windows on every render)
+  const [renderIntervals] = useState(() => ({ current: new SampleWindow(RENDER_WINDOW) }));
+  const [drawTimes] = useState(() => ({ current: new SampleWindow(RENDER_WINDOW) }));
   const recordingRef = useRef<Recording | null>(null);
   const [diagOpen, setDiagOpen] = useState(false);
   const computeRenderStats = (): RenderStats => {
@@ -100,7 +101,7 @@ export function App() {
     return { intervalMedianMs: i.median, intervalP95Ms: i.p95, drawMedianMs: d.median, drawP95Ms: d.p95, samples: i.count };
   };
   /** Render stats as shown: refreshed twice a second (readable; the panel and the hook show the same values). */
-  const renderStatsRef = useRef<{ at: number; stats: RenderStats }>({ at: Number.NEGATIVE_INFINITY, stats: computeRenderStats() });
+  const [renderStatsRef] = useState(() => ({ current: { at: Number.NEGATIVE_INFINITY, stats: computeRenderStats() } }));
   const renderStats = () => renderStatsRef.current.stats;
 
   const [ready, setReady] = useState<ReadyMessage | null>(null);
@@ -596,7 +597,8 @@ export function App() {
         {labels.map((l, i) => (
           <span key={`${i}:${l.text}`} ref={(el) => {
             labelEls.current[i] = el;
-            if (el) placeLabel(el, l);
+            // the callback re-runs on every render; only a newly mounted element needs placing
+            if (el && !labelPlaced.current.has(el)) placeLabel(el, l);
           }} className={`zone ${l.kind}`}>
             <span className="zone-icon">{l.icon}</span> {l.text}
           </span>

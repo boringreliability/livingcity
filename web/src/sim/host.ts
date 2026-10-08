@@ -74,10 +74,14 @@ export interface SimHost {
 export const FRAME_INTERVAL_MS = 16;
 /** No warm-up batch may block message handling longer than this (ms of `now`). */
 const WARMUP_BATCH_MAX_MS = 100;
-/** Warm-up batches aim at this duration; the first one is small because tick cost is unknown. */
-const WARMUP_TARGET_MS = 40;
-const WARMUP_FIRST_BATCH = 16;
-const WARMUP_MAX_BATCH = 4096;
+/**
+ * A warm-up batch steps chunks of at most WARMUP_CHUNK_TICKS and stops once WARMUP_TARGET_MS
+ * have passed, so it lasts at most 40 ms + one chunk, whatever the tick cost does meanwhile
+ * (ticks get ~100× dearer as the empty city fills: Gold r1 M1). That stays within
+ * WARMUP_BATCH_MAX_MS for any cost up to (100 − 40) / 32 ≈ 1.9 ms per tick.
+ */
+const WARMUP_TARGET_MS = 0.4 * WARMUP_BATCH_MAX_MS;
+const WARMUP_CHUNK_TICKS = 32;
 
 /** Smallest positive step of a clock: ≥ 3 positive steps, within 50 ms of its time or 100,000 reads; 0 if none. */
 function timerResolution(read: () => number): number {
@@ -123,7 +127,7 @@ export function createSimHost(deps: HostDeps): SimHost {
   let encodeMs = 0;
   const frameTimes: number[] = [];
   /** The warm-up still to run before `ready` (null when none), and commands received meanwhile. */
-  let warmup: { remaining: number; batch: number; ran: number } | null = null;
+  let warmup: { remaining: number; ran: number } | null = null;
   let deferred: { kind: 'close' | 'open'; link: number }[] = [];
 
   const error = (message: string) => deps.post({ type: 'error', message }, []);
@@ -146,25 +150,21 @@ export function createSimHost(deps: HostDeps): SimHost {
     }
     lastPost = Number.NEGATIVE_INFINITY;
     linkCount = sim.link_from().length;
+    clock.resetExecuted(sim.tick());
     const ticks = Number.isFinite(warmupS) && warmupS > 0 ? Math.round(warmupS / DT) : 0;
-    if (ticks > 0) warmup = { remaining: ticks, batch: WARMUP_FIRST_BATCH, ran: 0 };
+    if (ticks > 0) warmup = { remaining: ticks, ran: 0 };
     else postReady(sim);
   };
 
   /** One bounded warm-up batch; at the end: clock in sync, deferred commands handed over, `ready`. */
   const warmStep = (s: SimLike, w: NonNullable<typeof warmup>) => {
-    const n = Math.min(w.remaining, w.batch);
     const t0 = deps.now();
-    s.step(n);
-    const ms = deps.now() - t0;
-    w.remaining -= n;
-    w.ran += n;
-    // size the next batch from the measured cost (never more than the 100 ms bound allows)
-    const perTick = ms / n;
-    w.batch =
-      perTick > 0
-        ? Math.max(1, Math.min(WARMUP_MAX_BATCH, Math.floor(WARMUP_TARGET_MS / perTick), Math.floor(WARMUP_BATCH_MAX_MS / perTick)))
-        : Math.min(WARMUP_MAX_BATCH, w.batch * 2);
+    do {
+      const n = Math.min(w.remaining, WARMUP_CHUNK_TICKS);
+      s.step(n);
+      w.remaining -= n;
+      w.ran += n;
+    } while (w.remaining > 0 && deps.now() - t0 < WARMUP_TARGET_MS);
     if (w.remaining > 0) return;
     warmup = null;
     clock.addUnpaced(w.ran);
@@ -264,6 +264,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       tickMsMedian: w.median,
       tickMsP95: w.p95,
       tickMsMax: w.max,
+      tickMsMean: tickWindow.mean(),
       ticksMeasured: w.ticks,
       lastBatchTicks,
       framesPerS: frameTimes.length,

@@ -1,0 +1,13 @@
+{
+  "method": "node + the app's wasm (Sim.river_city_scaled, seeds 2026/7), no browser: on-network vehicles sampled once per sim minute; storage = Σ lanes × max(1, floor(length / 7.5 m)) (the sim's capacity formula). Not produced by the @perf harness; supports the 10,000-vehicle analysis in docs/performance.md.",
+  "timestamp": "2026-10-08",
+  "links": 334,
+  "storageAllLinks": 32952,
+  "storageExcludingZoneConnectors": 30664,
+  "peakOnNetwork": {
+    "x3": { "within1SimHour": 6066, "within3SimHours": 6200 },
+    "x4": { "within1SimHour": 6454, "within3SimHours": 6541 },
+    "x5": { "within1SimHour": 6856, "within3SimHours": 7042 },
+    "x6": { "within1SimHour": 6676, "within3SimHours": 7615 }
+  }
+}

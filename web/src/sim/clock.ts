@@ -94,6 +94,11 @@ export class SimClock {
     this.executedTicks += Math.max(0, Math.floor(ticks));
   }
 
+  /** A new world: sim time counts from its tick (`executedTicks` = tick, as frames require). */
+  resetExecuted(tick: number): void {
+    this.executedTicks = Math.max(0, Math.floor(tick));
+  }
+
   /** Start pacing afresh from now (after the warm-up): no backlog for the time it took. */
   resync(): void {
     const t = this.now();

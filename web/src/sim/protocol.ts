@@ -101,6 +101,8 @@ export interface PerfStats {
   tickMsMedian: number;
   tickMsP95: number;
   tickMsMax: number;
+  /** Mean over the same window (Σ ms ÷ Σ ticks): the trustworthy number below the timer step. */
+  tickMsMean: number;
   /** Ticks in the window (≤ 1,000; warm-up ticks are not measured). */
   ticksMeasured: number;
   lastBatchTicks: number;

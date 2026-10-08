@@ -47,6 +47,19 @@ export class TickWindow {
     }
   }
 
+  /** Mean ms per tick over the window (Σ ms ÷ Σ ticks): meaningful even below the timer step. */
+  mean(): number {
+    const excess = Math.max(0, this.total - TICK_WINDOW);
+    let ms = 0;
+    let ticks = 0;
+    this.samples.forEach(([v, w], i) => {
+      const weight = i === 0 ? w - excess : w;
+      ms += v * weight;
+      ticks += weight;
+    });
+    return ticks > 0 ? ms / ticks : 0;
+  }
+
   stats(): { median: number; p95: number; max: number; ticks: number } {
     if (this.samples.length === 0) return { median: 0, p95: 0, max: 0, ticks: 0 };
     // the oldest sample still inside the window is truncated to fill exactly TICK_WINDOW ticks

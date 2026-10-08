@@ -217,3 +217,10 @@ pnpm -C web build:wasm && pnpm -C web dev
 
 ## Verification
 The Gold reviewer runs the full demo with Playwright MCP, re-runs the perf harness once and compares it with the report (within run-to-run noise), and audits the integration checklist.
+
+## Gold refinements (after Gold r1, REJECTED)
+- **Warm-up batches (M1):** a batch steps chunks of ≤ 32 ticks and stops once 40 ms (0.4 × `WARMUP_BATCH_MAX_MS`) have passed. The bound no longer depends on predicting tick cost, which grows about 100× while the empty city fills. Measured with real wasm and a real clock, the longest batch is 40–44 ms at ×1–×6 (before: up to 191 ms). The regression tests are in `web/tests/gold_city005.test.ts` (rising and stepped tick cost).
+- **Re-init (m3):** `SimClock.resetExecuted(tick)`, so frames keep `tick = executedTicks` after a new `init`.
+- **Diagnostics (m5):** an extra row `diag-tick-mean` from `PerfStats.tickMsMean` (Σ ms ÷ Σ ticks over the window), which resolves costs below the timer step.
+- **App (m1, m4):** render windows are created lazily. Label ref callbacks place only newly mounted elements; the rAF loop handles camera moves.
+- **Report (m2):** the peaks on the network and the storage figure come from `web/perf-results/network-throughput-probe.json`: at most 7,615 at ×6 over 3 sim hours, and 32,952 storage (30,664 without zone connectors).

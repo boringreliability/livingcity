@@ -32,6 +32,8 @@ export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, 
       <dl>
         {row('sim tick (median / p95)', 'diag-tick', `${(perf?.tickMsMedian ?? 0).toFixed(3)} / ${(perf?.tickMsP95 ?? 0).toFixed(3)} ms`,
           `Wall time per simulation tick over the last ${perf?.ticksMeasured ?? 0} ticks (timer step ${(perf?.timerResolutionMs ?? 0).toFixed(3)} ms)`)}
+        {row('sim tick (mean)', 'diag-tick-mean', `${(perf?.tickMsMean ?? 0).toFixed(3)} ms`,
+          'Total measured time ÷ ticks: unlike the percentiles, it resolves costs below the timer step')}
         {row('ticks measured', 'diag-ticks-measured', String(perf?.ticksMeasured ?? 0))}
         {row('frame encode', 'diag-encode', `${(perf?.encodeMs ?? 0).toFixed(2)} ms`)}
         {row('render interval (median / p95)', 'diag-render', `${render.intervalMedianMs.toFixed(1)} / ${render.intervalP95Ms.toFixed(1)} ms`,
