@@ -1,7 +1,7 @@
 ---
 epic: "core"
 name: "Simulation core and first closure"
-status: "active"
+status: "complete"
 created: "2026-10-06"
 ---
 # Epic: Simulation core and first closure

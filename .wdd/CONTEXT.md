@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-08: city-005 complete (Red 4 + user-accepted spec amendment, Gold 2). **Epic city done: waiting at the human epic gate.**
+2026-10-08: **epic city human-approved** ("ja" at the epic gate). Next: plan epic `timeline`.
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -10,7 +10,7 @@
   - `crates/sim-wasm`: thin `Sim` adapter.
   - `web/`: worker host + `SimClock`, WebGL2 renderer, React UI, Playwright e2e.
   - Tests: Rust 85, Vitest 45, Playwright 17. Review logs are in `.wdd/reviews/`.
-- **Epic city: active.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
+- **Epic city: complete, human-approved 2026-10-08.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
   - **city-001 complete**: per-link `sat_flow_per_lane`; gridlock relief (reroute at 60 s blocked, removal at 10 min → `removed_gridlock` / `unserved`); `EXTENDED_METRIC_NAMES`. Red 4 rounds (auto), Gold 2.
   - **city-002 complete**: `cities::river_city` (Main / North / Old Bridge, 22 zones, calibrated demand), the app defaults to River City (`?city=three_bridges`). Red 3, Gold 1. See `.wdd/memory/decisions/river-city-calibration.md`.
   - **city-003 complete**: inspect/follow vehicles, road stats; `tracked`/`linkDetail` omitted until first used; extrapolation anchor restarts on new tick/resume/speed change. Red 3, Gold 4.
@@ -76,5 +76,4 @@
 - Browser `performance.now()` is coarse (0.1 ms). After a wasm trap the host halts, and recovery needs a new worker.
 
 ## What Comes Next
-- **Human epic gate for `city`**: present the demo, commands, review log and deviations, then wait for "godkendt".
-- Then epic `timeline` (snapshots, replay, branch, compare; Restore must invalidate the RouterCache), then `polish` (the MINORs above, a11y, onboarding).
+- Epic `timeline` (snapshots, replay, branch, compare; Restore must invalidate the RouterCache), then `polish` (the MINORs above, a11y, onboarding).

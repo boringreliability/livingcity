@@ -1,7 +1,7 @@
 ---
 epic: "city"
 name: "River city"
-status: "active"
+status: "complete"
 created: "2026-10-07"
 ---
 # Epic: River city
