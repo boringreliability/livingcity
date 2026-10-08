@@ -3,10 +3,10 @@ ward: 2
 revision: null
 name: "Branch and window metrics in sim-core"
 epic: "timeline"
-status: "red"
+status: "approved"
 dependencies: ["timeline-001"]
 layer: "rust"
-estimated_tests: 18
+estimated_tests: 19
 created: "2026-10-08"
 completed: null
 ---
@@ -89,6 +89,7 @@ File: `crates/sim-core/tests/timeline_002_branch.rs`. It runs in the default tes
 | 16 | `window_metrics_count_gridlock_removals` | a demand-driven one-way ring (4 zones, flows going three quarters round at 1,200 veh/h) deadlocks. The cohort has gridlock removals (probed: 15 at 4000) and no unreachable ones. Equal to brute force for from ∈ {0, 500, 2000} |
 | 17 | `window_metrics_exclude_removed_spawns` | three_bridges with all bridges closed for good at 500 and explicit spawns every 20 ticks in [300, 500), run to 3000. Removed spawns are in no cohort: equal to brute force for from ∈ {0, 400, 1000} (probed: 1,123 spawned, 1,113 generated, the 10 spawns all removed as unreachable) |
 | 18 | `branch_inside_an_evicted_window` | the original has a budget of 4 snapshots, so its window is evicted (`window_start` > 0). For `at` ∈ {window_start, window_start + 50, 2393}: B equals the reference, B's snapshots are A's retained ones < `at` plus `at`, and B's `window_start` equals A's |
+| 19 | `branch_truncates_the_removal_log` | three_bridges with all bridges closed at 500, run to 3000, so there are removals before and after each `at`. `branch(1500)` at the head and `branch(2400)` after `seek(1200)`: B equals the reference (hash, logs, metrics), its removal count is the reference's, its window metrics equal brute force, and 300 ticks later it still equals the reference |
 
 ## Must NOT
 - Modify the original in `branch` (it takes `&self`).

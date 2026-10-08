@@ -561,3 +561,36 @@ fn branch_inside_an_evicted_window() {
         assert_eq!(b.window().window_start, start);
     }
 }
+
+// ─── 19 (Red r4 MAJOR 1) ─────────────────────────────────────────────────
+/// Branching an original that has removals before and after `at`: B's removal log is A's as of `at`.
+#[test]
+fn branch_truncates_the_removal_log() {
+    let c = three_bridges(2026, 7);
+    let lm = c.landmarks;
+    let cmds: Vec<Command> = [lm.north_bridge, lm.central_bridge, lm.south_bridge]
+        .into_iter()
+        .flatten()
+        .map(|l| close(l, 500))
+        .collect();
+    let mut a = Timeline::new(world(&c.scenario, &cmds), UNLIMITED);
+    a.step_n(3000);
+    let head_removed = a.world().counts().removed;
+    for (seek_to, at) in [(None, 1500u64), (Some(1200u64), 2400)] {
+        if let Some(t) = seek_to {
+            a.seek(t).unwrap(); // the head logs are now held aside: branch must truncate those too
+        }
+        let mut r = stepped(&c.scenario, &cmds, at);
+        let removed_at = r.counts().removed;
+        assert!(removed_at > 0 && removed_at < head_removed, "precondition: removals before and after {at} ({removed_at} of {head_removed})");
+        let mut b = a.branch(at, UNLIMITED).unwrap();
+        assert_eq!(observe(b.world()), observe(&r), "branch({at})");
+        assert_eq!(b.world().counts().removed, removed_at);
+        assert_metrics_eq(&b.world().window_metrics(0), &brute(&r, 0), &format!("branch({at}) window"));
+        b.step_n(300);
+        for _ in 0..300 {
+            r.step();
+        }
+        assert_eq!(observe(b.world()), observe(&r), "branch({at}) + 300");
+    }
+}
