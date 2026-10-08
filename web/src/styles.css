@@ -50,7 +50,72 @@ canvas.city {
   left: 16px;
   display: grid;
   gap: 8px;
-  width: 260px;
+  min-width: 260px;
+}
+
+.diag-toggle {
+  margin-left: auto;
+  padding: 2px 9px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.diag-toggle[aria-expanded='true'] {
+  outline: 2px solid var(--text, #e6e6e6);
+  outline-offset: -2px;
+}
+
+.stress {
+  border: 1px dashed currentColor;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Below the control panel, top left; opened on demand (D), so it may cover part of the map. */
+.diagnostics {
+  top: 132px;
+  left: 16px;
+  width: 300px;
+  font-size: 12px;
+}
+
+.diagnostics h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.diagnostics dl {
+  margin: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.diag-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diag-row dt {
+  color: var(--muted);
+}
+
+.diag-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.starting {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 15px;
 }
 
 .controls .row {

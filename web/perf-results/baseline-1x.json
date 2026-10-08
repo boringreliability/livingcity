@@ -1,0 +1,59 @@
+{
+  "scenario": "baseline 1×",
+  "url": "/",
+  "multiplier": 1,
+  "durationS": 60,
+  "timestamp": "2026-10-08T12:57:34.806Z",
+  "browser": "chromium 153.0.8010.12",
+  "hardware": "Mac16,7 · Apple M4 Pro",
+  "conditions": {
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "devicePixelRatio": 1,
+    "headless": true,
+    "launchArgs": [
+      "--use-angle=swiftshader",
+      "--enable-unsafe-swiftshader"
+    ]
+  },
+  "city": "river_city",
+  "wallMs": 60002.300000000745,
+  "framesRecorded": 3021,
+  "ticksRecorded": 120,
+  "renderSamples": 1327,
+  "onNetworkMedian": 1772,
+  "onNetworkMax": 1800,
+  "activeMedian": 1775,
+  "activeMax": 1803,
+  "waitingAtOriginMax": 12,
+  "tickMsMean": 0.0625,
+  "tickMsMedian": 0.09999999776482582,
+  "tickMsP95": 0.19999999925494194,
+  "tickMsMaxFrame": 0.20000000298023224,
+  "timerResolutionMs": 0.09999999776482582,
+  "tickBelowTimerResolution": true,
+  "renderIntervalMedianMs": 50,
+  "renderIntervalP95Ms": 50.100000000000364,
+  "drawMedianMs": 0,
+  "drawP95Ms": 0.10000000149011612,
+  "achievedTicksPerS": 1.9999233362720847,
+  "achievedSpeed": 0.9999616681360424,
+  "targetTicksPerS": 2,
+  "frameBytes": 28656,
+  "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+  "targets": {
+    "onNetworkVehicles": {
+      "target": 10000,
+      "measuredMax": 1800,
+      "met": false,
+      "note": "active also counts trips waiting at their origin; see activeMax / waitingAtOriginMax"
+    },
+    "smoothRendering": {
+      "targetIntervalMedianMs": 17.5,
+      "measured": 50,
+      "met": false
+    }
+  }
+}

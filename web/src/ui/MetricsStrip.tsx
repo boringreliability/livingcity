@@ -10,6 +10,10 @@ function minutes(seconds: number | undefined): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+/** Definition of `unserved` (= unreachable + gridlock removals), shown as the tooltip. */
+export const UNSERVED_TOOLTIP =
+  'Trips the city could not serve: no route at the origin, stranded without a route, or removed after 10 minutes in gridlock';
+
 interface Props {
   simTimeS: number;
   metrics: Record<string, number>;
@@ -39,9 +43,9 @@ export function MetricsStrip({ simTimeS, metrics }: Props) {
         <span className="label">queued ⓘ</span>
         <span className="value">{metrics['queued'] ?? 0}</span>
       </div>
-      <div className="metric" title="Trips without any route: waiting at their origin, stranded on a road, or removed">
-        <span className="label">unreachable</span>
-        <span className="value">{metrics['unreachable'] ?? 0}</span>
+      <div className="metric" title={UNSERVED_TOOLTIP}>
+        <span className="label">unserved ⓘ</span>
+        <span className="value">{metrics['unserved'] ?? 0}</span>
       </div>
     </section>
   );

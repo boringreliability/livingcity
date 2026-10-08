@@ -31,8 +31,22 @@ export function parseCityName(value: string | null | undefined): CityName {
   return value === 'three_bridges' || value === 'river_city' ? value : DEFAULT_CITY;
 }
 
+/** Sim seconds the app pre-simulates before `ready`, so it opens on a living city (ward city-005). */
+export const WARMUP_SIM_S = 900;
+/** Accepted range of the `?demand=` stress scale (measurement only). */
+export const DEMAND_SCALE_MIN = 0.25;
+export const DEMAND_SCALE_MAX = 6;
+
+/** `?demand=` → a scale; missing → 1; anything invalid → 1 with `invalid` (the app warns). */
+export function parseDemandScale(value: string | null): { scale: number; invalid: boolean } {
+  if (value === null || value === '') return { scale: 1, invalid: false };
+  const n = /^\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : NaN;
+  return Number.isFinite(n) && n >= DEMAND_SCALE_MIN && n <= DEMAND_SCALE_MAX ? { scale: n, invalid: false } : { scale: 1, invalid: true };
+}
+
 export type ToWorker =
-  | { type: 'init'; demandSeed: number; behaviorSeed: number; city?: CityName }
+  /** `warmupS`: pre-simulate before `ready` (default 0); `demandScale`: stress demand (default 1). */
+  | { type: 'init'; demandSeed: number; behaviorSeed: number; city?: CityName; warmupS?: number; demandScale?: number }
   | { type: 'setRunning'; running: boolean }
   | { type: 'setSpeed'; multiplier: number }
   | { type: 'command'; kind: 'close' | 'open'; link: number }
@@ -83,15 +97,27 @@ export interface ClockStatus {
 }
 
 export interface PerfStats {
-  /** Wall ms per sim tick over the recent batches. */
+  /** Wall ms per sim tick over the newest 1,000 ticks (weighted by batch size). */
   tickMsMedian: number;
   tickMsP95: number;
+  tickMsMax: number;
+  /** Ticks in the window (≤ 1,000; warm-up ticks are not measured). */
+  ticksMeasured: number;
   lastBatchTicks: number;
   framesPerS: number;
+  /** Wall ms of the last frame's encode and copy. */
+  encodeMs: number;
+  /** Ticks executed since the previous frame, and their measured ms. */
+  frameTicks: number;
+  frameTickMs: number;
+  /** Smallest positive step of the measurement clock (0 if unknown). */
+  timerResolutionMs: number;
 }
 
 export interface ReadyMessage {
   type: 'ready';
+  /** The tick the world is at (after any warm-up). */
+  tick: number;
   /** The built city's name as the sim reports it (`'unknown'` for sims without one). */
   city: string;
   /** River corridor `[west_x, east_x]` (m), from the sim; `[0, 0]` when unknown. */

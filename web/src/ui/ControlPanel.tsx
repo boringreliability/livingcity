@@ -14,6 +14,10 @@ interface Props {
   onToggleMainBridge(): void;
   /** Disable every control (e.g. when the city cannot be drawn). */
   disabled?: boolean;
+  diagnosticsOpen: boolean;
+  onToggleDiagnostics(): void;
+  /** Demand scale from `?demand=` (1 = the normal city: no badge). */
+  demandScale: number;
 }
 
 export function ControlPanel(p: Props) {
@@ -35,6 +39,22 @@ export function ControlPanel(p: Props) {
         <span className="speed" data-testid="achieved-speed" title="Achieved simulation speed vs. the requested speed">
           {achieved.toFixed(1)}× of {p.speed}×
         </span>
+        {/* compact (an icon) so the panel stays inside the top inset band */}
+        <button
+          type="button"
+          className="diag-toggle"
+          aria-label="Diagnostics"
+          aria-expanded={p.diagnosticsOpen}
+          onClick={p.onToggleDiagnostics}
+          title="Diagnostics: measured performance (D)"
+        >
+          <span aria-hidden="true">≡</span>
+        </button>
+        {p.demandScale !== 1 && (
+          <span className="stress" title="Demand multiplied for measurement (?demand=): a load test, not a forecast">
+            stress test ×{p.demandScale}
+          </span>
+        )}
       </div>
       <div role="status" aria-live="polite" className="behind">
         {behind ? '⚠ Behind — the engine cannot keep up with this speed' : ''}

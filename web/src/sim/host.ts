@@ -1,4 +1,5 @@
 import { SimClock } from './clock';
+import { TickWindow } from './perf';
 import {
   DT,
   VEHICLE_RECORD_WORDS,
@@ -53,11 +54,14 @@ export interface SimLike {
 }
 
 export interface HostDeps {
-  createSim(demandSeed: number, behaviorSeed: number, city: CityName): SimLike;
+  /** `demandScale` is 1 unless the init asked for stress demand. */
+  createSim(demandSeed: number, behaviorSeed: number, city: CityName, demandScale: number): SimLike;
   /** The wasm linear memory (read the frame through it). */
   memory(): WebAssembly.Memory;
   post(msg: FromWorker, transfer: Transferable[]): void;
   now(): number;
+  /** The measurement clock for perf statistics only (default `now`); the pacing never reads it. */
+  perfNow?(): number;
 }
 
 export interface SimHost {
@@ -68,11 +72,34 @@ export interface SimHost {
 
 /** Minimum wall time between frames (ms). */
 export const FRAME_INTERVAL_MS = 16;
-/** Per-frame samples kept for the ms/tick percentiles. */
-const PERF_SAMPLES = 64;
+/** No warm-up batch may block message handling longer than this (ms of `now`). */
+export const WARMUP_BATCH_MAX_MS = 100;
+/** Warm-up batches aim at this duration; the first one is small because tick cost is unknown. */
+const WARMUP_TARGET_MS = 40;
+const WARMUP_FIRST_BATCH = 16;
+const WARMUP_MAX_BATCH = 4096;
+
+/** Smallest positive step of a clock: ≥ 3 positive steps, within 50 ms of its time or 100,000 reads; 0 if none. */
+function timerResolution(read: () => number): number {
+  let prev = read();
+  const start = prev;
+  let best = Number.POSITIVE_INFINITY;
+  let seen = 0;
+  for (let i = 0; i < 100_000 && seen < 3 && prev - start <= 50; i++) {
+    const t = read();
+    if (t > prev) {
+      best = Math.min(best, t - prev);
+      seen++;
+    }
+    prev = t;
+  }
+  return seen > 0 ? best : 0;
+}
 
 export function createSimHost(deps: HostDeps): SimHost {
   const clock = new SimClock(deps.now);
+  const perfNow = deps.perfNow ?? deps.now;
+  const timerResolutionMs = timerResolution(perfNow);
   let sim: SimLike | undefined;
   let halted = false;
   let linkCount = 0;
@@ -87,23 +114,31 @@ export function createSimHost(deps: HostDeps): SimHost {
   let linkInspectionUsed = false;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
   let pool: ArrayBuffer[] = [];
-  // ms/tick is sampled per frame from summed batch time. Browsers coarsen
-  // performance.now() (often to 0.1 ms), so sub-resolution ticks still read
-  // as ~0; the numbers are only meaningful once ticks cost ≳ 0.1 ms.
-  const tickMs: number[] = [];
+  // Per-tick ms over the newest 1,000 ticks, one sample per batch (perf clock). Browsers coarsen
+  // performance.now() (often to 0.1 ms): `timerResolutionMs` says how far the numbers can be trusted.
+  let tickWindow = new TickWindow();
   let lastBatchTicks = 0;
   let sinceFrameMs = 0;
   let sinceFrameTicks = 0;
+  let encodeMs = 0;
   const frameTimes: number[] = [];
+  /** The warm-up still to run before `ready` (null when none), and commands received meanwhile. */
+  let warmup: { remaining: number; batch: number; ran: number } | null = null;
+  let deferred: { kind: 'close' | 'open'; link: number }[] = [];
 
   const error = (message: string) => deps.post({ type: 'error', message }, []);
 
-  const init = (demandSeed: number, behaviorSeed: number, city: CityName) => {
-    // a new world: nothing is inspected any more
+  const init = (demandSeed: number, behaviorSeed: number, city: CityName, warmupS: number, demandScale: number) => {
+    // a new world: nothing is inspected any more, and no older warm-up or command is pending
     trackedTrip = null;
     inspectedLink = null;
+    warmup = null;
+    deferred = [];
+    tickWindow = new TickWindow();
+    sinceFrameMs = 0;
+    sinceFrameTicks = 0;
     try {
-      sim = deps.createSim(demandSeed, behaviorSeed, city);
+      sim = deps.createSim(demandSeed, behaviorSeed, city, demandScale);
     } catch (e) {
       sim = undefined;
       error(`init failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -111,25 +146,54 @@ export function createSimHost(deps: HostDeps): SimHost {
     }
     lastPost = Number.NEGATIVE_INFINITY;
     linkCount = sim.link_from().length;
-    const river = typeof sim.river === 'function' ? Array.from(sim.river()) : [];
+    const ticks = Number.isFinite(warmupS) && warmupS > 0 ? Math.round(warmupS / DT) : 0;
+    if (ticks > 0) warmup = { remaining: ticks, batch: WARMUP_FIRST_BATCH, ran: 0 };
+    else postReady(sim);
+  };
+
+  /** One bounded warm-up batch; at the end: clock in sync, deferred commands handed over, `ready`. */
+  const warmStep = (s: SimLike, w: NonNullable<typeof warmup>) => {
+    const n = Math.min(w.remaining, w.batch);
+    const t0 = deps.now();
+    s.step(n);
+    const ms = deps.now() - t0;
+    w.remaining -= n;
+    w.ran += n;
+    // size the next batch from the measured cost (never more than the 100 ms bound allows)
+    const perTick = ms / n;
+    w.batch =
+      perTick > 0
+        ? Math.max(1, Math.min(WARMUP_MAX_BATCH, Math.floor(WARMUP_TARGET_MS / perTick), Math.floor(WARMUP_BATCH_MAX_MS / perTick)))
+        : Math.min(WARMUP_MAX_BATCH, w.batch * 2);
+    if (w.remaining > 0) return;
+    warmup = null;
+    clock.addUnpaced(w.ran);
+    clock.resync();
+    for (const c of deferred.splice(0)) command(c.kind, c.link);
+    postReady(s);
+  };
+
+  const postReady = (s: SimLike) => {
+    const river = typeof s.river === 'function' ? Array.from(s.river()) : [];
     deps.post(
       {
         type: 'ready',
-        city: typeof sim.city_name === 'function' ? sim.city_name() : 'unknown',
+        tick: s.tick(),
+        city: typeof s.city_name === 'function' ? s.city_name() : 'unknown',
         river: river.length === 2 ? [river[0]!, river[1]!] : [0, 0],
         network: {
-          nodeXy: sim.node_xy(),
-          nodeIsZone: sim.node_is_zone(),
-          linkFrom: sim.link_from(),
-          linkTo: sim.link_to(),
-          linkLanes: sim.link_lanes(),
-          linkLength: sim.link_length(),
-          linkSpeed: sim.link_speed(),
-          ...(typeof sim.link_sat_flow === 'function' ? { linkSatFlow: sim.link_sat_flow() } : {}),
+          nodeXy: s.node_xy(),
+          nodeIsZone: s.node_is_zone(),
+          linkFrom: s.link_from(),
+          linkTo: s.link_to(),
+          linkLanes: s.link_lanes(),
+          linkLength: s.link_length(),
+          linkSpeed: s.link_speed(),
+          ...(typeof s.link_sat_flow === 'function' ? { linkSatFlow: s.link_sat_flow() } : {}),
         },
-        landmarks: JSON.parse(sim.landmarks_json()) as Landmarks,
-        zones: JSON.parse(sim.zones_json()) as ZoneInfo[],
-        metricNames: sim.metric_names(),
+        landmarks: JSON.parse(s.landmarks_json()) as Landmarks,
+        zones: JSON.parse(s.zones_json()) as ZoneInfo[],
+        metricNames: s.metric_names(),
       },
       [],
     );
@@ -147,6 +211,11 @@ export function createSimHost(deps: HostDeps): SimHost {
     }
     if (!Number.isInteger(link) || link < 0 || link >= linkCount) {
       error(`unknown link ${link}`);
+      return;
+    }
+    // during the warm-up commands wait: they apply after its last tick
+    if (warmup) {
+      deferred.push({ kind, link });
       return;
     }
     const ok = kind === 'close' ? sim.close_link(link) : sim.open_link(link);
@@ -190,12 +259,26 @@ export function createSimHost(deps: HostDeps): SimHost {
 
   const perf = (t: number): PerfStats => {
     while (frameTimes.length > 0 && frameTimes[0]! <= t - 1000) frameTimes.shift();
-    const sorted = [...tickMs].sort((a, b) => a - b);
-    const pct = (p: number) => (sorted.length === 0 ? 0 : sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]!);
-    return { tickMsMedian: pct(0.5), tickMsP95: pct(0.95), lastBatchTicks, framesPerS: frameTimes.length };
+    const w = tickWindow.stats();
+    const p: PerfStats = {
+      tickMsMedian: w.median,
+      tickMsP95: w.p95,
+      tickMsMax: w.max,
+      ticksMeasured: w.ticks,
+      lastBatchTicks,
+      framesPerS: frameTimes.length,
+      encodeMs,
+      frameTicks: sinceFrameTicks,
+      frameTickMs: sinceFrameMs,
+      timerResolutionMs,
+    };
+    sinceFrameMs = 0;
+    sinceFrameTicks = 0;
+    return p;
   };
 
   const postFrame = (s: SimLike, t: number) => {
+    const e0 = perfNow();
     const count = s.encode_frame();
     const words = count * VEHICLE_RECORD_WORDS;
     const bytes = words * 4;
@@ -203,13 +286,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     pool = [];
     const vehicles = reuse ?? new ArrayBuffer(bytes);
     new Uint32Array(vehicles).set(new Uint32Array(deps.memory().buffer, s.frame_ptr(), words));
+    encodeMs = perfNow() - e0;
     frameTimes.push(t);
-    if (sinceFrameTicks > 0) {
-      tickMs.push(sinceFrameMs / sinceFrameTicks);
-      if (tickMs.length > PERF_SAMPLES) tickMs.shift();
-    }
-    sinceFrameMs = 0;
-    sinceFrameTicks = 0;
     const tick = s.tick();
     // `tracked` / `linkDetail` are omitted until inspection is used (see FrameMessage)
     const msg = {
@@ -235,7 +313,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       try {
         switch (msg.type) {
           case 'init':
-            init(msg.demandSeed, msg.behaviorSeed, msg.city ?? DEFAULT_CITY);
+            init(msg.demandSeed, msg.behaviorSeed, msg.city ?? DEFAULT_CITY, msg.warmupS ?? 0, msg.demandScale ?? 1);
             break;
           case 'setRunning':
             clock.setRunning(msg.running);
@@ -267,13 +345,21 @@ export function createSimHost(deps: HostDeps): SimHost {
     iterate(): void {
       if (!sim) return;
       try {
+        if (warmup) {
+          warmStep(sim, warmup);
+          return;
+        }
         const n = clock.plan();
         let ms = 0;
         if (n > 0) {
+          // the pacing reads `now`; the statistics read the measurement clock
           const t0 = deps.now();
+          const p0 = perfNow();
           sim.step(n);
+          const pms = perfNow() - p0;
           ms = deps.now() - t0;
-          sinceFrameMs += ms;
+          tickWindow.add(pms, n);
+          sinceFrameMs += pms;
           sinceFrameTicks += n;
           lastBatchTicks = n;
         }

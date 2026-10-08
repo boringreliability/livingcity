@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use wasm_bindgen::prelude::*;
 
-use sim_core::cities::{river_city, three_bridges, City, Landmarks, Zone, ZoneKind};
+use sim_core::cities::{river_city, river_city_scaled, three_bridges, City, Landmarks, Zone, ZoneKind};
 use sim_core::frame::{
     metrics_to_extended_array, write_link_stats, write_vehicle_records, NetworkExport, EXTENDED_METRIC_NAMES,
 };
@@ -59,6 +59,13 @@ impl Sim {
     /// The demo city (epic city).
     pub fn river_city(demand_seed: u32, behavior_seed: u32) -> Sim {
         Sim::from_city(river_city(demand_seed as u64, behavior_seed as u64))
+    }
+
+    /// The demo city with every flow × `demand_scale` (0 < scale ≤ 6): measurement only.
+    pub fn river_city_scaled(demand_seed: u32, behavior_seed: u32, demand_scale: f64) -> Result<Sim, JsError> {
+        river_city_scaled(demand_seed as u64, behavior_seed as u64, demand_scale)
+            .map(Sim::from_city)
+            .map_err(|e| JsError::new(&e.to_string()))
     }
 
     pub fn city_name(&self) -> String {

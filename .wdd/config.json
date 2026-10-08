@@ -8,8 +8,8 @@
     "review": []
   },
   "conventions": {
-    "test_framework": "",
-    "lint": "",
-    "format": ""
+    "test_framework": "cargo test (Rust), vitest (web/tests), playwright (web/e2e; @perf via e2e:perf)",
+    "lint": "cargo clippy --workspace --all-targets -- -D warnings; pnpm -C web typecheck",
+    "format": "rustfmt defaults (not gated); TS follows the surrounding code"
   }
 }

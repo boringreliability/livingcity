@@ -19,7 +19,13 @@ export interface SimClient {
   dispose(): void;
 }
 
-export function createSimClient(demandSeed: number, behaviorSeed: number, city?: CityName): SimClient {
+/** `warmupS`: sim seconds to pre-simulate before `ready`; `demandScale`: stress demand (measurement only). */
+export function createSimClient(
+  demandSeed: number,
+  behaviorSeed: number,
+  city?: CityName,
+  opts: { warmupS?: number; demandScale?: number } = {},
+): SimClient {
   const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   const ready: ((m: ReadyMessage) => void)[] = [];
   const frame: ((m: FrameMessage) => void)[] = [];
@@ -33,7 +39,14 @@ export function createSimClient(demandSeed: number, behaviorSeed: number, city?:
     else if (msg.type === 'frame') frame.forEach((cb) => cb(msg));
     else errors.forEach((cb) => cb(msg.message));
   };
-  send({ type: 'init', demandSeed, behaviorSeed, ...(city ? { city } : {}) });
+  send({
+    type: 'init',
+    demandSeed,
+    behaviorSeed,
+    ...(city ? { city } : {}),
+    ...(opts.warmupS ? { warmupS: opts.warmupS } : {}),
+    ...(opts.demandScale !== undefined && opts.demandScale !== 1 ? { demandScale: opts.demandScale } : {}),
+  });
 
   return {
     onReady: (cb) => void ready.push(cb),

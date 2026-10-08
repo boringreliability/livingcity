@@ -86,6 +86,22 @@ export class SimClock {
     return Math.min(n, maxTicks);
   }
 
+  /**
+   * Ticks run outside the pacing (the warm-up before `ready`): counted in sim time, but not in
+   * the achieved rate, the backlog or the ms/tick estimate.
+   */
+  addUnpaced(ticks: number): void {
+    this.executedTicks += Math.max(0, Math.floor(ticks));
+  }
+
+  /** Start pacing afresh from now (after the warm-up): no backlog for the time it took. */
+  resync(): void {
+    const t = this.now();
+    this.creditedUntil = t;
+    this.backlog = 0;
+    if (this.running) this.graceStart = t;
+  }
+
   report(ticks: number, elapsedMs: number): void {
     ticks = Math.max(0, Math.floor(ticks));
     this.executedTicks += ticks;

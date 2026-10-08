@@ -8,25 +8,33 @@ import { FIT_INSETS } from './render/layout';
 import { CityRenderer, linkCapacity } from './render/renderer';
 import { createSimClient, type SimClient } from './sim/client';
 import { decodeVehicles, type DecodedVehicles } from './sim/frame';
+import { RENDER_WINDOW, SampleWindow } from './sim/perf';
 import {
   DT,
+  FLAG_QUEUED,
+  WARMUP_SIM_S,
   parseCityName,
+  parseDemandScale,
   type ClockStatus,
   type FrameMessage,
+  type PerfStats,
   type LinkDetail,
   type ReadyMessage,
   type TrackedGone,
   type TrackedVehicle,
 } from './sim/protocol';
 import { ControlPanel, SPEEDS } from './ui/ControlPanel';
+import { DiagnosticsPanel, type RenderStats } from './ui/DiagnosticsPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
 import { Legend } from './ui/Legend';
 import { VehiclePanel } from './ui/VehiclePanel';
-import type { LivingCitySnapshot } from './ui/testHook';
+import type { LivingCitySnapshot, PerfRecording } from './ui/testHook';
 import './styles.css';
 
 const DEFAULT_SPEED = 20;
+/** The diagnostics panel's render numbers refresh at this period (ms). */
+const RENDER_STATS_REFRESH_MS = 500;
 /** Wheel zoom: factor per 100 px of wheel delta (one notch ≈ 16 %). */
 const WHEEL_FACTOR_PER_100PX = 1.16;
 const CLICK_SLOP_PX = 4;
@@ -40,6 +48,21 @@ interface FrameView {
   linkQueued: Uint16Array;
   metrics: Record<string, number>;
   clock: ClockStatus;
+  perf: PerfStats;
+  frameBytes: number;
+}
+
+/** `?demand=` for stress measurements, read once (an invalid value falls back to 1 with a warning). */
+const DEMAND = (() => {
+  const raw = new URLSearchParams(window.location.search).get('demand');
+  const parsed = parseDemandScale(raw);
+  if (parsed.invalid) console.warn(`Ignoring ?demand=${raw}: the demand scale must be a number from 0.25 to 6; using 1.`);
+  return parsed.scale;
+})();
+
+/** An in-progress perf recording (test hook): everything from start to stop. */
+interface Recording extends Omit<PerfRecording, 'wallMs' | 'timerResolutionMs'> {
+  startMs: number;
 }
 
 const isInteractive = (t: EventTarget | null) =>
@@ -66,6 +89,19 @@ export function App() {
   const followingRef = useRef(false);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
+  /** Render-side measurement (C5): rAF intervals and draw CPU time over the last 300 frames. */
+  const renderIntervals = useRef(new SampleWindow(RENDER_WINDOW));
+  const drawTimes = useRef(new SampleWindow(RENDER_WINDOW));
+  const recordingRef = useRef<Recording | null>(null);
+  const [diagOpen, setDiagOpen] = useState(false);
+  const computeRenderStats = (): RenderStats => {
+    const i = renderIntervals.current.stats();
+    const d = drawTimes.current.stats();
+    return { intervalMedianMs: i.median, intervalP95Ms: i.p95, drawMedianMs: d.median, drawP95Ms: d.p95, samples: i.count };
+  };
+  /** Render stats as shown: refreshed twice a second (readable; the panel and the hook show the same values). */
+  const renderStatsRef = useRef<{ at: number; stats: RenderStats }>({ at: Number.NEGATIVE_INFINITY, stats: computeRenderStats() });
+  const renderStats = () => renderStatsRef.current.stats;
 
   const [ready, setReady] = useState<ReadyMessage | null>(null);
   const [frame, setFrame] = useState<FrameView | null>(null);
@@ -145,7 +181,11 @@ export function App() {
       setNoGl(true);
       return;
     }
-    const c = createSimClient(2026, 7, parseCityName(new URLSearchParams(window.location.search).get('city')));
+    // the worker pre-simulates WARMUP_SIM_S before `ready`: the app opens on a living city
+    const c = createSimClient(2026, 7, parseCityName(new URLSearchParams(window.location.search).get('city')), {
+      warmupS: WARMUP_SIM_S,
+      demandScale: DEMAND,
+    });
     client.current = c;
     c.onError(setError);
     c.onReady((r) => {
@@ -188,10 +228,19 @@ export function App() {
         setFollowing(false);
       }
       setLinkDetail(f.linkDetail ?? null);
+      const frameBytes = f.vehicles.byteLength;
       c.returnBuffer(f.vehicles); // uploaded: give the buffer back to the worker's pool
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
       names.forEach((n, i) => (metrics[n] = f.metrics[i]!));
+      const rec = recordingRef.current;
+      if (rec) {
+        rec.ticks.push([f.perf.frameTickMs, f.perf.frameTicks]);
+        rec.onNetwork.push(metrics['on_network'] ?? 0);
+        rec.active.push(metrics['active'] ?? 0);
+        rec.waitingAtOrigin.push(metrics['waiting_at_origin'] ?? 0);
+        rec.frames++;
+      }
       const view: FrameView = {
         tick: f.tick,
         simTimeS: f.simTimeS,
@@ -200,6 +249,8 @@ export function App() {
         linkQueued: f.linkQueued,
         metrics,
         clock: f.clock,
+        perf: f.perf,
+        frameBytes,
       };
       frameRef.current = view;
       pushLinkState();
@@ -249,7 +300,13 @@ export function App() {
   // Render loop: independent of the tick rate; extrapolates only while running.
   useEffect(() => {
     let raf = 0;
+    let last: number | null = null;
     const loop = (now: number) => {
+      if (last !== null) {
+        renderIntervals.current.add(now - last);
+        recordingRef.current?.renderIntervals.push(now - last);
+      }
+      last = now;
       const f = frameRef.current;
       // Extrapolate at the requested speed; only when the engine is behind, at the achieved rate.
       // (The achieved rate is a 1-s window: right after Play it is still ~0, which made motion lurch.)
@@ -260,7 +317,12 @@ export function App() {
         const at = renderer.current?.trackedWorldPosition(now, simPerMs);
         if (at) [camera.cx, camera.cy] = at;
       }
+      const d0 = performance.now();
       renderer.current?.draw(camera, now, simPerMs);
+      const drawMs = performance.now() - d0;
+      drawTimes.current.add(drawMs);
+      recordingRef.current?.drawMs.push(drawMs);
+      if (now - renderStatsRef.current.at >= RENDER_STATS_REFRESH_MS) renderStatsRef.current = { at: now, stats: computeRenderStats() };
       const cam = labelCam.current;
       const moved =
         cam.labels !== labelsRef.current || cam.cx !== camera.cx || cam.cy !== camera.cy || cam.zoom !== camera.zoom || cam.w !== camera.width || cam.h !== camera.height;
@@ -333,6 +395,8 @@ export function App() {
         if (!e.repeat) toggleRunning(); // holding Space must not flicker play/pause
       } else if (e.key === 'b' || e.key === 'B') {
         if (!e.repeat) toggleMainBridge(); // holding B must not flicker the bridge
+      } else if (e.key === 'd' || e.key === 'D') {
+        if (!e.repeat) setDiagOpen((o) => !o);
       } else if (e.key === '+' || e.key === '=' || e.key === '-') {
         const i = SPEEDS.indexOf(speed as (typeof SPEEDS)[number]);
         const next = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, i + (e.key === '-' ? -1 : 1)))]!;
@@ -430,7 +494,35 @@ export function App() {
           following: followingRef.current,
           frameRecords: recordsRef.current?.vehicles.count ?? 0,
           camera: { cx: camera.cx, cy: camera.cy, zoom: camera.zoom },
+          demandScale: DEMAND,
         };
+      },
+      diagnostics: () => {
+        const f = frameRef.current;
+        return {
+          perf: f?.perf ?? null,
+          render: renderStats(),
+          frameBytes: f?.frameBytes ?? 0,
+          onNetwork: f?.metrics['on_network'] ?? 0,
+          active: f?.metrics['active'] ?? 0,
+          achievedTicksPerS: f?.clock.achievedTicksPerS ?? 0,
+          targetTicksPerS: f?.clock.targetTicksPerS ?? 0,
+          renderer: renderer.current?.rendererName() ?? 'none',
+        };
+      },
+      frameVehicle: (record: number) => {
+        const r = recordsRef.current;
+        if (!r || !Number.isInteger(record) || record < 0 || record >= r.vehicles.count) return null;
+        return { link: r.vehicles.link(record), s: r.vehicles.s(record), queued: (r.vehicles.flags(record) & FLAG_QUEUED) !== 0 };
+      },
+      startPerfRecording: () => {
+        recordingRef.current = { ticks: [], renderIntervals: [], drawMs: [], onNetwork: [], active: [], waitingAtOrigin: [], frames: 0, startMs: performance.now() };
+      },
+      stopPerfRecording: (): PerfRecording => {
+        const r = recordingRef.current ?? { ticks: [], renderIntervals: [], drawMs: [], onNetwork: [], active: [], waitingAtOrigin: [], frames: 0, startMs: performance.now() };
+        recordingRef.current = null;
+        const { startMs, ...rest } = r;
+        return { ...rest, wallMs: performance.now() - startMs, timerResolutionMs: frameRef.current?.perf.timerResolutionMs ?? 0 };
       },
       linkScreenPoint: (link: number, t: number) => {
         // page coordinates even when off-screen (callers test the canvas themselves); null = unknown link
@@ -520,7 +612,25 @@ export function App() {
         onSpeed={changeSpeed}
         onToggleMainBridge={toggleMainBridge}
         disabled={noGl}
+        diagnosticsOpen={diagOpen}
+        onToggleDiagnostics={() => setDiagOpen((o) => !o)}
+        demandScale={DEMAND}
       />
+      {diagOpen && (
+        <DiagnosticsPanel
+          perf={frame?.perf ?? null}
+          render={renderStats()}
+          onNetwork={frame?.metrics['on_network'] ?? 0}
+          active={frame?.metrics['active'] ?? 0}
+          frameBytes={frame?.frameBytes ?? 0}
+          clock={frame?.clock ?? null}
+        />
+      )}
+      {!ready && !noGl && !error && (
+        <p role="status" className="panel starting">
+          Starting the city…
+        </p>
+      )}
       <div className="side">
         {sel && frame && ready && (
           <SelectionPanel

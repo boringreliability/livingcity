@@ -1,0 +1,22 @@
+{
+  "method": "Manual run in the Playwright MCP browser (headed Chrome, hardware GPU), using the same test-hook recording API as e2e/perf.spec.ts (startPerfRecording/stopPerfRecording) and the same reductions (nearest rank; tick-weighted for tick ms). Baseline: 3 s settle + 30 s recording at 20x. Stress: ?demand=5 at 5x, 20 s fill + 30 s recording. Not produced by the @perf harness, which runs headless on SwiftShader.",
+  "timestamp": "2026-10-08T13:03Z",
+  "browser": "Chrome 154.0.0.0 (Playwright MCP, headed)",
+  "hardware": "Mac16,7 · Apple M4 Pro",
+  "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+  "conditions": { "viewport": { "width": 1280, "height": 800 }, "devicePixelRatio": 1, "displayRefresh": "120 Hz (render interval ≈ 8.3 ms)" },
+  "baseline-20x": {
+    "wallMs": 30000.6, "ticksRecorded": 1200, "renderSamples": 3601,
+    "onNetworkMedian": 1654, "onNetworkMax": 1781,
+    "tickMsMean": 0.088, "tickMsMedian": 0.1, "tickMsP95": 0.2, "timerResolutionMs": 0.1, "tickBelowTimerResolution": true,
+    "renderIntervalMedianMs": 8.3, "renderIntervalP95Ms": 9.2, "drawMedianMs": 0.0, "drawP95Ms": 0.1,
+    "achievedTicksPerS": 39.999, "targetTicksPerS": 40
+  },
+  "stress-5x": {
+    "demandScale": 5, "wallMs": 30000.2, "ticksRecorded": 300, "renderSamples": 3600,
+    "onNetworkMedian": 5698, "onNetworkMax": 5772, "activeMax": 25723, "waitingAtOriginMax": 19961,
+    "tickMsMean": 0.2917, "tickMsMedian": 0.3, "tickMsP95": 0.5, "timerResolutionMs": 0.1, "tickBelowTimerResolution": true,
+    "renderIntervalMedianMs": 8.3, "renderIntervalP95Ms": 9.3, "drawMedianMs": 0.0, "drawP95Ms": 0.1,
+    "achievedTicksPerS": 9.9999, "targetTicksPerS": 10, "frameBytes": 92192
+  }
+}

@@ -6,15 +6,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Living City** is an interactive city traffic simulation: Rust compiled to WebAssembly runs the simulation in a Web Worker, and a TypeScript/React UI sits on top of a GPU canvas renderer (WebGL2 or WebGPU). The demo it is built around: *close a bridge → watch traffic adapt → rewind → branch → compare the two scenarios side by side.*
 
-As of 2026-10-06 the repo contains **no code yet**, only:
-- `livingcity.md`: the full product brief. It is the authoritative spec for scope, simulation model, replay, visuals, metrics, performance targets, verification and deliverables, so read it before planning any work.
-- `.wdd/`: Ward-Driven Development state. It is still uninitialized boilerplate (`project: "my-project"`, placeholder `PROJECT.md`/`CONTEXT.md`), so fill these in when the first epic/ward is created.
+- `livingcity.md` is the full product brief. It is the authoritative spec for scope, simulation model, replay, visuals, metrics, performance targets, verification and deliverables, so read it before planning work.
+- `.wdd/` holds the Ward-Driven Development state. Its `CONTEXT.md` is the source of truth for what has been built (as of 2026-10-08: epic `core` approved, epic `city` built and awaiting its epic gate; next is `timeline`).
 
-It is not yet a git repository.
+### Layout
+- `crates/sim-core`: the authoritative simulation in pure Rust.
+- `crates/sim-wasm`: a thin wasm-bindgen `Sim` adapter. It builds into `web/src/wasm/`, which is generated, so never edit it by hand.
+- `web/`: Vite + React + TS.
+  - `src/sim` holds the worker host, `SimClock`, protocol and perf statistics.
+  - `src/render` holds the WebGL2 renderer, camera, picking and city decor.
+  - `src/ui` holds the panels.
+  - Tests live in `tests/` (Vitest, Node + real wasm) and `e2e/` (Playwright on SwiftShader).
 
-Toolchain available on the dev machine: `cargo`/`rustc`, `wasm-pack`, `node`, `pnpm`, `npm`, `wdd`.
-
-> When the project is scaffolded, add the build/dev/test/bench commands here (including how to run a single Rust test and a single TS test), plus `.wdd/config.json` `conventions`.
+### Commands (run from the repo root)
+```bash
+pnpm -C web build:wasm                 # rebuild the wasm after any Rust change (the web tests use it)
+pnpm -C web dev                        # dev server (Vite); the app opens on a warmed-up River City
+pnpm -C web build                      # typecheck + production build
+pnpm -C web typecheck
+pnpm -C web test                       # Vitest (all)
+pnpm -C web exec vitest run tests/diagnostics.test.ts -t "warmup"    # one file / one test
+pnpm -C web e2e                        # Playwright (excludes @perf), ~4 min
+pnpm -C web exec playwright test e2e/look.spec.ts -g "legend"       # one spec / one test
+pnpm -C web e2e:perf                   # performance harness → web/perf-results/*.json (docs/performance.md)
+cargo test --workspace                 # Rust (calibration tests are skipped in debug builds)
+cargo test -p sim-core --release --test city_002_river             # one Rust test file, in release
+cargo test -p sim-core --test city_005_scale scale_one_is_river_city # one Rust test
+cargo clippy --workspace --all-targets -- -D warnings
+```
+- Run `pnpm -C web exec …` from the repo root. Running `pnpm exec` inside `web/` can trigger a `pnpm install`.
+- URL parameters:
+  - `?city=three_bridges` selects the core test city;
+  - `?demand=<0.25–6>` selects stress demand (measurement only, shown as a badge).
+- Keys:
+  - Space plays or pauses;
+  - B closes or opens the main bridge;
+  - D toggles the diagnostics panel;
+  - +/- change the speed;
+  - Esc clears the selection.
 
 ## Workflow: WDD with adversarial gates (project override)
 

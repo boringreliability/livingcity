@@ -1,4 +1,5 @@
-import type { Landmarks } from '../sim/protocol';
+import type { Landmarks, PerfStats } from '../sim/protocol';
+import type { RenderStats } from './DiagnosticsPanel';
 
 /** Read-only state exposed for end-to-end tests (`window.__livingcity`). */
 export interface LivingCitySnapshot {
@@ -22,6 +23,34 @@ export interface LivingCitySnapshot {
   /** Vehicle records in the latest frame. */
   frameRecords: number;
   camera: { cx: number; cy: number; zoom: number };
+  /** The `?demand=` scale in force (1 = the normal city). */
+  demandScale: number;
+}
+
+export interface LivingCityDiagnostics {
+  perf: PerfStats | null;
+  render: RenderStats;
+  frameBytes: number;
+  onNetwork: number;
+  active: number;
+  achievedTicksPerS: number;
+  targetTicksPerS: number;
+  /** The app's own WebGL RENDERER string. */
+  renderer: string;
+}
+
+/** Everything between `startPerfRecording` and `stopPerfRecording` (per frame / per rAF). */
+export interface PerfRecording {
+  /** [measured ms, ticks] per frame (`frameTickMs`, `frameTicks`). */
+  ticks: [number, number][];
+  renderIntervals: number[];
+  drawMs: number[];
+  onNetwork: number[];
+  active: number[];
+  waitingAtOrigin: number[];
+  frames: number;
+  wallMs: number;
+  timerResolutionMs: number;
 }
 
 export interface LivingCityHook {
@@ -42,6 +71,12 @@ export interface LivingCityHook {
   linkCapacity(link: number): number;
   /** Links ending at `link`'s start node, without its reverse direction and zone connectors, ascending. */
   approachLinks(link: number): number[];
+  /** Measured performance (diagnostics panel values). */
+  diagnostics(): LivingCityDiagnostics;
+  /** Record `record` of the latest frame, or null. */
+  frameVehicle(record: number): { link: number; s: number; queued: boolean } | null;
+  startPerfRecording(): void;
+  stopPerfRecording(): PerfRecording;
 }
 
 declare global {

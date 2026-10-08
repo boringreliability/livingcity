@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "Living opening screen, diagnostics and measured performance"
 epic: "city"
-status: "red"
+status: "approved"
 dependencies: ["city-004"]
 layer: "typescript"
 estimated_tests: 14

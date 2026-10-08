@@ -492,6 +492,13 @@ export class CityRenderer {
     this.gl.deleteBuffer(m.buf);
   }
 
+  /** The GPU behind this context, as WebGL reports it (unmasked when the browser allows). */
+  rendererName(): string {
+    const gl = this.gl;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+  }
+
   /** Free every GPU object (the canvas may be reused, e.g. React StrictMode remounts). */
   dispose(): void {
     const gl = this.gl;

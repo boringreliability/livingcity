@@ -155,9 +155,33 @@ const CROSS_RIVER_SCALE: f64 = 0.9;
 /// y = −1200, 0, 1200 and two avenues per bank are 2-lane arterials; other streets 1 lane.
 /// Main Bridge at y = 0 (2 lanes, arterial speed), North Bridge at y = 1800 (1 lane),
 /// Old Bridge at y = −1800 (1 lane, 30 km/h, 900 veh/h: the limited-capacity alternative).
+pub fn river_city(demand_seed: u64, behavior_seed: u64) -> City {
+    river_city_scaled(demand_seed, behavior_seed, 1.0).expect("scale 1 is valid")
+}
+
+/// Largest accepted demand scale for [`river_city_scaled`].
+pub const DEMAND_SCALE_MAX: f64 = 6.0;
+
+/// A demand scale outside `0 < scale ≤ DEMAND_SCALE_MAX` (or NaN).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InvalidDemandScale(pub f64);
+
+impl std::fmt::Display for InvalidDemandScale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "demand scale {} is outside (0, {DEMAND_SCALE_MAX}]", self.0)
+    }
+}
+
+impl std::error::Error for InvalidDemandScale {}
+
+/// River City with every flow multiplied by `demand_scale` (same network, zones and flow order).
+/// For measurement only (stress tests); `river_city` is scale 1.
 // Indexed loops mirror the documented (row, column) construction order.
 #[allow(clippy::needless_range_loop)]
-pub fn river_city(demand_seed: u64, behavior_seed: u64) -> City {
+pub fn river_city_scaled(demand_seed: u64, behavior_seed: u64, demand_scale: f64) -> Result<City, InvalidDemandScale> {
+    if !(demand_scale > 0.0 && demand_scale <= DEMAND_SCALE_MAX) {
+        return Err(InvalidDemandScale(demand_scale));
+    }
     const XW: [f64; 6] = [-3000.0, -2300.0, -1600.0, -900.0, -500.0, -200.0];
     const XE: [f64; 6] = [200.0, 500.0, 900.0, 1600.0, 2300.0, 3000.0];
     const YS: [f64; 7] = [-1800.0, -1200.0, -600.0, 0.0, 600.0, 1200.0, 1800.0];
@@ -217,7 +241,7 @@ pub fn river_city(demand_seed: u64, behavior_seed: u64) -> City {
     }
     let network = b.build().expect("river_city is a valid network");
 
-    let (intra, cross) = (INTRA_BANK_SCALE, CROSS_RIVER_SCALE);
+    let (intra, cross) = (INTRA_BANK_SCALE * demand_scale, CROSS_RIVER_SCALE * demand_scale);
     let idx = |key: &str| districts.iter().position(|d| d.key == key).expect("district");
     let mut flows = Vec::new();
     // district-to-district rate (veh/h), split evenly over zone pairs
@@ -261,7 +285,7 @@ pub fn river_city(demand_seed: u64, behavior_seed: u64) -> City {
     f("market", "eastgate", 100.0, cross);
     let demand = DemandModel { flows, profile: Profile::default() };
 
-    City {
+    Ok(City {
         name: "river_city",
         river: (RIVER_WEST_X, RIVER_EAST_X),
         scenario: Scenario { network, demand, demand_seed, behavior_seed },
@@ -271,5 +295,5 @@ pub fn river_city(demand_seed: u64, behavior_seed: u64) -> City {
             south_bridge: [old.0, old.1],
         },
         zones,
-    }
+     })
 }
