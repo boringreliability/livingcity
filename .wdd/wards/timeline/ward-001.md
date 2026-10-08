@@ -6,7 +6,7 @@ epic: "timeline"
 status: "red"
 dependencies: []
 layer: "rust"
-estimated_tests: 16
+estimated_tests: 18
 created: "2026-10-08"
 completed: null
 ---
@@ -24,7 +24,7 @@ There is no wasm or UI in this ward. timeline-003 wires the result into the work
 
 ## Outputs
 - **`World`**:
-  - `network: Arc<Network>` and `demand: Arc<DemandModel>`, with unchanged accessors;
+  - `network: Arc<Network>` and `demand: Arc<DemandModel>`, with unchanged accessors plus a new `World::demand() -> &DemandModel`;
   - `World::snapshot(&self) -> Snapshot`;
   - a crate-internal restore.
 - **New module `sim_core::timeline`**, re-exported as `Timeline`, `Snapshot`, `TimelineError`, `WindowInfo` and `SNAPSHOT_INTERVAL_TICKS`.
@@ -75,7 +75,7 @@ There is no wasm or UI in this ward. timeline-003 wires the result into the work
   - At `position_tick == head_tick` it is just `World::schedule`.
   - At `position_tick < head_tick` the timeline drops:
     - every snapshot with tick > `position_tick`;
-    - every command with tick > `position_tick`;
+    - every command with tick > `position_tick`. Commands **at** `position_tick` are still pending, because a step applies the commands of its own tick, so they are kept;
     - the head logs beyond `position_tick` (they become the position world's logs).
     It then sets `head_tick = position_tick` and schedules.
   - Later steps snapshot at the multiples of 120 again.
@@ -101,10 +101,12 @@ File: `crates/sim-core/tests/timeline_001_snapshots.rs`. It runs in the default 
 | 10 | `seek_outside_window_is_refused` | `seek(head+1)` and `seek(window_start−1)` (after eviction) return `OutsideWindow` with the correct fields. The hash, position, head and snapshots are unchanged. Seeks to `window_start` and `window_start + 37` after eviction equal the reference |
 | 11 | `seek_forward_within_window` | after `seek(600)`, `seek(3000)` and then `seek(head)`, each equals the reference. Position and head are reported correctly |
 | 12 | `schedule_in_past_edits_future` | at position 1200 with head 3600:<br>• `InPast` and `UnknownLink` commands change nothing;<br>• a close at 1200 sets head to 1200 and drops snapshots > 1200 and commands > 1200;<br>• stepping to 2400 equals a fresh reference built with the commands ≤ 1200 plus the new close;<br>• the snapshots are 0..=2400 in steps of 120 again;<br>• seeks to {1800, 1201, 700, 1200, 2400, 1500} equal the new reference.<br>An off-grid variant edits at 1250 with a close at 1300 |
-| 13 | `shared_data_not_copied` | a clone of a world and a snapshot share `Network` and `DemandModel` (pointer equality via the accessors). `Snapshot::bytes()` excludes them |
+| 12b | `schedule_in_past_edits_future_off_grid` | the edit at 1250 (between snapshots) with a close at 1300: the head becomes 1250, the last snapshot is 1200. Stepping and seeks to {1260, 1300, 1299, 2000, 1250} equal the new reference |
+| 13 | `shared_data_not_copied` | clones and restored worlds share `Network` and `DemandModel` (pointer equality via `network()` / `demand()`). `Snapshot::bytes()` excludes the demand: a much larger demand model leaves the bytes unchanged |
+| 14 | `schedule_at_head_is_plain` | at `position == head`, `schedule` behaves like `World::schedule` (`InPast` for earlier ticks). The head and the snapshots are untouched |
 | 15 | `snapshot_holds_reroute_backlog` | River City with the main bridge closed at 1919, so the snapshot at 1920 holds a budget-limited reroute backlog. Precondition: `max_budgeted_in_a_tick` = `REROUTE_BUDGET_PER_TICK` and `switches_total` grows in step 1920. Seeks to 1920, 1921, 1927 and 2039 equal the reference, also 120 ticks on |
 | 16 | `snapshot_holds_noroute_and_stranded` | three_bridges with all six bridge links closed at 500 and reopened at 1100. Precondition: `no_route` > 0, `stranded` > 0 and `retries_total` > 0 at snapshots between 600 and 1080. Seeks to 700, 1150 and 1500, then a replay to 2400, equal the reference at every tick |
-| 14 | `schedule_at_head_is_plain` | at `position == head`, `schedule` behaves like `World::schedule` (`InPast` for earlier ticks). The head and the snapshots are untouched |
+| 17 | `schedule_in_past_keeps_commands_at_the_position` | a command pending *at* the edit tick (close at 1200, edit at 1200) is kept; only later ones are dropped. The new future equals the reference |
 
 ## Must NOT
 - Store the router, the logs or the `Arc` data in snapshots, or copy the world every tick.
@@ -126,10 +128,10 @@ cargo run -p sim-core --release --example timeline_probe
 2. Run the probe. Verify:
    - snapshot bytes are about 0.3–0.5 MB;
    - with a 48 MiB budget the window covers ≥ 1.5 sim hours;
-   - the median seek cost (≤ 119 replayed ticks plus a restore) is in milliseconds.
+   - the median seek cost is ≤ 5 ms (measured basis: ≤ 119 × 0.021 ms + a ~50 µs clone ≈ 2.6 ms).
 ### Pass criteria
 - [ ] All suites green, clippy clean
 - [ ] The probe numbers are plausible against § Measured basis
 
 ## Verification
-The Gold reviewer re-runs the tests and the probe, and checks the snapshot field classification against every `World` field.
+The Gold reviewer re-runs the tests and the probe, and checks the snapshot field classification against every `World` field. The reviewer also confirms **in code** that `seek` restores the newest snapshot ≤ t, since test 7's counter is self-reported.

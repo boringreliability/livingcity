@@ -114,8 +114,15 @@ fn seek_mid_epoch_and_mid_reroute() {
     let (s, main) = river();
     let cmds = [close(main[0], 1800), close(main[1], 1800)];
     let r = reference(world(&s, &cmds), 2100);
-    // precondition: the closure makes the reroute machinery busy right after 1800
-    assert_ne!(r[1840].reroute, r[1800].reroute, "precondition: rerouting happens after the closure");
+    // precondition: the closure makes vehicles switch routes right after 1800 (switches only follow a closure here)
+    let switches = |t: u64| {
+        let mut w = world(&s, &cmds);
+        for _ in 0..t {
+            w.step();
+        }
+        w.reroute_stats().switches_total
+    };
+    assert!(switches(1840) > switches(1800), "precondition: rerouting switches happen after the closure");
     let mut tl = Timeline::new(world(&s, &cmds), UNLIMITED);
     tl.step_n(2100);
     for t in (1801..=1840u64).rev() {
@@ -304,7 +311,7 @@ fn budget_evicts_oldest() {
         last_start = win.window_start;
     }
     assert!(last_start > 0, "precondition: the budget evicted snapshots");
-    assert!(tl.window().snapshots >= 3, "the budget (5 snapshots) must not over-evict: {}", tl.window().snapshots);
+    assert!(tl.window().snapshots >= 4, "the budget (5 snapshots) must not over-evict: {}", tl.window().snapshots);
     let target = tl.window().window_start + 7;
     tl.seek(target).unwrap();
     assert_eq!(tl.window().position_tick, target);
@@ -454,6 +461,10 @@ fn shared_data_not_copied() {
     }
     let big_world = World::from_scenario(big).expect("valid larger demand");
     assert_eq!(big_world.snapshot().bytes(), keep.snapshot().bytes(), "demand must not be in snapshot bytes");
+    // and the demand model itself is shared by clones and restored worlds
+    assert!(std::ptr::eq(tl.world().demand(), keep.demand()), "a restored world shares the demand model");
+    let again = keep.clone();
+    assert!(std::ptr::eq(again.demand(), keep.demand()), "a clone shares the demand model");
 }
 
 // ─── 14 ──────────────────────────────────────────────────────────────────
@@ -550,5 +561,25 @@ fn snapshot_holds_noroute_and_stranded() {
     for t in 701..=2400u64 {
         tl.step();
         assert_eq!(tl.world().state_hash(), r[t as usize].hash, "replay from 700: tick {t}");
+    }
+}
+
+// ─── 17 ──────────────────────────────────────────────────────────────────
+#[test]
+fn schedule_in_past_keeps_commands_at_the_position() {
+    let c = three_bridges(2026, 7);
+    let (main, north, south) = (c.landmarks.central_bridge, c.landmarks.north_bridge, c.landmarks.south_bridge);
+    let mut tl = Timeline::new(World::from_scenario(c.scenario.clone()).unwrap(), UNLIMITED);
+    tl.schedule(close(main[0], 600)).unwrap();
+    tl.schedule(close(south[0], 1200)).unwrap(); // pending exactly at the edit position: kept
+    tl.schedule(open(main[0], 2000)).unwrap(); // after it: dropped
+    tl.step_n(3600);
+    tl.seek(1200).unwrap();
+    tl.schedule(close(north[0], 1200)).unwrap();
+    assert_eq!(tl.world().command_log().len(), 3, "the command at the position tick is kept");
+    let r = reference(world(&c.scenario, &[close(main[0], 600), close(south[0], 1200), close(north[0], 1200)]), 2400);
+    for t in 1201..=2400u64 {
+        tl.step();
+        assert_eq!(tl.world().state_hash(), r[t as usize].hash, "tick {t}");
     }
 }
