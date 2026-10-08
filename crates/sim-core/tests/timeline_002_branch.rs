@@ -4,8 +4,8 @@
 use sim_core::cities::{river_city, three_bridges};
 use sim_core::params::DT;
 use sim_core::{
-    Command, CommandKind, LinkId, NetworkBuilder, Scenario, Timeline, TimelineError, TripOutcome, WindowMetrics, World,
-    SNAPSHOT_INTERVAL_TICKS,
+    Command, CommandKind, DemandModel, LinkId, NetworkBuilder, OdFlow, Scenario, Timeline, TimelineError, TripOutcome,
+    WindowMetrics, World, SNAPSHOT_INTERVAL_TICKS,
 };
 
 const UNLIMITED: usize = usize::MAX;
@@ -88,6 +88,8 @@ fn branch_equals_original_at_tick() {
         assert_eq!(observe(b.world()), observe(&stepped(&s, &inherited, at)), "branch({at})");
         assert_eq!((b.position_tick(), b.head_tick()), (at, at));
         assert_eq!(fingerprint(&a), before, "branch({at}) changed the original");
+        assert!(std::ptr::eq(b.world().network(), a.world().network()), "the network is shared");
+        assert!(std::ptr::eq(b.world().demand(), a.world().demand()), "the demand model is shared");
     }
 }
 
@@ -199,6 +201,7 @@ fn branch_budget() {
     assert!(small.snapshot_ticks().len() >= 2);
     let full = a.branch(1500, UNLIMITED).unwrap();
     assert_eq!(full.snapshot_ticks().len(), a.snapshot_ticks().iter().filter(|&&t| t < 1500).count() + 1);
+    assert!(full.snapshot_ticks().ends_with(&small.snapshot_ticks()), "the budget evicts the oldest copies: no gap");
 }
 
 // ─── 7 ───────────────────────────────────────────────────────────────────
@@ -455,4 +458,51 @@ fn same_window_compares_like_for_like() {
     }
     assert!(mb.incomplete > ma.incomplete, "closing the main bridge leaves more trips unfinished: {mb:?} vs {ma:?}");
     assert!(mb.completed < ma.completed);
+}
+
+// ─── 15 (Red r1 MAJOR 1) ─────────────────────────────────────────────────
+/// Demand plus explicit spawns interleaved after `from`: spawns are never in the cohort.
+#[test]
+fn window_metrics_exclude_spawns_mixed_with_demand() {
+    let c = three_bridges(2026, 7);
+    let mut w = World::from_scenario(c.scenario.clone()).unwrap();
+    let zones: Vec<_> = c.zones.iter().map(|z| z.node).collect();
+    for t in 0..1800u64 {
+        if t >= 600 && t % 60 == 0 {
+            let (r, _) = w.shortest_route(zones[0], zones[zones.len() - 1]).unwrap();
+            w.spawn_with_route(r).unwrap();
+        }
+        w.step();
+    }
+    assert!(w.counts().spawned > w.generated_trips().len() as u64, "precondition: explicit spawns exist");
+    for from in [0u64, 600, 1000] {
+        assert_metrics_eq(&w.window_metrics(from), &brute(&w, from), &format!("mixed, from {from}"));
+    }
+}
+
+// ─── 16 (Red r1 MAJOR 2) ─────────────────────────────────────────────────
+/// Demand-driven ring: every flow goes three quarters round a one-way ring, so it deadlocks.
+#[test]
+fn window_metrics_count_gridlock_removals() {
+    let mut b = NetworkBuilder::new();
+    let side = 75.0;
+    let n = [b.node(0.0, 0.0), b.node(side, 0.0), b.node(side, side), b.node(0.0, side)];
+    for i in 0..4 {
+        b.link(n[i], n[(i + 1) % 4], 10.0, 1);
+    }
+    let zpos = [(-150.0, 0.0), (side + 150.0, 0.0), (side + 150.0, side), (-150.0, side)];
+    let z: Vec<_> = (0..4).map(|i| b.zone(zpos[i].0, zpos[i].1)).collect();
+    for i in 0..4 {
+        b.link(z[i], n[i], 10.0, 1);
+        b.link(n[i], z[i], 10.0, 1);
+    }
+    let network = b.build().unwrap();
+    let flows = (0..4).map(|i| OdFlow { origin: z[i], dest: z[(i + 3) % 4], veh_per_hour: 1200.0 }).collect();
+    let s = Scenario { network, demand: DemandModel { flows, profile: Default::default() }, demand_seed: 1, behavior_seed: 2 };
+    let w = stepped(&s, &[], 4000);
+    let m = w.window_metrics(0);
+    assert!(m.removed_gridlock > 0 && m.removed_unreachable == 0, "precondition: demand gridlock removals {m:?}");
+    for from in [0u64, 500, 2000] {
+        assert_metrics_eq(&w.window_metrics(from), &brute(&w, from), &format!("gridlock, from {from}"));
+    }
 }

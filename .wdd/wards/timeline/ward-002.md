@@ -6,7 +6,7 @@ epic: "timeline"
 status: "red"
 dependencies: ["timeline-001"]
 layer: "rust"
-estimated_tests: 14
+estimated_tests: 16
 created: "2026-10-08"
 completed: null
 ---
@@ -63,7 +63,7 @@ It also clears the timeline-001 Gold MINORs that are in the same code.
   - `mean_travel_time_s` / `p95_travel_time_s` are over the completed cohort trips (travel time = (completed − created) × DT; p95 by nearest rank), and `None` when there are none.
   - With `from_tick > tick()` the cohort is empty: all counts are 0 and the means are `None`.
   - Explicit spawns are not demand and never part of a cohort.
-  - The cost is O(log size), so it must not be called per tick in hot paths. The UI asks for it per frame at most.
+  - The cost is linear in the logs plus a sort (for p95), so it must not be called per tick in hot paths. The UI asks for it per frame at most.
 - **Comparing.** Both scenarios at the same tick, with the same `from_tick` (the branch tick), cover identical cohorts (identical demand), so their window metrics compare like for like. `incomplete` makes a scenario whose trips have not arrived visible as such.
 
 ## Tests
@@ -85,6 +85,8 @@ File: `crates/sim-core/tests/timeline_002_branch.rs`. It runs in the default tes
 | 12 | `window_metrics_count_removals` | three_bridges with all six bridge links closed **for good** at tick 500, run to 3000 (probed: the first unreachable removal is at 1101). `removed_unreachable` > 0 and equals brute force for `from` ∈ {0, 400, 1000} |
 | 13 | `window_metrics_exclude_explicit_spawns` | explicit `spawn_with_route` vehicles (the city-001 ring) are in no cohort: `generated` = 0, although they complete or are removed |
 | 14 | `same_window_compares_like_for_like` | A (open) and B (main bridge closed at the branch tick 1800), both at 1800 + 20 sim min, `from` = 1800: equal `generated` (probed 7,205), each side satisfies the partition, and B has more `incomplete` than A (probed 2,010 vs 1,657; at 10 min 1,724 vs 1,610) |
+| 15 | `window_metrics_exclude_spawns_mixed_with_demand` | three_bridges with explicit spawns every 60 ticks from 600, interleaved with demand. Equal to brute force for from ∈ {0, 600, 1000}; spawns are never in a cohort (probed: 661 spawned, 641 generated) |
+| 16 | `window_metrics_count_gridlock_removals` | a demand-driven one-way ring (4 zones, flows going three quarters round at 1,200 veh/h) deadlocks. The cohort has gridlock removals (probed: 15 at 4000) and no unreachable ones. Equal to brute force for from ∈ {0, 500, 2000} |
 
 ## Must NOT
 - Modify the original in `branch` (it takes `&self`).
@@ -110,4 +112,4 @@ cargo run -p sim-core --release --example timeline_probe
 - [ ] The probe shows a branch cost ≤ 10 ms and plausible A/B window metrics
 
 ## Verification
-The Gold reviewer re-runs the tests and the probe, confirms in code that `branch` leaves `&self` untouched and copies only what T2 says, and fuzzes random branch, step, seek and edit sequences against reference worlds.
+The Gold reviewer re-runs the tests and the probe, confirms in code that `branch` leaves `&self` untouched and copies only what T2 says, and fuzzes random branch, step, seek and edit sequences against reference worlds. The reviewer also confirms the timeline-001 cleanup items in code: `log_lens` is removed, the classification doc sits at `Snapshot`, `seek` moves the command log, and the `head_logs` doc states the invariant.
