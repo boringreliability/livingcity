@@ -73,7 +73,7 @@ export interface SimHost {
 /** Minimum wall time between frames (ms). */
 export const FRAME_INTERVAL_MS = 16;
 /** No warm-up batch may block message handling longer than this (ms of `now`). */
-export const WARMUP_BATCH_MAX_MS = 100;
+const WARMUP_BATCH_MAX_MS = 100;
 /** Warm-up batches aim at this duration; the first one is small because tick cost is unknown. */
 const WARMUP_TARGET_MS = 40;
 const WARMUP_FIRST_BATCH = 16;

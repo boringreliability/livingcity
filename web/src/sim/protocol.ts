@@ -34,8 +34,8 @@ export function parseCityName(value: string | null | undefined): CityName {
 /** Sim seconds the app pre-simulates before `ready`, so it opens on a living city (ward city-005). */
 export const WARMUP_SIM_S = 900;
 /** Accepted range of the `?demand=` stress scale (measurement only). */
-export const DEMAND_SCALE_MIN = 0.25;
-export const DEMAND_SCALE_MAX = 6;
+const DEMAND_SCALE_MIN = 0.25;
+const DEMAND_SCALE_MAX = 6;
 
 /** `?demand=` → a scale; missing → 1; anything invalid → 1 with `invalid` (the app warns). */
 export function parseDemandScale(value: string | null): { scale: number; invalid: boolean } {

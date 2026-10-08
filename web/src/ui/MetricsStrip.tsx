@@ -11,7 +11,7 @@ function minutes(seconds: number | undefined): string {
 }
 
 /** Definition of `unserved` (= unreachable + gridlock removals), shown as the tooltip. */
-export const UNSERVED_TOOLTIP =
+const UNSERVED_TOOLTIP =
   'Trips the city could not serve: no route at the origin, stranded without a route, or removed after 10 minutes in gridlock';
 
 interface Props {
