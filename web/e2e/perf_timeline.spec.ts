@@ -74,7 +74,7 @@ test.describe('@perf', () => {
     // seeks: ← from the head, 24 times (spread over the last ~24 sim min of the full window)
     const seekMs: number[] = [];
     for (let i = 0; i < 24; i++) seekMs.push(await timedStepBack(page));
-    const window = (await snap(page)).timeline;
+    const win = (await snap(page)).timeline;
     // branch: an intervention in A's past → B's first frame
     await blur(page);
     const t0 = Date.now();
@@ -108,11 +108,11 @@ test.describe('@perf', () => {
       hardware,
       renderer: (await page.evaluate(() => window.__livingcity!.diagnostics())).renderer,
       conditions: { viewport: page.viewportSize(), devicePixelRatio: await page.evaluate(() => window.devicePixelRatio) },
-      window: { startTick: window.windowStartTick, headTick: head, retainedSimH: (head - window.windowStartTick) / 7200 },
+      window: { startTick: win.windowStartTick, headTick: head, retainedSimH: (head - win.windowStartTick) / 7200 },
       seek: { n: seekMs.length, medianMs: percentile(seekMs, 0.5), p95Ms: percentile(seekMs, 0.95), maxMs: Math.max(...seekMs) },
       branch: { ms: branchMs },
       memory: {
-        budgetMiB: window.budgetBytes / MIB,
+        budgetMiB: win.budgetBytes / MIB,
         aMiB: memA / MIB,
         bMiB: memB / MIB,
         totalMiB: (memA + memB) / MIB,
