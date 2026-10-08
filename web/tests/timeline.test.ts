@@ -73,6 +73,7 @@ describe('timeline-003 host', () => {
     // still paused on later iterations
     x.iterate(20);
     expect(x.last().tick).toBe(500);
+    for (const g of x.frames()) expect(g.clock.executedTicks).toBe(g.tick);
   });
 
   test('2 seek_outside_window_is_refused', () => {
@@ -153,6 +154,7 @@ describe('timeline-003 host', () => {
       }
     }
     expect(checked).toBeGreaterThan(20);
+    for (const g of x.frames()) expect(g.clock.executedTicks).toBe(g.tick);
     expect(x.last().timeline.headTick).toBeGreaterThanOrEqual(1300); // replay continued past the old head
   });
 
@@ -193,9 +195,11 @@ describe('timeline-003 host', () => {
     expect(f.clock.running).toBe(false);
     expect(f.scenario).toBe(0);
     expect(f.tick).toBe(aPos);
+    expect(f.clock.backlogTicks).toBe(0);
     expect(f.timeline.headTick).toBe(head);
     expect(f.timeline.branchTick).toBe(800);
     expect(Array.from(f.closed)).not.toContain(main[0]);
+    for (const g of x.frames()) expect(g.clock.executedTicks).toBe(g.tick);
   });
 
   test('7 command_on_a_below_head_is_refused', () => {
@@ -232,6 +236,7 @@ describe('timeline-003 host', () => {
     expect(f.timeline.positionTick).toBe(900);
     expect(f.timeline.headTick).toBe(900); // B's future was cut at the edit
     expect(x.a().state_hash_hex()).toBe(aHash);
+    for (const g of x.frames()) expect(g.clock.executedTicks).toBe(g.tick);
   });
 
   test('9 discard_and_replace_branch', () => {
@@ -256,6 +261,7 @@ describe('timeline-003 host', () => {
     // A is where it was viewed last (its own position is preserved)
     expect(f.tick).toBe(aTick);
     expect(f.timeline.positionTick).toBe(aTick);
+    for (const g of x.frames()) expect(g.clock.executedTicks).toBe(g.tick);
   });
 
   test('10 timeline_messages_during_warmup_are_refused', () => {
@@ -280,8 +286,8 @@ describe('timeline-003 host', () => {
     s.step(1200);
     const w = Array.from(s.window_metrics(400));
     expect(w.length).toBe(9);
-    expect(w[0]).toBe(400);
-    expect(w[1]).toBe(1200);
+    // natively verified (sim-core Timeline, three_bridges 17/23): the field order is pinned
+    expect(w.slice(0, 7)).toEqual([400, 1200, 282, 117, 0, 0, 165]);
     expect(w[2]).toBeGreaterThan(0);
     expect(w[6]).toBe(w[2]! - w[3]! - w[4]! - w[5]!);
     expect(w[3]! > 0 ? w[7]! <= w[8]! : Number.isNaN(w[7])).toBe(true);

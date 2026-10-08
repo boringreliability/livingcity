@@ -85,7 +85,7 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
 - **Test hook additions:**
   - `snapshot().scenario` (`'A' | 'B'`);
   - `snapshot().timeline` (the frame's six numbers);
-  - `snapshot().branchTick` (`number | null`);
+  - `snapshot().branchTick` (`number | null`).
 
 ## Specification
 - **The window includes the warm-up.** The warm-up ticks are ordinary ticks (city-005), so `windowStartTick` starts at 0 until the budget evicts, and Home / "Jump to start" may show the city before it filled.
@@ -96,8 +96,8 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
 - **Colourblind.** Every scenario cue (A/B buttons, corner label, branch marker) uses text and shape. The branch marker is a diamond with a label.
 
 ## Tests
-- Vitest (host on real wasm, fake clock): `web/tests/timeline.test.ts`, tests 1–10.
-- Playwright: `web/e2e/timeline.spec.ts`, tests 11–18.
+- Vitest (host on real wasm, fake clock): `web/tests/timeline.test.ts`, tests 1–10 and 20.
+- Playwright: `web/e2e/timeline.spec.ts`, tests 11–19.
 
 | # | Test Name | Verifies |
 |---|-----------|----------|
@@ -111,10 +111,10 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
 | 8 | `command_on_b_edits_b` | in B, seeking back and closing a road sets B's head to the position. A is untouched |
 | 9 | `discard_and_replace_branch` | `discardBranch` returns to A with `branchTick` −1. A second `branch` replaces B; frames show the new `branchTick` |
 | 10 | `timeline_messages_during_warmup_are_refused` | `seek`, `branch` and `viewScenario` before `ready` produce errors and are not applied after the warm-up |
-| 11 | `timeline_bar_shows_window_and_memory` (e2e) | after load: a slider named "Timeline" with `aria-valuemin` = `windowStartTick`, `aria-valuemax` = `headTick`, `aria-valuetext` containing "sim time", and the memory text matching `/\d+(\.\d)? \/ 48 MiB/`. The bar does not cover the city (canvas hit tests at the city's bottom edge) |
+| 11 | `timeline_bar_shows_window_and_memory` (e2e) | after load: a slider named "Timeline" with `aria-valuemin` = `windowStartTick`, `aria-valuemax` = `headTick`, `aria-valuetext` containing "sim time", and the memory text equal to `snapshotBytes / 2^20` (one decimal) + " / 48 MiB replay memory". The bar does not cover the city (canvas hit tests at the city's bottom edge) |
 | 12 | `keyboard_scrub` (e2e) | focusing the slider and pressing ← pauses, and the position goes down by 120. → goes back up, Home jumps to the window start, End to the head |
 | 13 | `pointer_scrub` (e2e) | a click at 25 % of the track seeks to within ±2 % of that tick. A drag issues seeks while moving and ends at the release point |
-| 14 | `play_from_the_past_replays_then_continues` (e2e) | after seeking 2 min back and pressing Play, the position passes the old head and the head grows. The metrics at the old head equal those recorded before (determinism) |
+| 14 | `play_from_the_past_replays_then_continues` (e2e) |  after seeking 2 min back and pressing Play, the position passes the old head and the head grows. The metrics at the old head equal those recorded before (determinism). Once the replay has caught up, "Close the main bridge" at A's head is an ordinary command: no branch, no prompt, and the bridge closes in A |
 | 15 | `close_in_the_past_creates_branch` (e2e) | seeking back and pressing "Close the main bridge" shows the scenario control with "B: branch from hh:mm:ss" pressed, and the corner label "Viewing B: branch". `branchTick` = the seek position, and the bridge is closed in B. Switching to A shows A's bridge open at its own position |
 | 16 | `replace_branch_needs_confirmation` (e2e) | with B present, viewing A in its past and pressing B shows the "Replace the branch?" confirmation. Cancel leaves B unchanged; "Replace the branch" makes a new B at the new tick. No native dialog appears |
 | 17 | `discard_branch` (e2e) | "Discard branch" returns to A's view: the scenario control is gone and `branchTick` is null |

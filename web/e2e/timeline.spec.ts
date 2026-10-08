@@ -63,9 +63,12 @@ test('timeline_bar_shows_window_and_memory', async ({ page }) => {
   // memory text is the data, per scenario
   const mib = (snapshotBytes / 1048576).toFixed(1);
   await expect(bar(page).getByText(`${mib} / 48 MiB replay memory`)).toBeVisible();
-  // visible sim-time labels for the window start and the head
+  // visible sim-time labels for the window start, the head and (after a step back) the playhead
+  const back = await stepBack(page);
+  expect(back).toBe(hi - 120);
   await expect(bar(page)).toContainText(hms(lo));
   await expect(bar(page)).toContainText(hms(hi));
+  await expect(bar(page)).toContainText(hms(hi - 120));
   await expect(bar(page)).toContainText(/sim time/i);
   // the bar and the moved panels never cover the city: every bottom-edge road is the city canvas
   const covered = await page.evaluate(() => {
@@ -94,9 +97,13 @@ test('keyboard_scrub', async ({ page }) => {
   expect((await snap(page)).running).toBe(true);
   await slider(page).focus();
   await page.keyboard.press('ArrowLeft');
-  await expect.poll(async () => (await snap(page)).running).toBe(false);
+  await expect
+    .poll(async () => {
+      const s = await snap(page);
+      return !s.running && s.timeline.headTick - s.timeline.positionTick >= 120;
+    })
+    .toBe(true);
   const r = await snap(page);
-  expect(r.timeline.headTick - r.timeline.positionTick).toBeGreaterThanOrEqual(120);
   expect(r.timeline.headTick - r.timeline.positionTick).toBeLessThanOrEqual(140);
   await page.keyboard.press('End');
   await expect.poll(async () => position(page)).toBe((await snap(page)).timeline.headTick);
@@ -183,6 +190,21 @@ test('play_from_the_past_replays_then_continues', async ({ page }) => {
   expect((await snap(page)).timeline.headTick).toBeGreaterThan(head);
   const replayed = await page.evaluate(() => (window as unknown as { __atHead?: Record<string, number> }).__atHead ?? null);
   expect(replayed).toEqual(metricsAtHead);
+  // the replay caught up: A is at its head again, so an intervention is ordinary (no branch, no prompt)
+  await pause(page);
+  const caught = await snap(page);
+  expect(caught.timeline.positionTick).toBe(caught.timeline.headTick);
+  await page.getByRole('button', { name: /close the main bridge/i }).click();
+  await sleep(300);
+  await expect(page.getByText('Replace the branch?')).toHaveCount(0);
+  expect((await snap(page)).scenario).toBe('A');
+  expect((await snap(page)).branchTick).toBeNull();
+  expect((await snap(page)).timeline.headTick).toBe(caught.timeline.headTick);
+  await blur(page);
+  await page.keyboard.press('Space');
+  const central = caught.landmarks!.central_bridge;
+  await expect.poll(async () => (await snap(page)).closed).toEqual(expect.arrayContaining(central));
+  expect((await snap(page)).scenario).toBe('A');
 });
 
 // 15
@@ -267,16 +289,21 @@ test('timeline_is_keyboard_and_label_accessible', async ({ page }) => {
   await pause(page);
   // every timeline control is reachable by Tab, with its accessible name
   await blur(page);
-  const names = new Set<string>();
-  for (let i = 0; i < 60; i++) {
+  const targets = {
+    Timeline: slider(page),
+    'Jump to start': page.getByRole('button', { name: 'Jump to start' }),
+    '−1 min': page.getByRole('button', { name: '−1 min' }),
+    '+1 min': page.getByRole('button', { name: '+1 min' }),
+    Live: page.getByRole('button', { name: 'Live' }),
+  };
+  const reached = new Set<string>();
+  for (let i = 0; i < 60 && reached.size < Object.keys(targets).length; i++) {
     await page.keyboard.press('Tab');
-    const n = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
-      return el ? el.getAttribute('aria-label') ?? el.textContent?.trim() ?? '' : '';
-    });
-    names.add(n);
+    for (const [name, loc] of Object.entries(targets)) {
+      if (await loc.evaluate((el) => el === document.activeElement)) reached.add(name);
+    }
   }
-  for (const n of ['Timeline', 'Jump to start', '−1 min', '+1 min', 'Live']) expect(names, `Tab reaches ${n}`).toContain(n);
+  for (const n of Object.keys(targets)) expect(reached, `Tab reaches ${n}`).toContain(n);
   // scenario buttons use aria-pressed, and the viewed scenario is named in text
   await stepBack(page);
   await page.getByRole('button', { name: /close the main bridge/i }).click();
@@ -300,6 +327,7 @@ test('road_panel_in_the_past_branches_and_b_past_edits_b', async ({ page }) => {
   await page.getByRole('region', { name: 'Selected road' }).getByRole('button', { name: 'Close link' }).click();
   await expect.poll(async () => (await snap(page)).scenario).toBe('B');
   expect((await snap(page)).branchTick).toBe(pos);
+  await sleep(300);
   await expect(page.getByRole('alert')).toHaveCount(0);
   // in B's own past, an intervention edits B: no confirmation, B's head is cut at the position
   await blur(page);
