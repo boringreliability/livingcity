@@ -126,7 +126,7 @@ These pin the names the tests use.
   - `ticksMeasured` (from `TickWindow`);
   - `encodeMs`, the measured wall ms of the last frame's encode and copy;
   - `frameTicks` and `frameTickMs`: the ticks executed since the previous frame and their measured ms. Their sums over consecutive frames are exactly the executed ticks and the measured time, and the perf harness records them;
-  - `timerResolutionMs`: the smallest positive difference between consecutive `perfNow()` readings, measured when the host is created. Reads continue until at least 3 positive differences are seen, bounded by 50 ms of `now()` (0 if none is positive within the bound).
+  - `timerResolutionMs`: the smallest positive difference between consecutive `perfNow()` readings, measured when the host is created. Reads continue until at least 3 positive differences are seen, bounded by 50 ms of `perfNow()` time or 100,000 reads, whichever comes first (0 if none is positive within the bound; a constant fake clock therefore gives 0 after 100,000 reads; Red r4 C1, accepted by the user 2026-10-08).
 - `WARMUP_SIM_S = 900` lives in `protocol.ts`. `createSimClient(demandSeed, behaviorSeed, city?, opts?: { warmupS?, demandScale? })`, and the app passes `WARMUP_SIM_S` and the parsed scale.
 - `parseDemandScale(value: string | null): { scale: number; invalid: boolean }`:
   - null or empty gives `{ 1, false }`;

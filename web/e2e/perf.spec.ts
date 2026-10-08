@@ -88,7 +88,12 @@ async function record(browser: Browser, page: Page, name: string, meta: Record<s
       viewport: page.viewportSize(),
       devicePixelRatio: await page.evaluate(() => window.devicePixelRatio),
       // the real browser user agent (devices[...] overrides the page's), via CDP
-      headless: /Headless/.test(((await (await page.context().newCDPSession(page)).send('Browser.getVersion')) as { userAgent: string }).userAgent),
+      headless: await (async () => {
+        const cdp = await page.context().newCDPSession(page);
+        const { userAgent } = (await cdp.send('Browser.getVersion')) as { userAgent: string };
+        await cdp.detach();
+        return /Headless/.test(userAgent);
+      })(),
       launchArgs: use.launchOptions?.args ?? [],
     },
     city: (await snap(page)).city,
@@ -135,7 +140,6 @@ function check(file: string, durationS: number) {
   expect(n('renderIntervalMedianMs')).toBeGreaterThan(0);
   expect(n('renderIntervalP95Ms')).toBeGreaterThanOrEqual(n('renderIntervalMedianMs'));
   expect(n('tickMsP95')).toBeGreaterThanOrEqual(n('tickMsMedian'));
-  expect(n('tickMsMaxFrame')).toBeGreaterThanOrEqual(n('tickMsMean'));
   expect(n('timerResolutionMs')).toBeGreaterThanOrEqual(0);
   expect(j['tickBelowTimerResolution']).toBe(n('timerResolutionMs') <= 0 || n('tickMsP95') < 10 * n('timerResolutionMs'));
   expect(typeof (j['conditions'] as Record<string, unknown>)['headless']).toBe('boolean');

@@ -129,6 +129,10 @@ test('diagnostics_panel_toggle', async ({ page }) => {
   await expect(region.getByTestId('diag-vehicles')).toHaveText(new RegExp(`^${d.onNetwork}\\s*/\\s*${d.active}$`));
   await expect(region.getByTestId('diag-bytes')).toHaveText(`${d.frameBytes} B`);
   const tick = (await pair('diag-tick'))!;
+  // rAFs continue while paused: the render row follows the hook loosely (read moments apart)
+  const render = (await pair('diag-render'))!;
+  const hookRender = (await page.evaluate(() => window.__livingcity!.diagnostics())).render.intervalMedianMs;
+  expect(Math.abs(render[0]! - hookRender)).toBeLessThanOrEqual(Math.max(2, 0.25 * hookRender));
   expect(tick[0]!.toFixed(3)).toBe(d.perf!.tickMsMedian.toFixed(3));
   expect(tick[1]!.toFixed(3)).toBe(d.perf!.tickMsP95.toFixed(3));
   expect(Number(((await region.getByTestId('diag-ticks-measured').textContent()) ?? '').replace(/[^\d]/g, ''))).toBe(d.perf!.ticksMeasured);
