@@ -25,7 +25,7 @@ web/src/ui        React panels: controls, timeline, scenarios, comparison, selec
 2. The frame's `ArrayBuffer` is posted as a **transferable**, so it is not copied. After drawing, the UI returns the buffer (`returnBuffer`) for reuse.
 3. The renderer uploads the records to the GPU once per frame and places each vehicle along its link from a link-geometry table.
 
-There are no per-vehicle JS↔wasm calls and no per-frame JSON. Vehicle and road details are fetched only on request (`inspectVehicle` and `inspectLink`, keyed by frame tick and record). In compare mode a small `comparison` message (the windowed metrics of A and B) is sent at most every 500 ms. It is also sent on entering compare, on a seek and on pause.
+There are no per-vehicle JS↔wasm calls and no per-frame JSON. Vehicle and road details are fetched only on request: `inspectVehicle` names a vehicle by frame tick and record, and `inspectLink` names a link id. In compare mode a small `comparison` message (the windowed metrics of A and B) is sent at most every 500 ms. It is also sent on entering compare, on a seek and on pause.
 
 ## Determinism
 - **Fixed timestep:** 0.5 s per tick. The processing order is stable: vehicles, links and nodes go in index order, and no hash-map iteration feeds any decision. The sim logic never reads the wall clock (enforced by `clippy.toml`).

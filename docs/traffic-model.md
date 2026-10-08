@@ -8,11 +8,12 @@ Living City uses a deliberately simple *mesoscopic* model. It aims for queues th
   1. commands;
   2. new demand;
   3. a cost update, every 60 ticks;
-  4. reroutes (periodic and closure-triggered, budgeted);
+  4. queueing the periodic reroutes that are due;
   5. NoRoute retries;
-  6. intersection discharge;
-  7. origin admission;
-  8. vehicle movement.
+  6. the budgeted reroutes (closure-triggered first, then periodic);
+  7. intersection discharge;
+  8. origin admission;
+  9. vehicle movement.
 
 ## Links, lanes, storage and queues
 - **Links.** A link is directed. It has a length (the distance between its nodes, in metres), a speed limit, 1–8 lanes, and a saturation flow per lane.
@@ -103,7 +104,7 @@ Living City uses a deliberately simple *mesoscopic* model. It aims for queues th
 - **active** is the vehicles on the network plus the trips waiting at their origin (including NoRoute ones).
 - **completed** is the trips that reached their destination.
 - **mean travel time** is measured from the trip's creation to its arrival, so time spent waiting at the origin counts.
-- **unserved** means trips the network failed to serve. It sums those currently without any route (NoRoute at the origin, stranded on a link) and those removed as unreachable or gridlocked.
+- **unserved** means trips the network failed to serve. In the metrics strip it sums those currently without any route (NoRoute at the origin, stranded on a link) and all trips removed as unreachable or gridlocked. In the comparison panel, the *Unserved* row counts only the cohort's removals (unreachable + gridlocked); trips of the cohort that are currently without a route are still counted as *Incomplete* there.
 - **incomplete**, in a comparison, means trips from the compared cohort that are still on their way or waiting. Neither scenario has completed them yet, and they have not been removed.
   - The cohort is the trips generated since the branch tick, which are the same trips in A and B. For each scenario, the comparison reports generated, completed, removed as unreachable, removed as gridlocked, incomplete, and the mean and p95 travel time of the completed trips (p95 by nearest rank).
   - Incomplete trips are always shown, so a scenario does not look better just because its slowest trips have not arrived yet.

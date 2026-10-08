@@ -18,9 +18,9 @@ Click **Close the main bridge** in the control panel, or press **B**.
 - The bridge gets an unmistakable marker: a hatch and white barriers at both ends.
 - Cars already on it drive off. Cars heading for it reroute at their next junction.
 
-Let it run for a few sim minutes (about 10–20 s of wall time at 20×) and watch:
+Let it run for 5–15 sim minutes (about 15–45 s of wall time at 20×) and watch:
 - queues building on the approaches to the **Old Bridge** and the **North Bridge**, with square cars stacking back up the streets (spillback);
-- **queued** rising in the metrics strip.
+- **queued** in the metrics strip. It fluctuates while drivers reroute, and over those minutes it typically ends up well above where it was; the queues on the bridge approaches are the clearer signal.
 
 Click a road to see its lanes, vehicles, queued count and state in the *Selected road* panel. Click a car (zoomed in) to follow it and see its route.
 
@@ -31,7 +31,7 @@ Press **Space** to pause. The **timeline** at the bottom shows the replay window
 
 ## 4. Try another decision (this creates a branch)
 At that earlier moment, keep the Main Bridge open and close the **North Bridge** instead.
-1. Click the North Bridge's road. The *Selected road* panel opens.
+1. Zoom in on the North Bridge (mouse wheel over it) until its two directions are drawn as separate lanes, then click one of them. The *Selected road* panel opens.
 2. Click **Close link**.
 3. Because you are in A's past, this does not rewrite A. It creates **branch B** from that tick. The *Scenarios* panel appears ("Viewing B: branch"), and A is kept exactly as it was.
 4. Click the other direction of the North Bridge and **Close link** again, so both directions are closed in B.

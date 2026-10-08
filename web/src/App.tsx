@@ -625,6 +625,17 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleRunning, toggleMainBridge, changeSpeed, select, clearVehicle, speed]);
 
+  // A button clicked with the pointer gives its focus back, so the next Space/B is a shortcut, not a
+  // second press of that button. Keyboard activation (detail 0) keeps focus for keyboard users.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const button = e.target instanceof Element ? e.target.closest('button') : null;
+      if (button && e.detail > 0) button.blur();
+    };
+    window.addEventListener('click', onClick);
+    return () => window.removeEventListener('click', onClick);
+  }, []);
+
   // Pointer: drag pans, click selects, hover highlights, wheel zooms about the cursor.
   useEffect(() => {
     const canvasA = canvasRef.current!;

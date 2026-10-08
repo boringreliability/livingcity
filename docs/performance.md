@@ -52,12 +52,12 @@ Frame payloads: 27–33 kB at about 1,700–2,000 vehicles on the network, and 9
 
 Measured by `perf_timeline_recorded` (`web/e2e/perf_timeline.spec.ts`, the integration ward of epic timeline). Every number in this section comes from `web/perf-results/timeline.json`.
 
-The run: River City at 60×, with the replay window filled first (2.6 sim h retained, snapshots every 120 ticks). The harness used headless Chromium with the SwiftShader software GPU, at viewport 1280 × 800 and DPR 1, on an Apple M4 Pro (browser, hardware and launch arguments are in the JSON).
+The run: River City at 60×, after running until A's snapshots held 44.3 MiB of the 48 MiB budget (2.6 sim h retained, snapshots every 120 ticks; nothing had been evicted yet). The harness used headless Chromium with the SwiftShader software GPU, at viewport 1280 × 800 and DPR 1, on an Apple M4 Pro (browser, hardware and launch arguments are in the JSON).
 
 | Measurement | Result | How |
 |---|---|---|
 | Seek latency (in the app) | median **86.9 ms**, p95 91.7, max 92.9 | 24 clicks spread over the whole window, replaying 4–118 ticks from the snapshot below each target. The time runs from the pointerdown to the first animation frame that shows the target. |
-| Branch (intervention in A's past → first frame of B) | **38.3 ms** | keydown B on the timeline, timed in the page |
+| Branch (intervention in A's past → first frame of B) | **38.3 ms** (one sample) | keydown B on the timeline, timed in the page; shorter than one render interval, so it is bounded by when the next frame arrives |
 | Snapshot memory | A **44.3 MiB**, B **37.0 MiB**, pair **81.3 MiB** | against a budget of 48 MiB per scenario; A is still at 44.3 after the lockstep run |
 | Tick cost, single view | mean **0.046 ms** | ticks 15646–18047 of A (1644 on the network, median) |
 | Tick cost, lockstep A + B | mean **0.084 ms**, ×**1.84** single view | the same A ticks, 15648–18056 |
