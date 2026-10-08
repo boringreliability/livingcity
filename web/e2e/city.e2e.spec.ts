@@ -53,10 +53,16 @@ async function canvasDiff(page: Page, a: Buffer, b: Buffer): Promise<number> {
   );
 }
 
+// The first spec of a run may hit a cold dev server: load the app once so test 6 times the app, not Vite.
+test.beforeAll(async ({ browser }) => {
+  const page = await browser.newPage();
+  await ready(page);
+  await page.close();
+});
+
 // 6
 test('opening_screen_is_alive', async ({ page }) => {
   // Given a fresh load
-  const t0 = Date.now();
   await page.goto('/');
   // Then within 5 s the strip shows sim time ≥ 15:00 and ≥ 300 vehicles are on the network
   const simTime = page.getByRole('region', { name: 'Simulation metrics' }).locator('.simtime .value');
@@ -72,7 +78,8 @@ test('opening_screen_is_alive', async ({ page }) => {
       { timeout: 5_000, intervals: [100] },
     )
     .toBe(true);
-  expect(Date.now() - t0).toBeLessThanOrEqual(5_500);
+  // (timed in the page, from navigation start)
+  expect(await page.evaluate(() => performance.now())).toBeLessThanOrEqual(5_000);
   // and the hook agrees: the first frames are at or after the warm-up's 1,800 ticks
   expect((await snap(page)).tick).toBeGreaterThanOrEqual(1800);
   // and the city moves: two canvas screenshots 1 s apart differ
@@ -116,11 +123,16 @@ test('diagnostics_panel_toggle', async ({ page }) => {
   for (const id of ['diag-encode', 'diag-draw', 'diag-vehicles', 'diag-bytes', 'diag-speed']) {
     await expect(region.getByTestId(id)).toHaveText(/\d/);
   }
-  // and the vehicle row shows the hook's numbers (it updates with frames)
+  // and, paused (worker stats stand still), the rows show the hook's numbers
   await pause(page);
   const d = await page.evaluate(() => window.__livingcity!.diagnostics());
-  await expect(region.getByTestId('diag-vehicles')).toContainText(String(d.onNetwork));
-  await expect(region.getByTestId('diag-vehicles')).toContainText(String(d.active));
+  await expect(region.getByTestId('diag-vehicles')).toHaveText(new RegExp(`^${d.onNetwork}\\s*/\\s*${d.active}$`));
+  await expect(region.getByTestId('diag-bytes')).toContainText(String(d.frameBytes));
+  const tick = (await pair('diag-tick'))!;
+  expect(Math.abs(tick[0]! - d.perf!.tickMsMedian)).toBeLessThanOrEqual(0.0005);
+  expect(Math.abs(tick[1]! - d.perf!.tickMsP95)).toBeLessThanOrEqual(0.0005);
+  expect(Number(((await region.getByTestId('diag-ticks-measured').textContent()) ?? '').replace(/[^\d]/g, ''))).toBe(d.perf!.ticksMeasured);
+  await expect(region.getByTestId('diag-speed')).toHaveText(/^\d+(\.\d)?× of \d+×$/);
   // When D is pressed again, it collapses; the button opens it again
   await blur(page);
   await page.keyboard.press('d');
@@ -177,6 +189,8 @@ test('stress_badge_for_scaled_demand', async ({ page }) => {
   await expect(page.getByText('stress test ×3')).toBeVisible();
   await expect(page.getByText(/realistic/i)).toHaveCount(0);
   expect((await snap(page)).demandScale).toBe(3);
+  // and the city really carries more traffic than the plain one at a comparable time
+  const stressed = (await snap(page)).metrics['on_network']!;
   // Given an invalid value
   await ready(page, '/?demand=abc');
   // Then there is no badge, the scale is 1 and a console warning explains it
@@ -191,6 +205,8 @@ test('stress_badge_for_scaled_demand', async ({ page }) => {
   await ready(page, '/');
   await expect(page.getByText(/stress test/i)).toHaveCount(0);
   expect((await snap(page)).demandScale).toBe(1);
+  const plain = (await snap(page)).metrics['on_network']!;
+  expect(stressed).toBeGreaterThan(1.3 * plain);
 });
 
 /** Occupancy (vehicles ÷ capacity) of the links, from the hook. */
@@ -217,15 +233,20 @@ test('full_demo_on_river_city', async ({ page }) => {
   const s0 = await ready(page);
   expect(s0.running).toBe(true);
   const t0 = s0.tick;
-  await expect.poll(async () => (await snap(page)).tick, { timeout: 10_000 }).toBeGreaterThan(t0 + 40);
-  const before = await snap(page);
-  const queued0 = before.metrics['queued']!;
-  const lm = before.landmarks!;
+  // pre-closure queued: the median of 5 snapshots spread over ≥ 1 sim minute (one snapshot can catch a spike)
+  const qs: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    await expect.poll(async () => (await snap(page)).tick, { timeout: 10_000 }).toBeGreaterThanOrEqual(t0 + 30 * (i + 1));
+    qs.push((await snap(page)).metrics['queued']!);
+  }
+  const queued0 = [...qs].sort((a, b) => a - b)[2]!;
+  const lm = (await snap(page)).landmarks!;
   // When the main bridge is closed with the prominent button
   await page.getByRole('button', { name: /close the main bridge/i }).click();
   await expect.poll(async () => (await snap(page)).closed, { timeout: 10_000 }).toEqual(expect.arrayContaining(lm.central_bridge));
   const closedAt = (await snap(page)).tick;
-  // Then within 10 sim minutes queued doubles and an Old/North Bridge approach spills back
+  // Then within 15 sim minutes queued doubles and an Old/North Bridge approach spills back
+  // (Red r1 sweep: at most 5.5 and 9.7 sim min for closures in the window this test closes in)
   let doubled = false;
   let spilled: { approach: number; feeder: number } | null = null;
   await expect
@@ -234,24 +255,26 @@ test('full_demo_on_river_city', async ({ page }) => {
         const s = await snap(page);
         doubled ||= s.metrics['queued']! >= 2 * Math.max(1, queued0);
         spilled ??= await spillback(page);
-        if (s.tick - closedAt > 10 * MIN_S * 2) return 'timeout';
+        if (s.tick - closedAt > 15 * MIN_S * 2) return 'timeout';
         return doubled && spilled ? 'ok' : 'waiting';
       },
-      { timeout: 90_000, intervals: [250] },
+      { timeout: 120_000, intervals: [250] },
     )
     .toBe('ok');
-  // When a car on the Old Bridge is picked and followed
+  // When a car on the Old Bridge is picked and followed (earliest on the bridge first)
   await pause(page);
-  const target = await page.evaluate((old) => {
+  const candidates = await page.evaluate((old) => {
     const h = window.__livingcity!;
     const n = h.snapshot().frameRecords;
+    const out: { record: number; link: number; s: number }[] = [];
     for (let i = 0; i < n; i++) {
       const v = h.frameVehicle(i);
-      if (v && (old as number[]).includes(v.link)) return { record: i, link: v.link };
+      if (v && (old as number[]).includes(v.link)) out.push({ record: i, link: v.link, s: v.s });
     }
-    return null;
+    return out.sort((a, b) => a.s - b.s);
   }, lm.south_bridge);
-  expect(target).not.toBeNull();
+  expect(candidates.length).toBeGreaterThan(0);
+  const target = candidates[0]!;
   // zoom in on it (picking needs ≥ 1 px/m), then click it
   const box = (await page.locator('canvas').first().boundingBox())!;
   await expect
@@ -272,6 +295,9 @@ test('full_demo_on_river_city', async ({ page }) => {
   await page.mouse.click(at[0], at[1]);
   await expect.poll(async () => (await snap(page)).trackedTrip).not.toBeNull();
   const trip = (await snap(page)).trackedTrip;
+  // it is on the Old Bridge with the rest of its trip ahead (it cannot arrive while we watch)
+  expect(lm.south_bridge).toContain((await snap(page)).trackedRoute[0]);
+  expect((await snap(page)).trackedRoute.length).toBeGreaterThanOrEqual(3);
   await page.getByRole('button', { name: /^follow$/i }).click();
   await expect.poll(async () => (await snap(page)).following).toBe(true);
   // Then, running again, Follow keeps the car near the canvas centre
@@ -291,7 +317,7 @@ test('full_demo_on_river_city', async ({ page }) => {
   await page.keyboard.press('b');
   await expect.poll(async () => (await snap(page)).closed, { timeout: 10_000 }).toEqual([]);
   const reopenedAt = (await snap(page)).tick;
-  // Then queued falls to ≤ 0.6 × its value at the reopen within 10 sim minutes
+  // Then queued falls to ≤ 0.6 × its value at the reopen within 10 sim minutes (measured: 1–2.25)
   await expect
     .poll(
       async () => {
@@ -328,6 +354,28 @@ test('controls_responsive_under_load', async ({ page }) => {
   await page.getByRole('button', { name: 'Play', exact: true }).click();
   await expect.poll(async () => (await snap(page)).running, { timeout: 1_000 }).toBe(true);
   expect(Date.now() - t0).toBeLessThan(2_500);
+});
+
+// 16
+test('starting_status_during_warmup', async ({ page }) => {
+  // Given a slow network: the wasm module arrives 2 s late
+  await page.route('**/*.wasm', async (route) => {
+    await sleep(2_000);
+    await route.continue();
+  });
+  await page.goto('/');
+  // Then the app says it is starting, and the speed control is usable meanwhile
+  const status = page.getByRole('status').filter({ hasText: 'Starting the city…' });
+  await expect(status).toBeVisible({ timeout: 2_000 });
+  const speed = page.getByRole('combobox', { name: 'Speed' });
+  await expect(speed).toBeEnabled();
+  await speed.selectOption({ label: '5×' });
+  // When the city is ready
+  await expect.poll(async () => page.evaluate(() => window.__livingcity?.snapshot().tick ?? 0), { timeout: 60_000 }).toBeGreaterThan(1800);
+  // Then the status is gone and the speed chosen while starting is in force (5× = 10 ticks/s)
+  await expect(status).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => window.__livingcity!.diagnostics().targetTicksPerS)).toBe(10);
+  await expect(speed.locator('option:checked')).toHaveText('5×');
 });
 
 // 15 (supersedes review1.spec.ts "fix G4": user decision 2026-10-08, see ward city-005)

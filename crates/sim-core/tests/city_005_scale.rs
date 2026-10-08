@@ -25,8 +25,8 @@ fn scaled_demand_multiplies_flows() {
         assert_eq!(c.river, base.river);
         assert_eq!(c.landmarks, base.landmarks);
         assert_eq!(c.zones, base.zones);
-        assert_eq!(c.scenario.network.links().len(), base.scenario.network.links().len());
-        assert_eq!(c.scenario.network.nodes().len(), base.scenario.network.nodes().len());
+        assert_eq!(c.scenario.network.links(), base.scenario.network.links());
+        assert_eq!(c.scenario.network.nodes(), base.scenario.network.nodes());
         assert_eq!((c.scenario.demand_seed, c.scenario.behavior_seed), (2026, 7));
         assert_eq!(c.scenario.demand.profile, base.scenario.demand.profile);
         // and every flow is the same flow (same order) with its rate × scale

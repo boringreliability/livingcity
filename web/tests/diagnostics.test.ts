@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'vitest';
 
 import { createSimHost, type SimLike } from '../src/sim/host';
-import { percentile, RENDER_WINDOW, SampleWindow, TICK_WINDOW, TickWindow } from '../src/sim/perf';
+import { percentile, RENDER_WINDOW, SampleWindow, TICK_WINDOW, TickWindow, weightedPercentile } from '../src/sim/perf';
 import {
   DT,
   WARMUP_SIM_S,
@@ -50,6 +50,17 @@ describe('test 2: percentiles_nearest_rank', () => {
     for (const v of [100, 100, 1, 2, NaN, Infinity, 3, 4]) w.add(v);
     // the 100s fell out of the window; non-finite values were ignored
     expect(w.stats()).toEqual({ median: 2, p95: 4, count: 4 });
+  });
+});
+
+describe('weightedPercentile (the harness statistics)', () => {
+  test('weighted nearest rank over all samples', () => {
+    expect(weightedPercentile([], 0.5)).toBe(0);
+    expect(weightedPercentile([[1, 10], [2, 20]], 0.5)).toBe(2);
+    expect(weightedPercentile([[1, 10], [2, 20]], 0.3)).toBe(1); // rank 9 ≤ 10
+    expect(weightedPercentile([[5, 1], [1, 98], [9, 1]], 0.95)).toBe(1);
+    expect(weightedPercentile([[5, 1], [1, 98], [9, 1]], 0.995)).toBe(9); // rank 100
+    expect(weightedPercentile([[2, 0], [7, -1], [NaN, 5], [3, 4]], 0.5)).toBe(3); // invalid samples ignored
   });
 });
 
@@ -105,6 +116,7 @@ function host(opts: { perfNow?: () => number; city?: 'three_bridges' | 'river_ci
   const memory = loadWasm();
   let t = 0;
   let sim: Sim | undefined;
+  const createArgs: unknown[][] = [];
   const posted: FromWorker[] = [];
   const wrap = (s: Sim): SimLike => {
     const like = s as unknown as SimLike;
@@ -123,7 +135,9 @@ function host(opts: { perfNow?: () => number; city?: 'three_bridges' | 'river_ci
     });
   };
   const h = createSimHost({
-    createSim: (d, b, city) => {
+    createSim: (...args: unknown[]) => {
+      createArgs.push(args);
+      const [d, b, city] = args as [number, number, string];
       sim = city === 'three_bridges' ? Sim.three_bridges(d, b) : Sim.river_city(d, b);
       return wrap(sim);
     },
@@ -150,14 +164,17 @@ function host(opts: { perfNow?: () => number; city?: 'three_bridges' | 'river_ci
     frames,
     ready,
     sim: () => sim!,
+    createArgs,
+    now: () => t,
   };
 }
 
 describe('test 4: perf_never_changes_the_sim', () => {
   test('a host with jittery measurement and one with measurement stubbed out simulate identically', () => {
-    // Given two hosts on the same city, seeds and wall clock; one measures with a jittery clock
+    // Given two hosts on the same city, seeds and wall clock; one measures with a wildly wrong clock
+    // (a full second per reading: if it leaked into the SimClock, the schedule would collapse)
     let k = 0;
-    const jitter = () => (k++ * 7919) % 37; // deterministic "noise", 0–36 ms
+    const jitter = () => k++ * 1000;
     const a = host({ perfNow: jitter, city: 'three_bridges' });
     const b = host({ perfNow: () => 0, city: 'three_bridges' });
     for (const x of [a, b]) {
@@ -181,8 +198,11 @@ describe('test 4: perf_never_changes_the_sim', () => {
     expect(fa.length).toBe(fb.length);
     fa.forEach((f, i) => {
       expect(f.tick).toBe(fb[i]!.tick);
+      expect(f.clock).toEqual(fb[i]!.clock);
       expect(Array.from(f.metrics)).toEqual(Array.from(fb[i]!.metrics));
     });
+    // and the measured times did differ (the jumping clock was really used for perf)
+    expect(fa.some((f, i) => f.perf.frameTickMs !== fb[i]!.perf.frameTickMs)).toBe(true);
     // and the measurement really was active in one and not in the other
     const pa = fa.at(-1)!.perf;
     const pb = fb.at(-1)!.perf;
@@ -199,13 +219,13 @@ describe('test 5: warmup_before_ready', () => {
     expect(WARMUP_SIM_S).toBe(900);
     // Given expensive ticks (2 ms each in fake wall time) and a warm-up of 900 s = 1,800 ticks
     const x = host({ tickCostMs: 2 });
-    const initMs = x.send({ type: 'init', demandSeed: 2026, behaviorSeed: 7, warmupS: WARMUP_SIM_S });
+    let longestSend = x.send({ type: 'init', demandSeed: 2026, behaviorSeed: 7, warmupS: WARMUP_SIM_S });
     // init itself does not simulate, and posts nothing yet
-    expect(initMs).toBeLessThanOrEqual(100);
+    expect(x.sim().tick()).toBe(0);
     expect(x.posted).toEqual([]);
     // a speed and a running state chosen during the warm-up are kept
-    x.send({ type: 'setSpeed', multiplier: 20 });
-    x.send({ type: 'setRunning', running: true });
+    longestSend = Math.max(longestSend, x.send({ type: 'setSpeed', multiplier: 20 }));
+    longestSend = Math.max(longestSend, x.send({ type: 'setRunning', running: true }));
     const bridge = JSON.parse(x.sim().landmarks_json()).central_bridge[0] as number;
     let longest = 0;
     let iterations = 0;
@@ -216,7 +236,7 @@ describe('test 5: warmup_before_ready', () => {
       iterations++;
       // a close sent during the warm-up
       if (iterations === 5) {
-        x.send({ type: 'command', kind: 'close', link: bridge });
+        longestSend = Math.max(longestSend, x.send({ type: 'command', kind: 'close', link: bridge }));
         sentClose = true;
       }
     }
@@ -224,6 +244,7 @@ describe('test 5: warmup_before_ready', () => {
     // Then the warm-up never blocked message handling for more than 100 ms at a time
     expect(x.ready()).toBeDefined();
     expect(longest).toBeLessThanOrEqual(100);
+    expect(longestSend).toBeLessThanOrEqual(100);
     expect(iterations).toBeGreaterThanOrEqual(Math.ceil((1800 * 2) / 100));
     // and ready is the first message, at tick 1,800
     expect(x.posted[0]!.type).toBe('ready');
@@ -233,10 +254,12 @@ describe('test 5: warmup_before_ready', () => {
     expect(Array.from(x.sim().closed_links())).not.toContain(bridge);
     // When the app runs on
     const t1 = x.frames().length;
+    const tReady = x.now();
     for (let i = 0; i < 200; i++) {
       x.tick(16);
       x.iterate();
     }
+    const elapsedS = (x.now() - tReady) / 1000;
     const after = x.frames().slice(t1);
     expect(after.length).toBeGreaterThan(0);
     // Then frames continue from the warm-up, with sim time = executed ticks × DT
@@ -249,11 +272,18 @@ describe('test 5: warmup_before_ready', () => {
     const closedAt = after.find((f) => Array.from(f.closed).includes(bridge));
     expect(closedAt).toBeDefined();
     expect(closedAt!.tick).toBeGreaterThan(1800);
-    // and the warm-up did not inflate the achieved rate (20× = 40 ticks/s), nor create a backlog
+    // and the speed chosen during the warm-up is kept: 20× = 40 ticks per elapsed second, no catch-up
     const last = after.at(-1)!;
-    expect(last.clock.achievedTicksPerS).toBeLessThanOrEqual(40 * 1.15);
-    expect(last.clock.backlogTicks).toBeLessThanOrEqual(40);
-    expect(last.tick - 1800).toBeLessThanOrEqual(Math.ceil((200 * 16 * 40) / 1000) + 2);
+    const ran = last.tick - 1800;
+    expect(ran).toBeLessThanOrEqual(Math.ceil(elapsedS * 40) + 2);
+    expect(ran).toBeGreaterThanOrEqual(Math.floor(elapsedS * 40 * 0.8) - 2);
+    // and the warm-up neither inflated the achieved rate nor left a backlog
+    expect(after[0]!.clock.backlogTicks).toBeLessThanOrEqual(2);
+    for (const f of after) expect(f.clock.achievedTicksPerS).toBeLessThanOrEqual(40 * 1.15);
+    // and perf describes the running app only: warm-up batches are not measured
+    expect(after[0]!.perf.ticksMeasured).toBeLessThanOrEqual(after[0]!.tick - 1800);
+    const sumTicks = after.reduce((acc, f) => acc + f.perf.frameTicks, 0);
+    expect(sumTicks).toBe(ran);
   });
 
   test('a new init during the warm-up restarts it', () => {
@@ -274,6 +304,14 @@ describe('test 5: warmup_before_ready', () => {
     expect(x.posted.filter((m) => m.type === 'ready')).toHaveLength(1);
     expect(x.ready()!.tick).toBe(120);
     expect(x.sim().tick()).toBe(120);
+  });
+
+  test('the demand scale reaches createSim (default 1)', () => {
+    const x = host();
+    x.send({ type: 'init', demandSeed: 2026, behaviorSeed: 7, demandScale: 2.5 });
+    x.send({ type: 'init', demandSeed: 2026, behaviorSeed: 7 });
+    expect(x.createArgs[0]![3]).toBe(2.5);
+    expect(x.createArgs[1]![3]).toBe(1);
   });
 
   test('without warmupS, ready is posted at once at tick 0 (unchanged behaviour)', () => {
