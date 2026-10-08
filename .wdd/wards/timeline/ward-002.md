@@ -6,7 +6,7 @@ epic: "timeline"
 status: "red"
 dependencies: ["timeline-001"]
 layer: "rust"
-estimated_tests: 16
+estimated_tests: 17
 created: "2026-10-08"
 completed: null
 ---
@@ -87,6 +87,7 @@ File: `crates/sim-core/tests/timeline_002_branch.rs`. It runs in the default tes
 | 14 | `same_window_compares_like_for_like` | A (open) and B (main bridge closed at the branch tick 1800), both at 1800 + 20 sim min, `from` = 1800: equal `generated` (probed 7,205), each side satisfies the partition, and B has more `incomplete` than A (probed 2,010 vs 1,657; at 10 min 1,724 vs 1,610) |
 | 15 | `window_metrics_exclude_spawns_mixed_with_demand` | three_bridges with explicit spawns every 60 ticks from 600, interleaved with demand. Equal to brute force for from ∈ {0, 600, 1000}; spawns are never in a cohort (probed: 661 spawned, 641 generated) |
 | 16 | `window_metrics_count_gridlock_removals` | a demand-driven one-way ring (4 zones, flows going three quarters round at 1,200 veh/h) deadlocks. The cohort has gridlock removals (probed: 15 at 4000) and no unreachable ones. Equal to brute force for from ∈ {0, 500, 2000} |
+| 17 | `window_metrics_exclude_removed_spawns` | three_bridges with all bridges closed for good at 500 and explicit spawns every 20 ticks in [300, 500), run to 3000. Removed spawns are in no cohort: equal to brute force for from ∈ {0, 400, 1000} (probed: 1,123 spawned, 1,113 generated, the 10 spawns all removed as unreachable) |
 
 ## Must NOT
 - Modify the original in `branch` (it takes `&self`).

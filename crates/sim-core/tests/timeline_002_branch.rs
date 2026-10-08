@@ -202,6 +202,7 @@ fn branch_budget() {
     let full = a.branch(1500, UNLIMITED).unwrap();
     assert_eq!(full.snapshot_ticks().len(), a.snapshot_ticks().iter().filter(|&&t| t < 1500).count() + 1);
     assert!(full.snapshot_ticks().ends_with(&small.snapshot_ticks()), "the budget evicts the oldest copies: no gap");
+    assert_eq!(a.branch(1500, 0).unwrap().snapshot_ticks(), vec![1500], "a budget below one snapshot keeps the branch point");
 }
 
 // ─── 7 ───────────────────────────────────────────────────────────────────
@@ -500,9 +501,37 @@ fn window_metrics_count_gridlock_removals() {
     let flows = (0..4).map(|i| OdFlow { origin: z[i], dest: z[(i + 3) % 4], veh_per_hour: 1200.0 }).collect();
     let s = Scenario { network, demand: DemandModel { flows, profile: Default::default() }, demand_seed: 1, behavior_seed: 2 };
     let w = stepped(&s, &[], 4000);
-    let m = w.window_metrics(0);
+    let m = brute(&w, 0);
     assert!(m.removed_gridlock > 0 && m.removed_unreachable == 0, "precondition: demand gridlock removals {m:?}");
+    // from 0 is the informative cohort; 500 and 2000 are all-incomplete cohorts (still compared)
     for from in [0u64, 500, 2000] {
         assert_metrics_eq(&w.window_metrics(from), &brute(&w, from), &format!("gridlock, from {from}"));
+    }
+}
+
+// ─── 17 (Red r2 MAJOR 1) ─────────────────────────────────────────────────
+/// Explicit spawns interleaved with demand that end up removed are not cohort removals.
+#[test]
+fn window_metrics_exclude_removed_spawns() {
+    let c = three_bridges(2026, 7);
+    let lm = c.landmarks;
+    let cmds: Vec<Command> = [lm.north_bridge, lm.central_bridge, lm.south_bridge]
+        .into_iter()
+        .flatten()
+        .map(|l| close(l, 500))
+        .collect();
+    let mut w = world(&c.scenario, &cmds);
+    let zones: Vec<_> = c.zones.iter().map(|z| z.node).collect();
+    for t in 0..3000u64 {
+        if (300..500).contains(&t) && t % 20 == 0 {
+            let (r, _) = w.shortest_route(zones[0], zones[zones.len() - 1]).unwrap();
+            w.spawn_with_route(r).unwrap();
+        }
+        w.step();
+    }
+    let m = brute(&w, 0);
+    assert!(w.counts().removed > m.removed_unreachable + m.removed_gridlock, "precondition: removed explicit spawns");
+    for from in [0u64, 400, 1000] {
+        assert_metrics_eq(&w.window_metrics(from), &brute(&w, from), &format!("removed spawns, from {from}"));
     }
 }
