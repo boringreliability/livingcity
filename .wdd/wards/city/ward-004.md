@@ -39,7 +39,7 @@ It also fixes the renderer MINORs that were left open in core-005. All visual da
     - `labels: { text, kind, icon, x, y }[]`: one per zone, at the zone's position, with `icon = LABEL_ICONS[kind]`.
   - `LABEL_ICONS = { residential: '⌂', workplace: '◫', hospital: '✚' }`, exported.
 - **Layout and camera**
-  - `web/src/render/layout.ts` exports `FIT_INSETS = { top: 140, right: 24, bottom: 96, left: 24 }` (CSS px). The fitted city starts below the control panel and above the metrics strip.
+  - `web/src/render/layout.ts` exports `FIT_INSETS` (CSS px): the fitted city starts below the control panel and above the metrics strip. *Gold refinement:* the values are `{ top: 120, right: 24, bottom: 120, left: 24 }`, not the planned 140 / 96. Vertical symmetry keeps the city's centre at the canvas centre; the asymmetric version moved it 22 px down, and the frozen city-003 tests, which zoom in at the canvas centre onto the busy Main Bridge, then found too few vehicles.
   - `Camera.fitInsets(bounds, insets)` is new; `fit` is unchanged. The app uses `fitInsets(bounds, FIT_INSETS)`.
 - **Link table**
   - `web/src/render/linkTable.ts` exports `LINK_TEX_WIDTH = 1024` and `linkTexel(i, row, n) -> [x, y] = [i % 1024, row × ceil(n / 1024) + floor(i / 1024)]`.

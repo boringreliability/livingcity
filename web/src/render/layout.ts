@@ -9,4 +9,6 @@ export interface Insets {
   left: number;
 }
 
-export const FIT_INSETS: Insets = { top: 140, right: 24, bottom: 96, left: 24 };
+// Vertically symmetric, so the fitted city's centre stays at the canvas centre (a zoom at the
+// canvas centre lands on the Main Bridge, as the inspection tests and users expect).
+export const FIT_INSETS: Insets = { top: 120, right: 24, bottom: 120, left: 24 };

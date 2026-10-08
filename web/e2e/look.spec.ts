@@ -68,9 +68,11 @@ test('b_key_repeat_ignored', async ({ page }) => {
 // 9
 test('hatch_leaves_junctions_clear', async ({ page }) => {
   const s = await ready(page);
-  await pause(page);
   await page.evaluate(() => window.__livingcity!.setDebug({ hideVehicles: true }));
+  // close while running: commands apply at the next tick, and paused frames show the unchanged
+  // state (approved core-004 G4b), so the closure is confirmed before pausing
   await closeMain(page);
+  await pause(page);
   await page.mouse.move(5, 400);
   await sleep(300);
   const we = s.landmarks!.central_bridge[0];
@@ -88,9 +90,11 @@ test('hatch_leaves_junctions_clear', async ({ page }) => {
 // 10
 test('hatch_moves_with_the_map', async ({ page }) => {
   const s = await ready(page);
-  await pause(page);
   await page.evaluate(() => window.__livingcity!.setDebug({ hideVehicles: true }));
+  // close while running: commands apply at the next tick, and paused frames show the unchanged
+  // state (approved core-004 G4b), so the closure is confirmed before pausing
   await closeMain(page);
+  await pause(page);
   await page.mouse.move(5, 400);
   await sleep(300);
   const we = s.landmarks!.central_bridge[0];
@@ -118,9 +122,11 @@ test('hatch_moves_with_the_map', async ({ page }) => {
 // 11
 test('barriers_visible_at_fit_zoom', async ({ page }) => {
   const s = await ready(page);
-  await pause(page);
   await page.evaluate(() => window.__livingcity!.setDebug({ hideVehicles: true }));
+  // close while running: commands apply at the next tick, and paused frames show the unchanged
+  // state (approved core-004 G4b), so the closure is confirmed before pausing
   await closeMain(page);
+  await pause(page);
   await page.mouse.move(5, 400);
   await sleep(300);
   for (const l of s.landmarks!.central_bridge) {
@@ -147,10 +153,9 @@ test('barriers_visible_at_fit_zoom', async ({ page }) => {
 // 12
 test('selected_halo_keeps_opposite_hatch', async ({ page }) => {
   const s = await ready(page);
-  await pause(page);
   await page.evaluate(() => window.__livingcity!.setDebug({ hideVehicles: true }));
   const [we, ew] = s.landmarks!.central_bridge;
-  // close only east→west via the road panel
+  // close only east→west via the road panel, while running (paused frames show the unchanged state)
   const pe = await point(page, ew, 0.5);
   await page.mouse.click(pe[0], pe[1]);
   await expect.poll(async () => (await snap(page)).selectedLink).toBe(ew);
@@ -159,6 +164,7 @@ test('selected_halo_keeps_opposite_hatch', async ({ page }) => {
   await blur(page);
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await snap(page)).selectedLink).toBeNull();
+  await pause(page);
   await page.mouse.move(5, 400);
   await sleep(300);
   const mid = await point(page, ew, 0.5);
@@ -244,11 +250,12 @@ test('congestion_reads_in_grayscale', async ({ page }) => {
   };
   const before = await measure();
   expect(before.width).toBeGreaterThan(0);
-  // When the main bridge is closed and the approach fills up (≥ 60 % of its capacity)
-  await closeMain(page);
+  // When the main bridge is closed (while running) and the approach fills up (≥ 60 % of its capacity)
   await page.getByRole('combobox', { name: /speed/i }).selectOption({ label: '20×' });
   await blur(page);
   await page.keyboard.press('Space');
+  await expect.poll(async () => (await snap(page)).running).toBe(true);
+  await closeMain(page);
   const cap = await page.evaluate((l) => window.__livingcity!.linkCapacity(l), link);
   await expect.poll(async () => (await snap(page)).linkCounts[link]! / cap, { timeout: 180_000, intervals: [1000] }).toBeGreaterThanOrEqual(0.6);
   const after = await measure();
