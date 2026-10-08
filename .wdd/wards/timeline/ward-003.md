@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Timeline in the worker and UI"
 epic: "timeline"
-status: "red"
+status: "approved"
 dependencies: ["timeline-002"]
 layer: "fullstack"
 estimated_tests: 20
@@ -111,7 +111,7 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
 | 8 | `command_on_b_edits_b` | in B, seeking back and closing a road sets B's head to the position. A is untouched |
 | 9 | `discard_and_replace_branch` | `discardBranch` returns to A with `branchTick` −1. A second `branch` replaces B; frames show the new `branchTick` |
 | 10 | `timeline_messages_during_warmup_are_refused` | `seek`, `branch` and `viewScenario` before `ready` produce errors and are not applied after the warm-up |
-| 11 | `timeline_bar_shows_window_and_memory` (e2e) | after load: a slider named "Timeline" with `aria-valuemin` = `windowStartTick`, `aria-valuemax` = `headTick`, `aria-valuetext` containing "sim time", and the memory text equal to `snapshotBytes / 2^20` (one decimal) + " / 48 MiB replay memory". The bar does not cover the city (canvas hit tests at the city's bottom edge) |
+| 11 | `timeline_bar_shows_window_and_memory` (e2e) | after load and a pause: the slider "Timeline" has `aria-valuemin` / `aria-valuemax` / `aria-valuenow` = window start / head / position and `aria-valuetext` = "sim time hh:mm:ss" of the position. The bar shows "<snapshotBytes/2^20, 1 dec> / 48 MiB replay memory", and after one step back the labels for the window start, the head and the playhead. No bottom-edge road (derived: every link at the lowest screen y, ≥ 10) or Old Bridge point is covered: `elementFromPoint` is `canvas.city` |
 | 12 | `keyboard_scrub` (e2e) | focusing the slider and pressing ← pauses, and the position goes down by 120. → goes back up, Home jumps to the window start, End to the head |
 | 13 | `pointer_scrub` (e2e) | a click at 25 % of the track seeks to within ±2 % of that tick. A drag issues seeks while moving and ends at the release point |
 | 14 | `play_from_the_past_replays_then_continues` (e2e) |  after seeking 2 min back and pressing Play, the position passes the old head and the head grows. The metrics at the old head equal those recorded before (determinism). Once the replay has caught up, "Close the main bridge" at A's head is an ordinary command: no branch, no prompt, and the bridge closes in A |
