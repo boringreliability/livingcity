@@ -127,10 +127,10 @@ test('diagnostics_panel_toggle', async ({ page }) => {
   await pause(page);
   const d = await page.evaluate(() => window.__livingcity!.diagnostics());
   await expect(region.getByTestId('diag-vehicles')).toHaveText(new RegExp(`^${d.onNetwork}\\s*/\\s*${d.active}$`));
-  await expect(region.getByTestId('diag-bytes')).toContainText(String(d.frameBytes));
+  await expect(region.getByTestId('diag-bytes')).toHaveText(`${d.frameBytes} B`);
   const tick = (await pair('diag-tick'))!;
-  expect(Math.abs(tick[0]! - d.perf!.tickMsMedian)).toBeLessThanOrEqual(0.0005);
-  expect(Math.abs(tick[1]! - d.perf!.tickMsP95)).toBeLessThanOrEqual(0.0005);
+  expect(tick[0]!.toFixed(3)).toBe(d.perf!.tickMsMedian.toFixed(3));
+  expect(tick[1]!.toFixed(3)).toBe(d.perf!.tickMsP95.toFixed(3));
   expect(Number(((await region.getByTestId('diag-ticks-measured').textContent()) ?? '').replace(/[^\d]/g, ''))).toBe(d.perf!.ticksMeasured);
   await expect(region.getByTestId('diag-speed')).toHaveText(/^\d+(\.\d)?× of \d+×$/);
   // When D is pressed again, it collapses; the button opens it again

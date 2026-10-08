@@ -151,8 +151,14 @@ These pin the names the tests use.
   - `diagnostics()`, returning `{ perf: PerfStats | null, render: { intervalMedianMs, intervalP95Ms, drawMedianMs, drawP95Ms, samples }, frameBytes, onNetwork, active, achievedTicksPerS, targetTicksPerS }`;
   - `frameVehicle(record)`, returning `{ link, s, queued } | null` for the latest frame;
   - `diagnostics().renderer`: the app's own WebGL `RENDERER` string;
-  - `startPerfRecording()` / `stopPerfRecording()`. The latter returns `{ ticks: [ms, n][] (per frame, from frameTickMs/frameTicks), renderIntervals: number[], drawMs: number[], onNetwork: number[], active: number[], frames, wallMs, timerResolutionMs }` covering exactly the frames and rAFs in between.
-- Diagnostics row formats: `diag-tick` "a.aaa / b.bbb ms" (3 decimals), `diag-render` and `diag-draw` "a.a / b.b ms", `diag-speed` "A× of R×" (A with ≤ 1 decimal).
+  - `startPerfRecording()` / `stopPerfRecording()`. The latter returns `{ ticks: [ms, n][] (per frame, from frameTickMs/frameTicks), renderIntervals: number[], drawMs: number[], onNetwork: number[], active: number[], waitingAtOrigin: number[], frames, wallMs, timerResolutionMs }` covering exactly the frames and rAFs in between.
+- Diagnostics row formats:
+  - `diag-tick` "a.aaa / b.bbb ms" (3 decimals, `toFixed(3)`);
+  - `diag-render` and `diag-draw` "a.a / b.b ms";
+  - `diag-vehicles` "N / M" (plain integers, on network / active);
+  - `diag-bytes` "N B" (a plain integer);
+  - `diag-ticks-measured` a plain integer;
+  - `diag-speed` "A× of R×" (A with ≤ 1 decimal).
 
 **Perf harness**
 - `@perf` tests are excluded from `pnpm -C web e2e` (`grepInvert` unless `PERF=1`), and `pnpm -C web e2e:perf` runs them.
@@ -162,8 +168,13 @@ These pin the names the tests use.
   - tick ms median/p95 are weighted by ticks (`weightedPercentile`), and the mean is Σms ÷ Σticks;
   - `tickMsMaxFrame` is the largest per-frame mean;
   - `ticksRecorded`, `framesRecorded` and `renderSamples` state the coverage;
-  - `timerResolutionMs` is recorded, and `tickBelowTimerResolution` is true when the tick median is under it. The report must then cite the mean, not print 0 ms as a tick time.
-- The JSON also records the run conditions (viewport, DPR, headless, launch args, the app's renderer) and the brief's targets with met / missed: 10,000 active, ~60 FPS (render interval median ≤ 17.5 ms), and ≥ 5,000 on the network for the stress run.
+  - `timerResolutionMs` is recorded. `tickBelowTimerResolution` is true when the tick p95 is under 10 × the resolution; the report must then cite `tickMsMean` and not present the percentiles as tick times.
+- The JSON also records the run conditions (viewport, DPR, headless from the user agent, launch args, the app's renderer) and the brief's targets with met / missed:
+  - "10,000 active vehicles" is scored on **vehicles on the network** (Red r2 A1). The sim's `active` also counts trips waiting at their origin, so `activeMax` and `waitingAtOriginMax` are recorded beside it;
+  - ~60 FPS means a render interval median ≤ 17.5 ms;
+  - the stress run needs ≥ 5,000 on the network.
+- Coverage checks are sanity floors (≥ 1 render sample per second, > 0 ticks). A slow run is reported as missed, not failed.
+- The recording also holds `waitingAtOrigin: number[]` (per frame).
 
 **Calibration (test 10)**
 These values were measured with node + wasm on River City, seeds 2026/7, 17/23 and 1/2. The warm-up runs to tick 1800, then the Main Bridge is closed.
@@ -172,8 +183,8 @@ These values were measured with node + wasm on River City, seeds 2026/7, 17/23 a
 - After a reopen, queued falls below 0.6 × its value at the reopen within 1–2 sim min.
 - Red r1 sweep (seeds 2026/7, closure at every 8th tick in [1840, 2040), the window the e2e closes in, q0 = median of 5 snapshots over the minute before):
   - doubling came at the latest after 5.5 sim min;
-  - spillback came at the latest after 9.7 sim min;
-  - the 15-min deadline therefore leaves ≥ 5 min margin.
+  - spillback came at the latest after 9.7 sim min.
+- Red r2 re-probe with the e2e's own sampling (250 ms polls at 20×) and click lag, for closures in [1840, 2400): doubling came at the latest after 6.7 sim min and spillback after 10.1 sim min, so the 15-min deadline leaves ≥ 4.9 min margin.
 - Notes for Gold (frozen e2e under the warm-up, from Red r1): `look.spec` #8 may flake about 0.5 % (occupancy dip), and `gold5` G1 should be re-run because bridges are busier at load.
 
 ## Must NOT

@@ -13,7 +13,9 @@ import config from '../playwright.config';
 const OUT = new URL('../perf-results/', import.meta.url);
 const DT = 0.5;
 /** The brief's targets (livingcity.md § Performance). */
-const TARGET = { activeVehicles: 10_000, renderIntervalMedianMs: 17.5, stressOnNetwork: 5_000 };
+// "10,000 active vehicles" is scored on vehicles on the network: the sim's `active` also counts trips still
+// waiting at their origin (Red r2 A1), which are not vehicles the engine moves or the renderer draws.
+const TARGET = { onNetworkVehicles: 10_000, renderIntervalMedianMs: 17.5, stressOnNetwork: 5_000 };
 const snap = (page: Page): Promise<LivingCitySnapshot> => page.evaluate(() => window.__livingcity!.snapshot());
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -53,12 +55,14 @@ async function measure(page: Page, seconds: number, during?: () => Promise<void>
     onNetworkMax: Math.max(0, ...r.onNetwork),
     activeMedian: percentile(r.active, 0.5),
     activeMax: Math.max(0, ...r.active),
+    waitingAtOriginMax: Math.max(0, ...r.waitingAtOrigin),
     tickMsMean: ticks > 0 ? ms / ticks : 0,
     tickMsMedian,
     tickMsP95: weightedPercentile(r.ticks.map(([m, n]) => [m / n, n] as [number, number]), 0.95),
     tickMsMaxFrame: Math.max(0, ...perFrame),
     timerResolutionMs: r.timerResolutionMs,
-    tickBelowTimerResolution: tickMsMedian < r.timerResolutionMs,
+    // coarse clocks (Chrome workers: ~0.1 ms) make per-tick percentiles meaningless below ~10 steps; cite the mean then
+    tickBelowTimerResolution: weightedPercentile(r.ticks.map(([m, n]) => [m / n, n] as [number, number]), 0.95) < 10 * r.timerResolutionMs,
     renderIntervalMedianMs: percentile(r.renderIntervals, 0.5),
     renderIntervalP95Ms: percentile(r.renderIntervals, 0.95),
     drawMedianMs: percentile(r.drawMs, 0.5),
@@ -81,13 +85,18 @@ async function record(browser: Browser, page: Page, name: string, meta: Record<s
     conditions: {
       viewport: page.viewportSize(),
       devicePixelRatio: await page.evaluate(() => window.devicePixelRatio),
-      headless: use.headless ?? true,
+      headless: /Headless/.test(await page.evaluate(() => navigator.userAgent)),
       launchArgs: use.launchOptions?.args ?? [],
     },
     city: (await snap(page)).city,
     ...m,
     targets: {
-      activeVehicles: { target: TARGET.activeVehicles, measuredMax: m.activeMax, met: m.activeMax >= TARGET.activeVehicles },
+      onNetworkVehicles: {
+        target: TARGET.onNetworkVehicles,
+        measuredMax: m.onNetworkMax,
+        met: m.onNetworkMax >= TARGET.onNetworkVehicles,
+        note: 'active also counts trips waiting at their origin; see activeMax / waitingAtOriginMax',
+      },
       smoothRendering: { targetIntervalMedianMs: TARGET.renderIntervalMedianMs, measured: m.renderIntervalMedianMs, met: m.renderIntervalMedianMs <= TARGET.renderIntervalMedianMs },
       ...(meta['scenario'] === 'stress'
         ? { stressOnNetwork: { target: TARGET.stressOnNetwork, measuredMax: m.onNetworkMax, met: m.onNetworkMax >= TARGET.stressOnNetwork } }
@@ -99,7 +108,7 @@ async function record(browser: Browser, page: Page, name: string, meta: Record<s
 }
 
 const NUMBERS = [
-  'wallMs', 'framesRecorded', 'ticksRecorded', 'renderSamples', 'onNetworkMedian', 'onNetworkMax', 'activeMedian', 'activeMax',
+  'wallMs', 'framesRecorded', 'ticksRecorded', 'renderSamples', 'onNetworkMedian', 'onNetworkMax', 'activeMedian', 'activeMax', 'waitingAtOriginMax',
   'tickMsMean', 'tickMsMedian', 'tickMsP95', 'tickMsMaxFrame', 'timerResolutionMs', 'renderIntervalMedianMs', 'renderIntervalP95Ms',
   'drawMedianMs', 'drawP95Ms', 'achievedTicksPerS', 'achievedSpeed', 'targetTicksPerS', 'frameBytes', 'multiplier', 'durationS',
 ] as const;
@@ -114,18 +123,22 @@ function check(file: string, durationS: number) {
   for (const k of ['scenario', 'url', 'timestamp', 'browser', 'hardware', 'renderer', 'city']) expect(typeof j[k], k).toBe('string');
   expect(typeof j['tickBelowTimerResolution']).toBe('boolean');
   const n = (k: string) => j[k] as number;
-  // the recording spans the whole measurement
+  // the recording spans the whole measurement (sanity floors only: a slow result is reported, not failed)
   expect(n('wallMs')).toBeGreaterThanOrEqual(durationS * 1000);
-  expect(n('renderSamples')).toBeGreaterThanOrEqual(durationS * 20);
-  expect(n('ticksRecorded')).toBeGreaterThanOrEqual(0.5 * n('targetTicksPerS') * durationS);
+  expect(n('renderSamples')).toBeGreaterThanOrEqual(durationS);
+  expect(n('framesRecorded')).toBeGreaterThan(0);
+  expect(n('ticksRecorded')).toBeGreaterThan(0);
+  expect(n('achievedTicksPerS')).toBeCloseTo(n('ticksRecorded') / (n('wallMs') / 1000), 6);
   expect(n('onNetworkMedian')).toBeGreaterThan(0);
   expect(n('renderIntervalMedianMs')).toBeGreaterThan(0);
   expect(n('renderIntervalP95Ms')).toBeGreaterThanOrEqual(n('renderIntervalMedianMs'));
   expect(n('tickMsP95')).toBeGreaterThanOrEqual(n('tickMsMedian'));
   expect(n('tickMsMaxFrame')).toBeGreaterThanOrEqual(n('tickMsMean'));
-  expect(j['tickBelowTimerResolution']).toBe(n('tickMsMedian') < n('timerResolutionMs'));
+  expect(j['tickBelowTimerResolution']).toBe(n('tickMsP95') < 10 * n('timerResolutionMs'));
+  expect(n('activeMax')).toBeGreaterThanOrEqual(n('onNetworkMax'));
   const t = j['targets'] as Record<string, { met: boolean }>;
-  expect(t['activeVehicles']!.met).toBe(n('activeMax') >= TARGET.activeVehicles);
+  expect(t['activeVehicles']).toBeUndefined();
+  expect(t['onNetworkVehicles']!.met).toBe(n('onNetworkMax') >= TARGET.onNetworkVehicles);
   expect(t['smoothRendering']!.met).toBe(n('renderIntervalMedianMs') <= TARGET.renderIntervalMedianMs);
   return j;
 }
