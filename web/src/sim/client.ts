@@ -1,10 +1,11 @@
-import type { CityName, FrameMessage, FromWorker, ReadyMessage, ToWorker } from './protocol';
+import type { CityName, ComparisonMessage, FrameMessage, FromWorker, ReadyMessage, ToWorker } from './protocol';
 
 /** UI-side handle on the simulation worker. */
 export interface SimClient {
   onReady(cb: (msg: ReadyMessage) => void): void;
   onFrame(cb: (msg: FrameMessage) => void): void;
   onError(cb: (message: string) => void): void;
+  onComparison(cb: (msg: ComparisonMessage) => void): void;
   setRunning(running: boolean): void;
   setSpeed(multiplier: number): void;
   closeLink(link: number): void;
@@ -21,6 +22,7 @@ export interface SimClient {
   branch(fromTick: number, then: { kind: 'close' | 'open'; link: number }[]): void;
   viewScenario(scenario: 0 | 1): void;
   discardBranch(): void;
+  compare(on: boolean): void;
   dispose(): void;
 }
 
@@ -35,6 +37,7 @@ export function createSimClient(
   const ready: ((m: ReadyMessage) => void)[] = [];
   const frame: ((m: FrameMessage) => void)[] = [];
   const errors: ((m: string) => void)[] = [];
+  const comparisons: ((m: ComparisonMessage) => void)[] = [];
   const send = (msg: ToWorker, transfer: Transferable[] = []) => worker.postMessage(msg, transfer);
 
   worker.onerror = (e: ErrorEvent) => errors.forEach((cb) => cb(`worker error: ${e.message}`));
@@ -42,6 +45,7 @@ export function createSimClient(
     const msg = e.data;
     if (msg.type === 'ready') ready.forEach((cb) => cb(msg));
     else if (msg.type === 'frame') frame.forEach((cb) => cb(msg));
+    else if (msg.type === 'comparison') comparisons.forEach((cb) => cb(msg));
     else errors.forEach((cb) => cb(msg.message));
   };
   send({
@@ -57,6 +61,7 @@ export function createSimClient(
     onReady: (cb) => void ready.push(cb),
     onFrame: (cb) => void frame.push(cb),
     onError: (cb) => void errors.push(cb),
+    onComparison: (cb) => void comparisons.push(cb),
     setRunning: (running) => send({ type: 'setRunning', running }),
     setSpeed: (multiplier) => send({ type: 'setSpeed', multiplier }),
     closeLink: (link) => send({ type: 'command', kind: 'close', link }),
@@ -70,6 +75,7 @@ export function createSimClient(
     branch: (fromTick, then) => send({ type: 'branch', fromTick, then }),
     viewScenario: (scenario) => send({ type: 'viewScenario', scenario }),
     discardBranch: () => send({ type: 'discardBranch' }),
+    compare: (on) => send({ type: 'compare', on }),
     dispose: () => worker.terminate(),
   };
 }

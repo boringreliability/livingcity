@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Camera } from './render/camera';
-import { cityDecor, type CityLabel } from './render/cities';
+import { cityDecor, type CityDecor, type CityLabel } from './render/cities';
 import { buildRoadGeometry, vehiclePosition, type RoadGeometry } from './render/geometry';
 import { pickLink, pickVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
-import { FIT_INSETS } from './render/layout';
+import { COMPARE_FIT_INSETS, FIT_INSETS } from './render/layout';
 import { CityRenderer, linkCapacity } from './render/renderer';
 import { createSimClient, type SimClient } from './sim/client';
 import { decodeVehicles, type DecodedVehicles } from './sim/frame';
@@ -16,6 +16,7 @@ import {
   parseCityName,
   parseDemandScale,
   type ClockStatus,
+  type ComparisonMessage,
   type FrameMessage,
   type PerfStats,
   type TimelineStatus,
@@ -25,6 +26,7 @@ import {
   type TrackedVehicle,
 } from './sim/protocol';
 import { ControlPanel, SPEEDS } from './ui/ControlPanel';
+import { ComparisonPanel } from './ui/ComparisonPanel';
 import { DiagnosticsPanel, type RenderStats } from './ui/DiagnosticsPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
@@ -41,6 +43,8 @@ const RENDER_STATS_REFRESH_MS = 500;
 /** Wheel zoom: factor per 100 px of wheel delta (one notch ≈ 16 %). */
 const WHEEL_FACTOR_PER_100PX = 1.16;
 const CLICK_SLOP_PX = 4;
+/** Why interventions are off while A and B are compared side by side (ward timeline-004). */
+const NO_INTERVENTIONS_WHILE_COMPARING = 'Exit comparison to change roads';
 
 /** What the UI shows of the latest frame (the vehicle buffer goes to the GPU and back). */
 interface FrameView {
@@ -101,6 +105,27 @@ export function App() {
   const [renderIntervals] = useState(() => ({ current: new SampleWindow(RENDER_WINDOW) }));
   const [drawTimes] = useState(() => ({ current: new SampleWindow(RENDER_WINDOW) }));
   const recordingRef = useRef<Recording | null>(null);
+  /** Side by side (ward timeline-004): B's canvas and renderer exist only while comparing. */
+  const canvasBRef = useRef<HTMLCanvasElement | null>(null);
+  const rendererB = useRef<CityRenderer | null>(null);
+  const decorRef = useRef<CityDecor | null>(null);
+  /** B's latest frame view, and a copy of its records (replayed into a renderer created later). */
+  const bFrameRef = useRef<FrameView | null>(null);
+  const bRecordsRef = useRef<{ words: Uint32Array; count: number; tick: number; running: boolean; multiplier: number } | null>(null);
+  /** An A frame waiting for its B partner (pairs are applied and drawn together). */
+  const pendingPairA = useRef<FrameMessage | null>(null);
+  /** The comparison layout is applied (canvases laid out, camera refitted): the hook's `compare`. */
+  const [compareView, setCompareView] = useState(false);
+  const compareViewRef = useRef(false);
+  /** The scenario viewed in single view (kept while comparing). */
+  const viewedRef = useRef<0 | 1>(0);
+  const [comparison, setComparison] = useState<ComparisonMessage | null>(null);
+  const comparisonRef = useRef<ComparisonMessage | null>(null);
+  /** The side a road was picked on (always A outside the comparison). */
+  const selectedSideRef = useRef<'A' | 'B'>('A');
+  const [selectedSide, setSelectedSide] = useState<'A' | 'B'>('A');
+  const drawnCams = useRef<{ a: { cx: number; cy: number; zoom: number }; b: { cx: number; cy: number; zoom: number } } | null>(null);
+  const labelElsB = useRef<(HTMLSpanElement | null)[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
   /** The last requested seek target until a frame shows it (keys and interventions use it). */
   const pendingSeekRef = useRef<number | null>(null);
@@ -155,12 +180,17 @@ export function App() {
 
   const pushLinkState = useCallback(() => {
     const f = frameRef.current;
-    if (renderer.current && f) renderer.current.setLinkState(f.closed, selectedRef.current, hoveredRef.current, f.linkCounts);
+    const onB = selectedSideRef.current === 'B';
+    if (renderer.current && f) renderer.current.setLinkState(f.closed, onB ? null : selectedRef.current, hoveredRef.current, f.linkCounts);
+    const fb = bFrameRef.current;
+    if (rendererB.current && fb) rendererB.current.setLinkState(fb.closed, onB ? selectedRef.current : null, null, fb.linkCounts);
   }, []);
 
   const select = useCallback(
-    (link: number | null) => {
+    (link: number | null, side: 'A' | 'B' = 'A') => {
       selectedRef.current = link;
+      selectedSideRef.current = side;
+      setSelectedSide(side);
       setSelected(link);
       setLinkDetail(null);
       client.current?.inspectLink(link);
@@ -211,11 +241,16 @@ export function App() {
       pendingSeekRef.current = null;
       setPendingSeek(null);
     });
+    c.onComparison((m) => {
+      comparisonRef.current = m;
+      setComparison(m);
+    });
     c.onReady((r) => {
       readyRef.current = r;
       const g = buildRoadGeometry(r.network);
       geometry.current = g;
       const decor = cityDecor(r, g);
+      decorRef.current = decor;
       labelsRef.current = decor.labels;
       setLabels(decor.labels);
       renderer.current!.setNetwork(g, decor);
@@ -224,7 +259,59 @@ export function App() {
       c.setSpeed(speedRef.current);
       c.setRunning(true);
     });
+    /** B's half of a pair: its renderer (if already created) and its view. */
+    const applyFrameB = (f: FrameMessage) => {
+      const words = new Uint32Array(f.vehicles);
+      bRecordsRef.current = { words: words.slice(0, f.count * 4), count: f.count, tick: f.tick, running: f.clock.running, multiplier: f.clock.multiplier };
+      rendererB.current?.setFrame(words, f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier);
+      c.returnBuffer(f.vehicles);
+      const names = readyRef.current?.metricNames ?? [];
+      const metrics: Record<string, number> = {};
+      names.forEach((n, i) => (metrics[n] = f.metrics[i]!));
+      bFrameRef.current = {
+        tick: f.tick,
+        simTimeS: f.simTimeS,
+        closed: Array.from(f.closed),
+        linkCounts: f.linkCounts,
+        linkQueued: f.linkQueued,
+        metrics,
+        clock: f.clock,
+        perf: f.perf,
+        frameBytes: f.vehicles.byteLength,
+        scenario: f.scenario,
+        timeline: f.timeline,
+      };
+    };
     c.onFrame((f: FrameMessage) => {
+      if (f.timeline.compare === 1) {
+        // a pair: hold A until its B partner arrives, then apply and draw both together
+        if (f.scenario === 0) {
+          if (pendingPairA.current) c.returnBuffer(pendingPairA.current.vehicles);
+          pendingPairA.current = f;
+          return;
+        }
+        const a = pendingPairA.current;
+        pendingPairA.current = null;
+        if (!a || a.tick !== f.tick) {
+          if (a) c.returnBuffer(a.vehicles);
+          c.returnBuffer(f.vehicles);
+          return;
+        }
+        applyFrameB(f);
+        applyFrame(a);
+        return;
+      }
+      if (pendingPairA.current) {
+        c.returnBuffer(pendingPairA.current.vehicles);
+        pendingPairA.current = null;
+      }
+      bFrameRef.current = null;
+      bRecordsRef.current = null;
+      comparisonRef.current = null;
+      viewedRef.current = f.scenario;
+      applyFrame(f);
+    });
+    function applyFrame(f: FrameMessage) {
       renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier);
       // keep a copy for picking before the buffer goes back to the worker
       recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count) };
@@ -284,13 +371,54 @@ export function App() {
       frameRef.current = view;
       pushLinkState();
       setFrame(view);
-    });
+    }
     return () => {
       c.dispose();
       renderer.current?.dispose();
       renderer.current = null;
     };
   }, [camera, pushLinkState]);
+
+  const comparingNow = frame?.timeline.compare === 1;
+  useLayoutEffect(() => {
+    if (comparingNow === compareViewRef.current) return;
+    const g = geometry.current;
+    const d = decorRef.current;
+    if (!g || !d) return;
+    if (comparingNow) {
+      const cb = canvasBRef.current;
+      if (!cb) return;
+      try {
+        rendererB.current = new CityRenderer(cb);
+      } catch {
+        return;
+      }
+      rendererB.current.setNetwork(g, d);
+      const b = bRecordsRef.current;
+      if (b) rendererB.current.setFrame(b.words, b.count, performance.now(), b.tick, b.running, b.multiplier);
+    } else {
+      const rb = rendererB.current;
+      rendererB.current = null;
+      if (rb) {
+        rb.dispose();
+        rb.loseContext(); // never left for the browser to reclaim (it would drop the oldest: A's)
+      }
+      setComparison(null);
+    }
+    const r = canvasRef.current!.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    camera.setViewport(r.width, r.height);
+    renderer.current?.resize(r.width, r.height, dpr);
+    rendererB.current?.resize(r.width, r.height, dpr);
+    camera.fitInsets(g.bounds, comparingNow ? COMPARE_FIT_INSETS : FIT_INSETS);
+    selectedRef.current = null;
+    selectedSideRef.current = 'A';
+    setSelected(null);
+    setSelectedSide('A');
+    pushLinkState();
+    compareViewRef.current = comparingNow;
+    setCompareView(comparingNow);
+  }, [comparingNow, camera, pushLinkState]);
 
   // The pending main-bridge state clears once a frame confirms it.
   useEffect(() => {
@@ -304,6 +432,7 @@ export function App() {
       const r = canvas.getBoundingClientRect();
       camera.setViewport(r.width, r.height);
       renderer.current?.resize(r.width, r.height, window.devicePixelRatio || 1);
+      rendererB.current?.resize(r.width, r.height, window.devicePixelRatio || 1);
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -348,6 +477,11 @@ export function App() {
       }
       const d0 = performance.now();
       renderer.current?.draw(camera, now, simPerMs);
+      const camA = { cx: camera.cx, cy: camera.cy, zoom: camera.zoom };
+      if (rendererB.current) {
+        rendererB.current.draw(camera, now, simPerMs);
+        drawnCams.current = { a: camA, b: { cx: camera.cx, cy: camera.cy, zoom: camera.zoom } };
+      } else drawnCams.current = null;
       const drawMs = performance.now() - d0;
       drawTimes.current.add(drawMs);
       recordingRef.current?.drawMs.push(drawMs);
@@ -357,8 +491,9 @@ export function App() {
         cam.labels !== labelsRef.current || cam.cx !== camera.cx || cam.cy !== camera.cy || cam.zoom !== camera.zoom || cam.w !== camera.width || cam.h !== camera.height;
       if (moved) Object.assign(cam, { labels: labelsRef.current, cx: camera.cx, cy: camera.cy, zoom: camera.zoom, w: camera.width, h: camera.height, gen: cam.gen + 1 });
       labelsRef.current.forEach((l, i) => {
-        const el = labelEls.current[i];
-        if (el && labelPlaced.current.get(el) !== cam.gen) placeLabel(el, l);
+        for (const el of [labelEls.current[i], labelElsB.current[i]]) {
+          if (el && labelPlaced.current.get(el) !== cam.gen) placeLabel(el, l);
+        }
       });
       renderFrames.current++;
       raf = requestAnimationFrame(loop);
@@ -401,7 +536,7 @@ export function App() {
     (then: Intervention[], onApplied?: () => void) => {
       const f = frameRef.current;
       const c = client.current;
-      if (!f || !c) return;
+      if (!f || !c || compareViewRef.current || f.timeline.compare === 1) return; // off while comparing
       const pos = currentPosition();
       if (f.scenario === 0 && pos < f.timeline.headTick) {
         if (f.timeline.branchTick >= 0) {
@@ -443,7 +578,7 @@ export function App() {
     (x: number, y: number): number | null => {
       const r = recordsRef.current;
       const g = geometry.current;
-      if (!r || !g || camera.zoom < VEHICLE_PICK_MIN_ZOOM) return null;
+      if (!r || !g || camera.zoom < VEHICLE_PICK_MIN_ZOOM || compareViewRef.current) return null;
       return pickVehicle(r.vehicles, g.links, camera, x, y, 8, renderer.current?.extrapolationS(performance.now(), simPerMsRef.current) ?? 0);
     },
     [camera],
@@ -491,17 +626,21 @@ export function App() {
 
   // Pointer: drag pans, click selects, hover highlights, wheel zooms about the cursor.
   useEffect(() => {
-    const canvas = canvasRef.current!;
-    let drag: { x: number; y: number; moved: boolean } | null = null;
+    const canvasA = canvasRef.current!;
+    const canvasB = compareView ? canvasBRef.current : null;
+    let drag: { x: number; y: number; moved: boolean; canvas: HTMLCanvasElement } | null = null;
     const local = (e: MouseEvent): [number, number] => {
-      const r = canvas.getBoundingClientRect();
+      const c = (e.currentTarget as HTMLCanvasElement | null) ?? drag?.canvas ?? canvasA;
+      const r = c.getBoundingClientRect();
       return [e.clientX - r.left, e.clientY - r.top];
     };
+    const sideOf = (e: Event): 'A' | 'B' => (e.currentTarget === canvasB && canvasB ? 'B' : 'A');
     const pick = (x: number, y: number) => (geometry.current ? pickLink(geometry.current.links, camera, x, y) : null);
     const pickVeh = (x: number, y: number) => pickVehicleAt(x, y);
     const down = (e: PointerEvent) => {
-      drag = { x: e.clientX, y: e.clientY, moved: false };
-      canvas.setPointerCapture(e.pointerId);
+      const c = e.currentTarget as HTMLCanvasElement;
+      drag = { x: e.clientX, y: e.clientY, moved: false, canvas: c };
+      c.setPointerCapture(e.pointerId);
     };
     const move = (e: PointerEvent) => {
       if (drag) {
@@ -516,6 +655,7 @@ export function App() {
         }
         return;
       }
+      if (compareViewRef.current) return; // no hover highlight while comparing
       const h = pick(...local(e));
       if (h !== hoveredRef.current) {
         hoveredRef.current = h;
@@ -529,7 +669,7 @@ export function App() {
         const r = recordsRef.current;
         // a vehicle click tracks it (the road selection stays); otherwise a road click
         if (v !== null && r) client.current?.inspectVehicle(r.tick, v, ++inspectSeqRef.current);
-        else select(pick(x, y));
+        else select(pick(x, y), sideOf(e));
       }
       drag = null;
     };
@@ -538,17 +678,22 @@ export function App() {
       const [x, y] = local(e);
       camera.zoomAt(x, y, Math.pow(WHEEL_FACTOR_PER_100PX, -e.deltaY / 100));
     };
-    canvas.addEventListener('pointerdown', down);
-    canvas.addEventListener('pointermove', move);
-    canvas.addEventListener('pointerup', up);
-    canvas.addEventListener('wheel', wheel, { passive: false });
+    const canvases = canvasB ? [canvasA, canvasB] : [canvasA];
+    for (const canvas of canvases) {
+      canvas.addEventListener('pointerdown', down);
+      canvas.addEventListener('pointermove', move);
+      canvas.addEventListener('pointerup', up);
+      canvas.addEventListener('wheel', wheel, { passive: false });
+    }
     return () => {
-      canvas.removeEventListener('pointerdown', down);
-      canvas.removeEventListener('pointermove', move);
-      canvas.removeEventListener('pointerup', up);
-      canvas.removeEventListener('wheel', wheel);
+      for (const canvas of canvases) {
+        canvas.removeEventListener('pointerdown', down);
+        canvas.removeEventListener('pointermove', move);
+        canvas.removeEventListener('pointerup', up);
+        canvas.removeEventListener('wheel', wheel);
+      }
     };
-  }, [camera, pushLinkState, select, follow, pickVehicleAt]);
+  }, [camera, pushLinkState, select, follow, pickVehicleAt, compareView]);
 
   // Read-only hook for end-to-end tests.
   useEffect(() => {
@@ -573,12 +718,30 @@ export function App() {
           frameRecords: recordsRef.current?.vehicles.count ?? 0,
           camera: { cx: camera.cx, cy: camera.cy, zoom: camera.zoom },
           demandScale: DEMAND,
-          scenario: f?.scenario === 1 ? 'B' : 'A',
+          scenario: viewedRef.current === 1 ? 'B' : 'A',
           timeline: f
             ? { ...f.timeline }
-            : { windowStartTick: 0, headTick: 0, positionTick: 0, branchTick: -1, snapshotBytes: 0, budgetBytes: 0 },
+            : { windowStartTick: 0, headTick: 0, positionTick: 0, branchTick: -1, snapshotBytes: 0, budgetBytes: 0, compare: 0 },
           branchTick: f && f.timeline.branchTick >= 0 ? f.timeline.branchTick : null,
+          compare: compareViewRef.current,
+          sides:
+            compareViewRef.current && f && bFrameRef.current
+              ? { a: { tick: f.tick, closed: [...f.closed] }, b: { tick: bFrameRef.current.tick, closed: [...bFrameRef.current.closed] } }
+              : null,
+          drawnCameras: drawnCams.current ? { a: { ...drawnCams.current.a }, b: { ...drawnCams.current.b } } : null,
         };
+      },
+      comparison: () => {
+        const m = comparisonRef.current;
+        return m ? { tick: m.tick, fromTick: m.fromTick, a: Array.from(m.a), b: Array.from(m.b) } : null;
+      },
+      linkScreenPointB: (link: number, t: number) => {
+        const l = geometry.current?.links[link];
+        const canvas = canvasBRef.current;
+        if (!l || !canvas || !compareViewRef.current) return null;
+        const [sx, sy] = camera.worldToScreen(l.x0 + (l.x1 - l.x0) * t, l.y0 + (l.y1 - l.y0) * t);
+        const r = canvas.getBoundingClientRect();
+        return [r.left + sx, r.top + sy];
       },
       diagnostics: () => {
         const f = frameRef.current;
@@ -647,12 +810,14 @@ export function App() {
         return out;
       },
       pickAt: (x: number, y: number) => {
-        const r = canvasRef.current?.getBoundingClientRect();
-        if (!r) return { vehicle: null, link: null };
+        const rb = compareViewRef.current ? canvasBRef.current?.getBoundingClientRect() : undefined;
+        const onB = !!rb && x >= rb.left && x <= rb.right && y >= rb.top && y <= rb.bottom;
+        const r = onB ? rb : canvasRef.current?.getBoundingClientRect();
+        if (!r) return { vehicle: null, link: null, side: 'A' as const };
         const [lx, ly] = [x - r.left, y - r.top];
         const vehicle = pickVehicleAt(lx, ly);
         const link = vehicle === null && geometry.current ? pickLink(geometry.current.links, camera, lx, ly) : null;
-        return { vehicle, link };
+        return { vehicle, link, side: onB ? ('B' as const) : ('A' as const) };
       },
       linkScreenCenter: (link: number) => {
         const l = geometry.current?.links[link];
@@ -671,10 +836,20 @@ export function App() {
 
   const g = geometry.current;
   const sel = selected !== null && g ? g.links[selected] : undefined;
+  /** The frame of the side the road was picked on (B's only while comparing). */
+  const selFrame = selectedSide === 'B' && bFrameRef.current ? bFrameRef.current : frame;
+  const focusSlider = () => document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
 
   return (
-    <main className="app">
+    <main className={`app${comparingNow ? ' comparing' : ''}`}>
       <canvas ref={canvasRef} className="city" aria-label="City map" />
+      {comparingNow && <canvas ref={canvasBRef} className="city city-b" aria-label="City map, branch B" />}
+      {comparingNow && (
+        <>
+          <span className="side-label side-a">A: original</span>
+          <span className="side-label side-b">B: branch</span>
+        </>
+      )}
       <div className="labels" aria-hidden="true">
         {labels.map((l, i) => (
           <span key={`${i}:${l.text}`} ref={(el) => {
@@ -686,6 +861,18 @@ export function App() {
           </span>
         ))}
       </div>
+      {comparingNow && (
+        <div className="labels labels-b" aria-hidden="true">
+          {labels.map((l, i) => (
+            <span key={`b${i}:${l.text}`} ref={(el) => {
+              labelElsB.current[i] = el;
+              if (el && !labelPlaced.current.has(el)) placeLabel(el, l);
+            }} className={`zone ${l.kind}`}>
+              <span className="zone-icon">{l.icon}</span> {l.text}
+            </span>
+          ))}
+        </div>
+      )}
       <ControlPanel
         running={running}
         speed={speed}
@@ -696,6 +883,7 @@ export function App() {
         onSpeed={changeSpeed}
         onToggleMainBridge={toggleMainBridge}
         disabled={noGl}
+        {...(comparingNow ? { bridgeDisabledReason: NO_INTERVENTIONS_WHILE_COMPARING } : {})}
         diagnosticsOpen={diagOpen}
         onToggleDiagnostics={() => setDiagOpen((o) => !o)}
         demandScale={DEMAND}
@@ -716,14 +904,15 @@ export function App() {
         </p>
       )}
       <div className="side">
-        {sel && frame && ready && (
+        {sel && selFrame && ready && (
           <SelectionPanel
             link={sel}
             speedMps={ready.network.linkSpeed[sel.id]!}
-            vehicles={frame.linkCounts[sel.id] ?? 0}
-            queued={frame.linkQueued[sel.id] ?? 0}
-            closed={frame.closed.includes(sel.id)}
-            detail={linkDetail && linkDetail.link === sel.id ? linkDetail : null}
+            vehicles={selFrame.linkCounts[sel.id] ?? 0}
+            queued={selFrame.linkQueued[sel.id] ?? 0}
+            closed={selFrame.closed.includes(sel.id)}
+            detail={!comparingNow && linkDetail && linkDetail.link === sel.id ? linkDetail : null}
+            {...(comparingNow ? { side: selectedSide, actionsDisabled: NO_INTERVENTIONS_WHILE_COMPARING } : {})}
             onClose={() => intervene([{ kind: 'close', link: sel.id }])}
             onReopen={() => intervene([{ kind: 'open', link: sel.id }])}
           />
@@ -741,13 +930,21 @@ export function App() {
           />
         )}
       </div>
-      <MetricsStrip simTimeS={frame?.simTimeS ?? 0} metrics={frame?.metrics ?? {}} />
-      <Legend />
+      {!comparingNow && <MetricsStrip simTimeS={frame?.simTimeS ?? 0} metrics={frame?.metrics ?? {}} />}
+      {!comparingNow && <Legend />}
+      {comparingNow && comparison && <ComparisonPanel comparison={comparison} />}
       {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} />}
       {frame && frame.timeline.branchTick >= 0 && (
         <ScenarioPanel
-          scenario={frame.scenario}
+          scenario={viewedRef.current}
           branchTick={frame.timeline.branchTick}
+          comparing={comparingNow}
+          onCompare={(on) => {
+            pendingSeekRef.current = null;
+            setPendingSeek(null);
+            forgetPosition();
+            client.current?.compare(on);
+          }}
           onView={(sc) => {
             pendingSeekRef.current = null;
             setPendingSeek(null);
@@ -773,8 +970,12 @@ export function App() {
             setMainPending(null);
             client.current?.branch(c.at, c.then); // the position the user intervened at
             c.onBranched?.();
+            focusSlider();
           }}
-          onCancel={() => setConfirmReplace(null)}
+          onCancel={() => {
+            setConfirmReplace(null);
+            focusSlider();
+          }}
         />
       )}
       {error && (

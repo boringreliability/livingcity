@@ -60,7 +60,23 @@ export type ToWorker =
   /** Create (or replace) scenario B from A at `fromTick`, apply `then` to B, and view B. */
   | { type: 'branch'; fromTick: number; then: { kind: 'close' | 'open'; link: number }[] }
   | { type: 'viewScenario'; scenario: 0 | 1 }
-  | { type: 'discardBranch' };
+  | { type: 'discardBranch' }
+  /** Lockstep side-by-side comparison of A and B (ward timeline-004). */
+  | { type: 'compare'; on: boolean };
+
+/** Comparison messages are sent at most this often while running (ms of host time). */
+export const COMPARISON_INTERVAL_MS = 500;
+
+/** Window metrics of both sides at one tick, over the cohort from the branch tick (contract T4).
+ * Layout per side: `Sim.window_metrics` = [from, to, generated, completed, removed_unreachable,
+ * removed_gridlock, incomplete, mean_s | NaN, p95_s | NaN]. */
+export interface ComparisonMessage {
+  type: 'comparison';
+  tick: number;
+  fromTick: number;
+  a: Float64Array;
+  b: Float64Array;
+}
 
 /** Replay memory per scenario (snapshot budget); mirrors sim-wasm. */
 export const REPLAY_BUDGET_BYTES = 48 * 1024 * 1024;
@@ -73,6 +89,8 @@ export interface TimelineStatus {
   branchTick: number;
   snapshotBytes: number;
   budgetBytes: number;
+  /** 1 while A and B run in lockstep side by side (then the window is the shared one). */
+  compare: number;
 }
 
 export interface NetworkArrays {
@@ -266,4 +284,4 @@ export function decodeLinkDetail(link: number, a: ArrayLike<number>): LinkDetail
   };
 }
 
-export type FromWorker = ReadyMessage | FrameMessage | { type: 'error'; message: string };
+export type FromWorker = ReadyMessage | FrameMessage | ComparisonMessage | { type: 'error'; message: string };

@@ -496,3 +496,95 @@ button.bridge.closed {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Side by side (ward timeline-004): A left, B right, the same camera; labelled by text and frame. */
+.app.comparing canvas.city {
+  width: 50%;
+}
+
+.app.comparing canvas.city-b {
+  left: 50%;
+  border-left: 2px solid #e6e6e6;
+  box-sizing: border-box;
+}
+
+.app.comparing .labels {
+  right: 50%;
+  overflow: hidden;
+}
+
+.app.comparing .labels.labels-b {
+  left: 50%;
+  right: 0;
+}
+
+.side-label {
+  position: absolute;
+  top: 128px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--panel);
+  border: 2px solid #e6e6e6;
+  pointer-events: none;
+}
+
+.side-label.side-a {
+  left: 12px;
+  border-style: solid;
+}
+
+.side-label.side-b {
+  left: calc(50% + 12px);
+  border-style: dashed;
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 4px, transparent 4px 9px);
+}
+
+.comparison {
+  left: 50%;
+  bottom: 50px;
+  transform: translateX(-50%);
+  font-size: 12px;
+}
+
+.comparison-when {
+  margin: 0 0 4px;
+  display: flex;
+  gap: 16px;
+  color: var(--muted);
+}
+
+.comparison table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.comparison th,
+.comparison td {
+  padding: 1px 10px;
+  text-align: right;
+}
+
+.comparison th[scope='row'] {
+  text-align: left;
+  font-weight: 500;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* narrower windows: the scenario panel wraps instead of covering the control panel */
+@media (max-width: 1199px) {
+  .scenarios {
+    flex-wrap: wrap;
+    justify-content: center;
+    white-space: normal;
+    max-width: 330px;
+    left: calc(50% + 70px);
+  }
+}

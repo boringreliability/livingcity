@@ -13,6 +13,7 @@ import {
   decodeVehicleDetail,
   type CityName,
   type LinkDetail,
+  COMPARISON_INTERVAL_MS,
   REPLAY_BUDGET_BYTES,
   type TimelineStatus,
   type TrackedGone,
@@ -58,6 +59,7 @@ export interface SimLike {
   timeline_info?(): ArrayLike<number>;
   branch?(at: number): SimLike;
   forget_frames?(): void;
+  window_metrics?(from: number): Float64Array;
   /** wasm-bindgen's explicit release (a dropped scenario must not wait for GC: 48 MiB each). */
   free?(): void;
 }
@@ -129,6 +131,9 @@ export function createSimHost(deps: HostDeps): SimHost {
   let scenarios: SimLike[] = [];
   let viewed: 0 | 1 = 0;
   let branchTick = -1;
+  /** A and B advance in lockstep and are posted as (A, B) frame pairs (ward timeline-004). */
+  let comparing = false;
+  let lastComparison = Number.NEGATIVE_INFINITY;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
   let pool: ArrayBuffer[] = [];
   // Per-tick ms over the newest 1,000 ticks, one sample per batch (perf clock). Browsers coarsen
@@ -168,6 +173,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     scenarios = [sim];
     viewed = 0;
     branchTick = -1;
+    comparing = false;
     clock.resetExecuted(sim.tick());
     const ticks = Number.isFinite(warmupS) && warmupS > 0 ? Math.round(warmupS / DT) : 0;
     if (ticks > 0) warmup = { remaining: ticks, ran: 0 };
@@ -236,6 +242,10 @@ export function createSimHost(deps: HostDeps): SimHost {
       deferred.push({ kind, link });
       return;
     }
+    if (comparing) {
+      error('interventions are off while comparing: exit the comparison to change roads');
+      return;
+    }
     if (viewed === 0 && typeof sim.timeline_info === 'function') {
       const st = timelineStatus(sim);
       if (st.positionTick < st.headTick) {
@@ -251,10 +261,84 @@ export function createSimHost(deps: HostDeps): SimHost {
   const timelineStatus = (s: SimLike): TimelineStatus => {
     if (typeof s.timeline_info !== 'function') {
       const t = s.tick();
-      return { windowStartTick: t, headTick: t, positionTick: t, branchTick, snapshotBytes: 0, budgetBytes: REPLAY_BUDGET_BYTES };
+      return { windowStartTick: t, headTick: t, positionTick: t, branchTick, snapshotBytes: 0, budgetBytes: REPLAY_BUDGET_BYTES, compare: 0 };
     }
     const i = s.timeline_info();
-    return { windowStartTick: i[0]!, headTick: i[1]!, positionTick: i[2]!, branchTick, snapshotBytes: i[3]!, budgetBytes: i[4]! };
+    const st = { windowStartTick: i[0]!, headTick: i[1]!, positionTick: i[2]!, branchTick, snapshotBytes: i[3]!, budgetBytes: i[4]!, compare: 0 };
+    if (!comparing) return st;
+    const [lo, hi] = sharedWindow();
+    return { ...st, windowStartTick: lo, headTick: hi, compare: 1 };
+  };
+
+  /** While comparing: [max(window starts, branch tick), min(heads)]. */
+  const sharedWindow = (): [number, number] => {
+    const [a, b] = [scenarios[0]!.timeline_info!(), scenarios[1]!.timeline_info!()];
+    return [Math.max(a[0]!, b[0]!, branchTick), Math.min(a[1]!, b[1]!)];
+  };
+
+  /** Post A's and B's frames at the same tick (one pair). */
+  const postPair = (t: number) => {
+    postFrame(scenarios[0]!, t, 0);
+    postFrame(scenarios[1]!, t, 1);
+    lastPost = t;
+  };
+
+  /** Both sides' window metrics from the branch tick, at the tick of the pair just posted. */
+  const postComparison = (t: number) => {
+    const [a, b] = [scenarios[0]!, scenarios[1]!];
+    if (typeof a.window_metrics !== 'function' || typeof b.window_metrics !== 'function') return;
+    deps.post(
+      { type: 'comparison', tick: a.tick(), fromTick: branchTick, a: Float64Array.from(a.window_metrics(branchTick)), b: Float64Array.from(b.window_metrics(branchTick)) },
+      [],
+    );
+    lastComparison = t;
+  };
+
+  /** After both sides jumped (entering compare, a seek): paused, fresh clock/perf, a pair at once. */
+  const afterPairJump = () => {
+    clock.setRunning(false);
+    clock.resetExecuted(scenarios[0]!.tick());
+    clock.resync();
+    tickWindow = new TickWindow();
+    sinceFrameMs = 0;
+    sinceFrameTicks = 0;
+    trackedTrip = null;
+    const t = deps.now();
+    postPair(t);
+    postComparison(t);
+  };
+
+  const compare = (on: boolean) => {
+    const s = ready('compare');
+    if (!s) return;
+    if (!on) {
+      if (!comparing) return;
+      comparing = false;
+      const t = deps.now();
+      postFrame(s, t);
+      lastPost = t;
+      return;
+    }
+    if (comparing) return;
+    if (scenarios.length < 2) {
+      error('compare needs a branch B');
+      return;
+    }
+    const other = scenarios[viewed === 0 ? 1 : 0]!;
+    const t = s.tick();
+    const info = other.timeline_info?.();
+    if (!info || t < branchTick || t < info[0]!) {
+      error(`compare refused: tick ${t} is before the branch (${branchTick}) or the other scenario's window`);
+      return;
+    }
+    // align the other scenario to the viewed position: a seek inside its window, else a forward step
+    if (t <= info[1]!) other.seek!(t);
+    else {
+      if (other.tick() !== info[1]!) other.seek!(info[1]!);
+      other.step(t - other.tick());
+    }
+    comparing = true;
+    afterPairJump();
   };
 
   /** The timeline messages need a ready world (not during the warm-up). */
@@ -283,6 +367,17 @@ export function createSimHost(deps: HostDeps): SimHost {
   const seek = (tick: number) => {
     const s = ready('seek');
     if (!s) return;
+    if (comparing) {
+      const [lo, hi] = sharedWindow();
+      if (!Number.isInteger(tick) || tick < lo || tick > hi) {
+        error(`seek outside the shared replay window: tick ${tick} not in ${lo}…${hi}`);
+        return;
+      }
+      scenarios[0]!.seek!(tick);
+      scenarios[1]!.seek!(tick);
+      afterPairJump();
+      return;
+    }
     if (typeof s.seek !== 'function' || !Number.isInteger(tick) || tick < 0 || !s.seek(tick)) {
       const st = timelineStatus(s);
       error(`seek outside the replay window: tick ${tick} not in ${st.windowStartTick}…${st.headTick}`);
@@ -295,16 +390,17 @@ export function createSimHost(deps: HostDeps): SimHost {
   const branch = (fromTick: number, then: { kind: 'close' | 'open'; link: number }[]) => {
     if (!ready('branch')) return;
     const a = scenarios[0]!;
-    let b: SimLike;
-    try {
-      if (typeof a.branch !== 'function' || !Number.isInteger(fromTick) || fromTick < 0) throw new Error('no timeline');
-      b = a.branch(fromTick);
-    } catch {
-      const st = timelineStatus(a);
-      error(`branch outside the replay window: tick ${fromTick} not in ${st.windowStartTick}…${st.headTick}`);
+    const info = a.timeline_info?.();
+    // validated before anything is freed or built
+    if (typeof a.branch !== 'function' || !info || !Number.isInteger(fromTick) || fromTick < info[0]! || fromTick > info[1]!) {
+      error(`branch outside the replay window: tick ${fromTick} not in ${info?.[0] ?? '?'}…${info?.[1] ?? '?'}`);
       return;
     }
-    scenarios[1]?.free?.(); // the replaced B
+    // the replaced B goes first: A plus one B at most, also while replacing
+    scenarios[1]?.free?.();
+    scenarios = [a];
+    comparing = false;
+    const b = a.branch(fromTick);
     scenarios = [a, b];
     viewed = 1;
     sim = b;
@@ -316,6 +412,10 @@ export function createSimHost(deps: HostDeps): SimHost {
 
   const viewScenario = (scenario: 0 | 1) => {
     if (!ready('viewScenario')) return;
+    if (comparing) {
+      error('the viewed scenario cannot change while comparing');
+      return;
+    }
     const target = scenarios[scenario];
     if (!target || (scenario !== 0 && scenario !== 1)) {
       error(`no scenario ${String(scenario)}`);
@@ -331,6 +431,7 @@ export function createSimHost(deps: HostDeps): SimHost {
   const discardBranch = () => {
     if (!ready('discardBranch') || scenarios.length < 2) return;
     clock.setRunning(false);
+    comparing = false;
     scenarios[1]!.free?.();
     scenarios = [scenarios[0]!];
     viewed = 0;
@@ -395,7 +496,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     return p;
   };
 
-  const postFrame = (s: SimLike, t: number) => {
+  const postFrame = (s: SimLike, t: number, side: 0 | 1 = viewed) => {
     const e0 = perfNow();
     const count = s.encode_frame();
     const words = count * VEHICLE_RECORD_WORDS;
@@ -420,10 +521,11 @@ export function createSimHost(deps: HostDeps): SimHost {
       metrics: s.metrics(),
       clock: clock.status(),
       perf: perf(t),
-      scenario: viewed,
+      scenario: side,
       timeline: timelineStatus(s),
-      ...(vehicleInspectionUsed ? { tracked: tracked(s), trackedSeq: inspectSeq } : {}),
-      ...(linkInspectionUsed ? { linkDetail: linkDetail(s) } : {}),
+      // no vehicle tracking and no host link detail while comparing (ward timeline-004)
+      ...(vehicleInspectionUsed ? { tracked: comparing ? null : tracked(s), trackedSeq: inspectSeq } : {}),
+      ...(linkInspectionUsed ? { linkDetail: comparing ? null : linkDetail(s) } : {}),
     } as FrameMessage;
     deps.post(msg, [vehicles]);
   };
@@ -437,6 +539,8 @@ export function createSimHost(deps: HostDeps): SimHost {
             break;
           case 'setRunning':
             clock.setRunning(msg.running);
+            // a pause while comparing shows the comparison at the paused tick
+            if (comparing && !msg.running) postComparison(deps.now());
             break;
           case 'setSpeed':
             clock.setSpeed(msg.multiplier);
@@ -448,6 +552,7 @@ export function createSimHost(deps: HostDeps): SimHost {
             pool.push(msg.buffer);
             break;
           case 'inspectVehicle':
+            if (comparing) break; // vehicles are not picked while comparing
             vehicleInspectionUsed = true;
             if (typeof msg.seq === 'number' && Number.isFinite(msg.seq)) inspectSeq = msg.seq;
             inspectVehicle(msg);
@@ -468,6 +573,9 @@ export function createSimHost(deps: HostDeps): SimHost {
           case 'discardBranch':
             discardBranch();
             break;
+          case 'compare':
+            compare(msg.on);
+            break;
         }
       } catch (e) {
         error(e instanceof Error ? e.message : String(e));
@@ -487,7 +595,11 @@ export function createSimHost(deps: HostDeps): SimHost {
           // the pacing reads `now`; the statistics read the measurement clock
           const t0 = deps.now();
           const p0 = perfNow();
-          sim.step(n);
+          if (comparing) {
+            // lockstep: both by the same n, timed as a pair (behind = the pair cannot keep up)
+            scenarios[0]!.step(n);
+            scenarios[1]!.step(n);
+          } else sim.step(n);
           const pms = perfNow() - p0;
           ms = deps.now() - t0;
           tickWindow.add(pms, n);
@@ -498,8 +610,13 @@ export function createSimHost(deps: HostDeps): SimHost {
         clock.report(n, ms);
         const t = deps.now();
         if (t - lastPost >= FRAME_INTERVAL_MS) {
-          postFrame(sim, t);
-          lastPost = t;
+          if (comparing) {
+            postPair(t);
+            if (n > 0 && t - lastComparison >= COMPARISON_INTERVAL_MS) postComparison(t);
+          } else {
+            postFrame(sim, t);
+            lastPost = t;
+          }
         }
       } catch (e) {
         // A wasm panic leaves the instance in an unknown state: halt, report once.

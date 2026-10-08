@@ -14,12 +14,19 @@ interface Props {
   detail: LinkDetail | null;
   onClose(): void;
   onReopen(): void;
+  /** While comparing: the side the road was picked on (named in the heading). */
+  side?: 'A' | 'B';
+  /** When set, Close/Reopen are disabled with this text as the reason. */
+  actionsDisabled?: string;
 }
 
 export function SelectionPanel(p: Props) {
   return (
     <section className="panel selection" aria-label="Selected road">
-      <h2>Link {p.link.id}</h2>
+      <h2>
+        Link {p.link.id}
+        {p.side ? ` (${p.side})` : ''}
+      </h2>
       <dl>
         <dt>lanes</dt>
         <dd>{p.link.lanes}</dd>
@@ -47,11 +54,11 @@ export function SelectionPanel(p: Props) {
         )}
       </dl>
       {p.closed ? (
-        <button type="button" onClick={p.onReopen}>
+        <button type="button" onClick={p.onReopen} disabled={!!p.actionsDisabled} title={p.actionsDisabled}>
           Reopen link
         </button>
       ) : (
-        <button type="button" onClick={p.onClose}>
+        <button type="button" onClick={p.onClose} disabled={!!p.actionsDisabled} title={p.actionsDisabled}>
           Close link
         </button>
       )}

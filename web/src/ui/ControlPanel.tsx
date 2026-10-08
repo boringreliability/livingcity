@@ -14,6 +14,8 @@ interface Props {
   onToggleMainBridge(): void;
   /** Disable every control (e.g. when the city cannot be drawn). */
   disabled?: boolean;
+  /** When set, the main-bridge action alone is disabled with this text as the reason. */
+  bridgeDisabledReason?: string;
   diagnosticsOpen: boolean;
   onToggleDiagnostics(): void;
   /** Demand scale from `?demand=` (1 = the normal city: no badge). */
@@ -65,7 +67,8 @@ export function ControlPanel(p: Props) {
         aria-label="Close the main bridge"
         aria-pressed={p.mainBridgeClosed}
         onClick={p.onToggleMainBridge}
-        disabled={p.disabled}
+        disabled={p.disabled || !!p.bridgeDisabledReason}
+        title={p.bridgeDisabledReason}
       >
         <span aria-hidden="true" className="barrier-icon" />
         {p.mainBridgeClosed ? 'Main bridge closed — reopen' : 'Close the main bridge'}

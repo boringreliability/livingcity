@@ -31,6 +31,12 @@ export interface LivingCitySnapshot {
   timeline: TimelineStatus;
   /** The tick B was branched from, or null without a branch. */
   branchTick: number | null;
+  /** A and B side by side (true once the layout and fit are applied: ward timeline-004). */
+  compare: boolean;
+  /** The committed frame pair's ticks and closed links while comparing. */
+  sides: { a: { tick: number; closed: number[] }; b: { tick: number; closed: number[] } } | null;
+  /** The camera each renderer last drew with (both sides while comparing). */
+  drawnCameras: { a: { cx: number; cy: number; zoom: number }; b: { cx: number; cy: number; zoom: number } } | null;
 }
 
 export interface LivingCityDiagnostics {
@@ -70,7 +76,7 @@ export interface LivingCityHook {
   /** Page coordinates where the tracked vehicle is drawn now (as Follow uses), or null. */
   trackedScreenCenter(): [number, number] | null;
   /** What a click at page point (x, y) would select, without selecting. */
-  pickAt(x: number, y: number): { vehicle: number | null; link: number | null };
+  pickAt(x: number, y: number): { vehicle: number | null; link: number | null; side: 'A' | 'B' };
   /** Test-only rendering switches. */
   setDebug(opts: { hideVehicles?: boolean }): void;
   /** The simulation's storage capacity of a link (lanes × max(1, floor(length / 7.5))). */
@@ -81,6 +87,10 @@ export interface LivingCityHook {
   diagnostics(): LivingCityDiagnostics;
   /** Record `record` of the latest frame, or null. */
   frameVehicle(record: number): { link: number; s: number; queued: boolean } | null;
+  /** The latest comparison (plain arrays), or null outside the comparison. */
+  comparison(): { tick: number; fromTick: number; a: number[]; b: number[] } | null;
+  /** Like `linkScreenPoint`, on B's canvas (null when not comparing). */
+  linkScreenPointB(link: number, t: number): [number, number] | null;
   startPerfRecording(): void;
   stopPerfRecording(): PerfRecording;
 }
