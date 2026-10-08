@@ -34,15 +34,15 @@ export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, 
       <dl>
         {row(comparing ? 'sim tick, A + B (median / p95)' : 'sim tick (median / p95)', 'diag-tick', `${(perf?.tickMsMedian ?? 0).toFixed(3)} / ${(perf?.tickMsP95 ?? 0).toFixed(3)} ms`,
           `Wall time per simulation tick over the last ${perf?.ticksMeasured ?? 0} ticks (timer step ${(perf?.timerResolutionMs ?? 0).toFixed(3)} ms)`)}
-        {row('sim tick (mean)', 'diag-tick-mean', `${(perf?.tickMsMean ?? 0).toFixed(3)} ms`,
+        {row(comparing ? 'sim tick, A + B (mean)' : 'sim tick (mean)', 'diag-tick-mean', `${(perf?.tickMsMean ?? 0).toFixed(3)} ms`,
           'Total measured time ÷ ticks: unlike the percentiles, it resolves costs below the timer step')}
         {row('ticks measured', 'diag-ticks-measured', String(perf?.ticksMeasured ?? 0))}
-        {row('frame encode', 'diag-encode', `${(perf?.encodeMs ?? 0).toFixed(2)} ms`)}
+        {row(comparing ? 'frame encode (A)' : 'frame encode', 'diag-encode', `${(perf?.encodeMs ?? 0).toFixed(2)} ms`)}
         {row('render interval (median / p95)', 'diag-render', `${render.intervalMedianMs.toFixed(1)} / ${render.intervalP95Ms.toFixed(1)} ms`,
           `Time between drawn pictures over the last ${render.samples} frames`)}
         {row('draw CPU (median / p95)', 'diag-draw', `${render.drawMedianMs.toFixed(1)} / ${render.drawP95Ms.toFixed(1)} ms`)}
         {row(comparing ? 'vehicles in A (on network / active)' : 'vehicles (on network / active)', 'diag-vehicles', `${onNetwork} / ${active}`, 'Active also counts trips still waiting at their origin')}
-        {row('frame size', 'diag-bytes', `${frameBytes} B`)}
+        {row(comparing ? 'frame size (A)' : 'frame size', 'diag-bytes', `${frameBytes} B`)}
         {row('speed', 'diag-speed', `${achieved.toFixed(1)}× of ${clock?.multiplier ?? 0}×`, 'Achieved vs. requested simulation speed')}
       </dl>
     </section>

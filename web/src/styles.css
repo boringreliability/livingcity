@@ -135,11 +135,11 @@ select {
   cursor: pointer;
 }
 
-/* a disabled control reads as unavailable without hue: faded, dashed edge, no pointer */
+/* a disabled control reads as unavailable without hue: faded, dotted edge (dashed is B's), no pointer */
 button:disabled,
 select:disabled {
   opacity: 0.45;
-  border-style: dashed;
+  border-style: dotted;
   cursor: not-allowed;
 }
 
@@ -526,9 +526,11 @@ button.bridge.closed {
   right: 0;
 }
 
+/* in the outer bottom corners of each half: below the city (bottom inset 230), above the timeline,
+   left and right of the centred comparison panel, at any window width */
 .side-label {
   position: absolute;
-  top: 92px;
+  bottom: 50px;
   padding: 2px 8px;
   font-size: 12px;
   font-weight: 600;
@@ -537,14 +539,13 @@ button.bridge.closed {
   pointer-events: none;
 }
 
-/* A's label at the inner (right) edge of its half: clear of the control panel and of the roads */
 .side-label.side-a {
-  right: calc(50% + 12px);
+  left: 12px;
   border-style: solid;
 }
 
 .side-label.side-b {
-  left: calc(50% + 12px);
+  right: 12px;
   border-style: dashed;
   background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 4px, transparent 4px 9px);
 }

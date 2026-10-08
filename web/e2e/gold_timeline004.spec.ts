@@ -38,7 +38,7 @@ test('disabled controls look disabled while comparing (no hue needed)', async ({
     });
     expect(st.opacity).toBeLessThan(0.6);
     expect(st.cursor).toBe('not-allowed');
-    expect(st.border).toBe('dashed');
+    expect(st.border).toBe('dotted'); // dashed stays B's pattern
   }
   // and the enabled ones do not
   const on = await page.getByRole('button', { name: 'Compare side by side' }).evaluate((el) => Number(getComputedStyle(el).opacity));
@@ -48,24 +48,42 @@ test('disabled controls look disabled while comparing (no hue needed)', async ({
 for (const size of [
   { width: 1280, height: 800 },
   { width: 1280, height: 720 },
+  { width: 1100, height: 800 },
+  { width: 1024, height: 768 },
 ]) {
-  test(`side labels cover no road (${size.width}×${size.height})`, async ({ page }) => {
+  test(`side labels are visible and cover no road or panel (${size.width}×${size.height})`, async ({ page }) => {
     await page.setViewportSize(size);
     await comparing(page);
-    const covered = await page.evaluate(() => {
+    // geometric (the labels ignore pointer events, so hit-testing cannot see them)
+    const r = await page.evaluate(() => {
       const h = window.__livingcity!;
+      const rect = (el: Element | null) => (el ? el.getBoundingClientRect() : null);
+      const labels = [...document.querySelectorAll('.side-label')].map((e) => ({ text: e.textContent, r: rect(e)! }));
+      const inside = (p: [number, number], b: DOMRect) => p[0] >= b.left && p[0] <= b.right && p[1] >= b.top && p[1] <= b.bottom;
+      const overlap = (a: DOMRect, b: DOMRect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
       const n = h.snapshot().linkCounts.length;
-      let bad = 0;
-      for (let l = 0; l < n; l++) {
-        for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
-          for (const p of [h.linkScreenPoint(l, t), h.linkScreenPointB(l, t)]) {
-            if (!p) continue;
-            if (document.elementFromPoint(p[0], p[1])?.closest('.side-label')) bad++;
-          }
-        }
-      }
-      return bad;
+      let roads = 0;
+      for (let l = 0; l < n; l++)
+        for (const t of [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1])
+          for (const p of [h.linkScreenPoint(l, t), h.linkScreenPointB(l, t)])
+            if (p && labels.some((x) => inside(p, x.r))) roads++;
+      const panels = ['.scenarios', '.comparison', '.controls', '.timeline', '.side']
+        .flatMap((sel) => [...document.querySelectorAll(sel)].map((e) => [sel, rect(e)!] as const))
+        .filter(([, b]) => b.width > 0 && b.height > 0);
+      const covered = labels.flatMap((x) => panels.filter(([, b]) => overlap(x.r, b)).map(([sel]) => `${x.text} under ${sel}`));
+      const a = rect(document.querySelector('canvas.city'))!;
+      const bb = rect(document.querySelector('canvas.city-b'))!;
+      return {
+        texts: labels.map((x) => x.text),
+        roads,
+        covered,
+        inA: labels[0] ? labels[0].r.left >= a.left && labels[0].r.right <= a.right : false,
+        inB: labels[1] ? labels[1].r.left >= bb.left && labels[1].r.right <= bb.right : false,
+      };
     });
-    expect(covered).toBe(0);
+    expect(r.texts).toEqual(['A: original', 'B: branch']);
+    expect(r.roads).toBe(0);
+    expect(r.covered).toEqual([]);
+    expect(r.inA && r.inB).toBe(true);
   });
 }
