@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use sim_core::cities::river_city;
-use sim_core::{Timeline, World};
+use sim_core::{Command, CommandKind, Timeline, World};
 
 const MIB: usize = 1024 * 1024;
 
@@ -58,4 +58,44 @@ fn main() {
         pct(&mut replayed.clone(), 0.5),
         pct(&mut replayed, 1.0)
     );
+
+    // branch cost across the window, and A vs B (main bridge closed in B) over the same window
+    let mut bms = Vec::new();
+    for k in 0..50u64 {
+        let at = w.window_start + (k * 104_729) % (span + 1);
+        let t = Instant::now();
+        let b = tl.branch(at, budget).unwrap();
+        bms.push(t.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(b.position_tick(), at);
+    }
+    println!(
+        "branch: median {:.2} ms, p95 {:.2} ms, max {:.2} ms (n = 50)",
+        pct(&mut bms.clone(), 0.5),
+        pct(&mut bms.clone(), 0.95),
+        pct(&mut bms, 1.0)
+    );
+    let at = 7200;
+    tl.seek(at).unwrap();
+    let mut a = tl.branch(at, budget).unwrap();
+    let mut b = tl.branch(at, budget).unwrap();
+    for l in c.landmarks.central_bridge {
+        b.schedule(Command { tick: at, kind: CommandKind::CloseLink(l) }).unwrap();
+    }
+    a.step_n(2400);
+    b.step_n(2400);
+    let (ma, mb) = (a.world().window_metrics(at), b.world().window_metrics(at));
+    let show = |m: &sim_core::WindowMetrics| {
+        format!(
+            "generated {}, completed {}, incomplete {}, removed {}, mean {:.0} s, p95 {:.0} s",
+            m.generated,
+            m.completed,
+            m.incomplete,
+            m.removed_unreachable + m.removed_gridlock,
+            m.mean_travel_time_s.unwrap_or(f64::NAN),
+            m.p95_travel_time_s.unwrap_or(f64::NAN)
+        )
+    };
+    println!("window {}..{} (20 sim min after the branch):", at, at + 2400);
+    println!("  A (open):   {}", show(&ma));
+    println!("  B (closed): {}", show(&mb));
 }

@@ -22,5 +22,5 @@ pub use network::{Link, LinkId, Network, NetworkBuilder, NetworkError, Node, Nod
 pub use timeline::{Snapshot, Timeline, TimelineError, WindowInfo, SNAPSHOT_INTERVAL_TICKS};
 pub use world::{
     CompletedTrip, Counts, GeneratedTrip, LinkStats, Metrics, RerouteStats, Scenario, SpawnError, TripOutcome, VehicleId,
-    VehicleInfo, VehicleState, VehicleView, World,
+    VehicleInfo, VehicleState, VehicleView, WindowMetrics, World,
 };

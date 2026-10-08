@@ -124,6 +124,21 @@ pub enum TripOutcome {
     Unknown,
 }
 
+/// Comparison metrics over a cohort of demand trips (contract T2): the trips created at or after
+/// `from_tick`, as of `to_tick`. `incomplete` = still live (waiting, on the network, no route).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowMetrics {
+    pub from_tick: u64,
+    pub to_tick: u64,
+    pub generated: u64,
+    pub completed: u64,
+    pub removed_unreachable: u64,
+    pub removed_gridlock: u64,
+    pub incomplete: u64,
+    pub mean_travel_time_s: Option<f64>,
+    pub p95_travel_time_s: Option<f64>,
+}
+
 /// Every removal in order: (trip id, kind).
 pub(crate) type RemovalLog = Vec<(u64, RemovalKind)>;
 
@@ -564,19 +579,9 @@ impl World {
         self.command_log.retain(|c| c.tick <= tick);
     }
 
-    /// A snapshot of everything that affects the future, without the append-only logs, the
-    /// command log (the timeline owns both) and the derived router (rebuilt on demand).
-    ///
-    /// Field classification (every `World` field; keep it complete when adding fields):
-    /// - snapshotted: tick, slots (vehicles incl. routes, retry schedule, blocked ticks,
-    ///   reroute flags), free, lanes, credit, rr_next, origin_buffers, exit_count,
-    ///   next_trip_id, spawned, completed, removed, removed_gridlock, completed_tt_sum,
-    ///   demand_seed, behavior_rng, free_flow, smoothed, cost_keys, exit_time_sum,
-    ///   exit_time_n, cost_epoch, closed, priority_queue, periodic_queue, reroute_stats;
-    /// - shared (`Arc`, not counted): network, demand;
-    /// - logs (lengths only): generated, completed_log, removed_log;
-    /// - owned by the timeline: command_log;
-    /// - derived (empty in the snapshot): router.
+    /// A snapshot of everything that affects the future (see [`Snapshot`] for the field
+    /// classification). The struct literal below names every field, so a new `World` field
+    /// does not compile until it is classified.
     pub fn snapshot(&self) -> Snapshot {
         let state = World {
             network: Arc::clone(&self.network),
@@ -669,8 +674,61 @@ impl World {
         w
     }
 
-    pub(crate) fn log_lens(&self) -> LogLens {
-        LogLens { generated: self.generated.len(), completed: self.completed_log.len(), removed: self.removed_log.len() }
+    /// Copies of the first `lens` entries of each log.
+    pub(crate) fn logs_prefix(&self, lens: LogLens) -> Logs {
+        Logs {
+            generated: self.generated[..lens.generated].to_vec(),
+            completed: self.completed_log[..lens.completed].to_vec(),
+            removed: self.removed_log[..lens.removed].to_vec(),
+        }
+    }
+
+    /// Move the command log out (the timeline re-installs it after a restore).
+    pub(crate) fn take_commands(&mut self) -> Vec<Command> {
+        std::mem::take(&mut self.command_log)
+    }
+
+    /// Window metrics over the cohort of demand trips created at or after `from_tick`, up to now
+    /// (contract T2). Linear in the logs plus a sort for p95: not for per-tick hot paths.
+    pub fn window_metrics(&self, from_tick: u64) -> WindowMetrics {
+        // the generated log is in creation order: ticks and trip ids both ascend
+        let first = self.generated.partition_point(|t| t.created_tick < from_tick);
+        let cohort = &self.generated[first..];
+        let member = |id: u64| cohort.binary_search_by_key(&id, |t| t.trip_id).is_ok();
+        let mut tts: Vec<f64> = self
+            .completed_log
+            .iter()
+            .filter(|c| member(c.trip_id))
+            .map(|c| (c.completed_tick - c.created_tick) as f64 * DT)
+            .collect();
+        let (mut unreachable, mut gridlock) = (0u64, 0u64);
+        for &(id, kind) in &self.removed_log {
+            if member(id) {
+                match kind {
+                    RemovalKind::Unreachable => unreachable += 1,
+                    RemovalKind::Gridlock => gridlock += 1,
+                }
+            }
+        }
+        let generated = cohort.len() as u64;
+        let completed = tts.len() as u64;
+        let mean = (!tts.is_empty()).then(|| tts.iter().sum::<f64>() / tts.len() as f64);
+        let p95 = (!tts.is_empty()).then(|| {
+            tts.sort_by(f64::total_cmp);
+            let rank = ((0.95 * tts.len() as f64).ceil() as usize).max(1);
+            tts[rank - 1]
+        });
+        WindowMetrics {
+            from_tick,
+            to_tick: self.tick,
+            generated,
+            completed,
+            removed_unreachable: unreachable,
+            removed_gridlock: gridlock,
+            incomplete: generated - completed - unreachable - gridlock,
+            mean_travel_time_s: mean,
+            p95_travel_time_s: p95,
+        }
     }
 
     /// Every accepted command, in acceptance order (applied or pending).

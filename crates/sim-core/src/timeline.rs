@@ -42,6 +42,17 @@ impl Logs {
 
 /// Everything in a `World` that affects the future, at one tick: no logs (their lengths only),
 /// no command log, no router, and the network and demand shared, not copied.
+///
+/// Field classification (every `World` field; `World::snapshot` names each one):
+/// - snapshotted: tick, slots (vehicles incl. routes, retry schedule, blocked ticks,
+///   reroute flags), free, lanes, credit, rr_next, origin_buffers, exit_count,
+///   next_trip_id, spawned, completed, removed, removed_gridlock, completed_tt_sum,
+///   demand_seed, behavior_rng, free_flow, smoothed, cost_keys, exit_time_sum,
+///   exit_time_n, cost_epoch, closed, priority_queue, periodic_queue, reroute_stats;
+/// - shared (`Arc`, not counted): network, demand;
+/// - logs (lengths only): generated, completed_log, removed_log;
+/// - owned by the timeline: command_log;
+/// - derived (empty in the snapshot): router.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     state: World,
@@ -90,8 +101,9 @@ pub struct Timeline {
     snapshot_bytes: usize,
     budget_bytes: usize,
     head_tick: u64,
-    /// The logs as of `head_tick` while the position is behind the head (otherwise the
-    /// position world holds them).
+    /// The logs as of `head_tick`, held aside once a seek moved the position world off them.
+    /// Invariant: `None` ⇒ position == head (the position world holds the head logs). It may stay
+    /// `Some` at the head right after a seek; the next step clears it.
     head_logs: Option<Logs>,
     last_seek_replayed: u64,
 }
@@ -179,7 +191,7 @@ impl Timeline {
         }
         let snap = &self.snapshots[idx];
         let logs = self.head_logs.as_ref().expect("set above").prefix(snap.lens);
-        let commands = self.world.command_log().to_vec();
+        let commands = self.world.take_commands();
         self.world = World::restored(&snap.state, commands, logs);
         let replay = tick - snap.tick();
         for _ in 0..replay {
@@ -206,13 +218,52 @@ impl Timeline {
         self.world.schedule(cmd)
     }
 
+    /// An independent timeline from `at` (contract T2): the state at `at`, the commands before it,
+    /// the logs as of it, copies of the retained snapshots before it plus one at it (within
+    /// `budget_bytes`). `self` is not modified; only `Arc` data is shared.
+    pub fn branch(&self, at: u64, budget_bytes: usize) -> Result<Timeline, TimelineError> {
+        let window_start = self.window_start();
+        if at < window_start || at > self.head_tick {
+            return Err(TimelineError::OutsideWindow { tick: at, window_start, head_tick: self.head_tick });
+        }
+        let idx = self.snapshots.partition_point(|s| s.tick() <= at) - 1;
+        let snap = &self.snapshots[idx];
+        let logs = match &self.head_logs {
+            Some(h) => h.prefix(snap.lens),
+            None => self.world.logs_prefix(snap.lens),
+        };
+        let commands: Vec<Command> = self.world.command_log().iter().copied().filter(|c| c.tick < at).collect();
+        let mut world = World::restored(&snap.state, commands, logs);
+        for _ in snap.tick()..at {
+            world.step();
+        }
+        let mut b = Timeline {
+            world,
+            snapshots: VecDeque::new(),
+            snapshot_bytes: 0,
+            budget_bytes,
+            head_tick: at,
+            head_logs: None,
+            last_seek_replayed: 0,
+        };
+        for s in self.snapshots.iter().take_while(|s| s.tick() < at) {
+            b.add_snapshot(s.clone());
+        }
+        b.push_snapshot();
+        Ok(b)
+    }
+
     fn window_start(&self) -> u64 {
         self.snapshots.front().map_or(self.head_tick, Snapshot::tick)
     }
 
     fn push_snapshot(&mut self) {
         let s = self.world.snapshot();
-        debug_assert_eq!(s.lens, self.world.log_lens());
+        self.add_snapshot(s);
+    }
+
+    /// Append a snapshot (newest) and evict the oldest ones beyond the budget.
+    fn add_snapshot(&mut self, s: Snapshot) {
         self.snapshot_bytes += s.bytes();
         self.snapshots.push_back(s);
         while self.snapshot_bytes > self.budget_bytes && self.snapshots.len() > 1 {
