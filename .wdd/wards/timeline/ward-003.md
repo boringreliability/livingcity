@@ -6,7 +6,7 @@ epic: "timeline"
 status: "red"
 dependencies: ["timeline-002"]
 layer: "fullstack"
-estimated_tests: 18
+estimated_tests: 20
 created: "2026-10-08"
 completed: null
 ---
@@ -65,16 +65,19 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
 - **`command`** applies to the viewed scenario: at A's head it is ordinary, and in B it may edit B's future. The UI never sends a command for A below its head; it sends `branch` instead. The host refuses one with an error, so A can never be edited in the past.
 
 **UI**
-- **`TimelineBar`** (new component) sits in the bottom band, full width under the metrics strip and legend; those two move up so they still clear the city. It contains:
+- **`TimelineBar`** (new component) is a region labelled "Replay timeline". It sits in the bottom band, full width under the metrics strip and legend; those two move up so they still clear the city. It contains:
   - a track drawn from `windowStartTick` to `headTick`, with the retained range shaded, a playhead at `positionTick`, a head marker and a branch marker;
   - sim-time labels for the window start, the playhead and the head (`hh:mm:ss`, labelled "sim time");
-  - memory text `"<x.x> / 48 MiB replay memory"`;
+  - memory text `"<x.x> / 48 MiB replay memory"`, where x.x = `snapshotBytes` / 2^20 with one decimal. This is the **viewed scenario's** memory: each scenario has its own 48 MiB budget, at most 96 MiB in total, and a "per scenario" note follows the text;
+  - the branch marker: a diamond with the text "branch hh:mm:ss";
   - buttons "Jump to start", "−1 min", "+1 min" and "Live" (jump to the head);
   - the track itself: `role="slider"`, accessible name "Timeline", `aria-valuemin` / `aria-valuemax` / `aria-valuenow` in ticks, `aria-valuetext` "sim time hh:mm:ss".
     - Keys: ←/→ move ±120 ticks (1 sim min), Home jumps to the window start, End to the head.
     - Pointer: a click or drag seeks, throttled to at most one seek per 100 ms while dragging, and a final seek on release.
 - **Scenario control** (when B exists): two toggle buttons "A: original" and "B: branch from hh:mm:ss" (`aria-pressed`), and a "Discard branch" button.
   - The viewed scenario is also named in a pattern-framed label on the canvas corner, "Viewing A: original" or "Viewing B: branch". The label is text and pattern, never hue.
+- **Requested position.** Keys, buttons, intervention logic and `aria-valuenow` all use the **last requested** position, so consecutive keys accumulate even before the seek frame arrives. A ← at the window start clamps silently.
+- **Interventions in B's past** (B viewed, position < head) are ordinary commands: they edit B's future, with no confirmation.
 - **Interventions in A's past.** "Close the main bridge" (button or B key) and the road panel's Close/Reopen, while A is viewed with position < head:
   - **without B:** they send `branch { fromTick: position, then }`;
   - **with B:** an inline confirmation (not a native dialog) asks "Replace the branch?" with the buttons "Replace the branch" and "Cancel". Replace sends `branch`; Cancel does nothing.
@@ -83,9 +86,9 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
   - `snapshot().scenario` (`'A' | 'B'`);
   - `snapshot().timeline` (the frame's six numbers);
   - `snapshot().branchTick` (`number | null`);
-  - `seekForTest(tick)`, which sends a `seek` exactly as the slider would. It is test-only: it lets e2e tests seek to an exact tick (for example back to an old head) to check determinism.
 
 ## Specification
+- **The window includes the warm-up.** The warm-up ticks are ordinary ticks (city-005), so `windowStartTick` starts at 0 until the budget evicts, and Home / "Jump to start" may show the city before it filled.
 - **Seek semantics** follow T1. A seek never advances the head. Playing from a position below the head replays deterministically, and reaching the head continues as live.
 - **Scrubbing past the window start** is impossible: the slider minimum is `windowStartTick`, and the host refuses it anyway.
 - **Data budget.** No frame carries more than before plus the numeric `timeline` object. `window_metrics` is not sent in this ward (timeline-004).
@@ -116,6 +119,16 @@ Only the viewed scenario runs. timeline-004 adds lockstep, the split view and th
 | 16 | `replace_branch_needs_confirmation` (e2e) | with B present, viewing A in its past and pressing B shows the "Replace the branch?" confirmation. Cancel leaves B unchanged; "Replace the branch" makes a new B at the new tick. No native dialog appears |
 | 17 | `discard_branch` (e2e) | "Discard branch" returns to A's view: the scenario control is gone and `branchTick` is null |
 | 18 | `timeline_is_keyboard_and_label_accessible` (e2e) | the slider and the timeline buttons are reachable by Tab and have accessible names. The A/B buttons use `aria-pressed`. The corner label is text |
+| 19 | `road_panel_in_the_past_branches_and_b_past_edits_b` (e2e) | the road panel's "Close link" in A's past creates B (no error alert). In B's own past, "Close the main bridge" edits B without a confirmation, and B's head becomes the position |
+| 20 | `wasm_window_metrics_and_timeline_info_layout` (vitest) | `Sim.window_metrics` returns 9 values, partitioned as T2, with NaN means for an empty cohort. `timeline_info` returns 6 values (window, head, position, bytes, budget = 48 MiB, snapshot count) |
+
+## Deviations from T3 (recorded for the epic gate)
+- **Protocol.**
+  - `seek {tick}` and `command` apply to the **viewed** scenario instead of carrying a `scenario` field.
+  - `viewScenario` and `branch.then` are new: `then` applies the triggering intervention to B atomically.
+- **Seek runs synchronously.** It replays at most 119 ticks (about 5 ms in wasm), so the bounded batches T3 asks for for long resimulation are unnecessary.
+- **Memory.** Each scenario has its own 48 MiB budget, at most 96 MiB in total. The bar shows the viewed scenario's memory and says "per scenario".
+- **`Sim.window_metrics`** is added here, with a layout test (test 20); its consumer is timeline-004's comparison panel.
 
 ## Must NOT
 - Edit scenario A in its past.
