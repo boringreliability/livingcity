@@ -5,7 +5,7 @@ import { LABEL_ICONS, riverCityDecor, type CityDecor } from './riverCity';
 export type { CityDecor, CityLabel } from './riverCity';
 
 const PAD_RADIUS_M = 45;
-const MARGIN_M = 500;
+const MARGIN_M = 2000;
 
 /** The look of the city the worker built: River City's own, or a generic one (straight corridor, pads). */
 export function cityDecor(ready: Pick<ReadyMessage, 'city' | 'network' | 'landmarks' | 'zones' | 'river'>, geometry: RoadGeometry): CityDecor {

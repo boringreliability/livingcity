@@ -80,6 +80,8 @@ export function App() {
   const labelsRef = useRef<CityLabel[]>([]);
   /** The label elements, positioned on every animation frame (not only on sim frames). */
   const labelEls = useRef<(HTMLSpanElement | null)[]>([]);
+  /** The camera the labels were last placed for (they move only when it does). */
+  const labelCam = useRef({ labels: null as unknown, cx: NaN, cy: NaN, zoom: NaN, w: NaN, h: NaN });
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
   const [following, setFollowing] = useState(false);
@@ -249,7 +251,11 @@ export function App() {
         if (at) [camera.cx, camera.cy] = at;
       }
       renderer.current?.draw(camera, now, simPerMs);
-      labelsRef.current.forEach((l, i) => {
+      const cam = labelCam.current;
+      const moved =
+        cam.labels !== labelsRef.current || cam.cx !== camera.cx || cam.cy !== camera.cy || cam.zoom !== camera.zoom || cam.w !== camera.width || cam.h !== camera.height;
+      if (moved) Object.assign(cam, { labels: labelsRef.current, cx: camera.cx, cy: camera.cy, zoom: camera.zoom, w: camera.width, h: camera.height });
+      if (moved) labelsRef.current.forEach((l, i) => {
         const el = labelEls.current[i];
         if (!el) return;
         const [sx, sy] = camera.worldToScreen(l.x, l.y);
@@ -489,7 +495,7 @@ export function App() {
       <canvas ref={canvasRef} className="city" aria-label="City map" />
       <div className="labels" aria-hidden="true">
         {labels.map((l, i) => (
-          <span key={l.text} ref={(el) => void (labelEls.current[i] = el)} className={`zone ${l.kind}`}>
+          <span key={`${i}:${l.text}`} ref={(el) => void (labelEls.current[i] = el)} className={`zone ${l.kind}`}>
             <span className="zone-icon">{l.icon}</span> {l.text}
           </span>
         ))}

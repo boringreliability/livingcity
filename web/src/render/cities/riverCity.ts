@@ -31,10 +31,11 @@ export interface CityDecor {
 export const LABEL_ICONS: Record<ZoneInfo['kind'], string> = { residential: '⌂', workplace: '◫', hospital: '✚' };
 
 const PROFILE_STEP_M = 25;
-const PROFILE_MARGIN_M = 500;
+/** Far beyond any fitted view, so the river never visibly starts or ends (Gold r1). */
+const PROFILE_MARGIN_M = 2000;
 const BANK_M = 6;
 const PAD_RADIUS_M = 45;
-const DECK_HALF_M = 16;
+const DECK_HALF_M = 20;
 const ROAD_CLEARANCE_M = 4;
 /** Extra keep-out around roads beyond the required clearance (looks like pavement). */
 const SETBACK_M = 6;

@@ -24,6 +24,9 @@ export const CONGESTION_FULL_AT = 0.5;
 /** Closed roads: hatch stops this far short of each junction (CSS px), barriers at these fractions. */
 export const HATCH_JUNCTION_INSET_PX = 6;
 export const BARRIER_AT = [0.12, 0.88] as const;
+/** Bridge decks keep at least this on-screen width (CSS px), with a dark railing edge of RAILING_PX. */
+export const DECK_MIN_PX = 12;
+const RAILING_PX = 1.5;
 
 const COLORS = {
   background: [0.055, 0.067, 0.082],
@@ -32,8 +35,7 @@ const COLORS = {
   park: [0.085, 0.115, 0.1],
   building: [0.09, 0.1, 0.12],
   outline: [0.16, 0.18, 0.21],
-  deck: [0.16, 0.18, 0.21],
-  railing: [0.03, 0.035, 0.04],
+  deck: [0.27, 0.29, 0.32],
   pad: [0.14, 0.16, 0.19],
 } as const;
 
@@ -51,7 +53,7 @@ void main() { o = vec4(u_color, 1.0); }`;
 
 // Roads: one quad per link, extruded in the shader so roads keep a minimum on-screen width.
 // Passes: 0 = every road except congested ones; 3 = congested roads (on top, widened at
-// overview zoom); 1 = halo of the selected / hovered road; 2 = closed-road hatch.
+// overview zoom); 1 = halo of the selected / hovered road; 2 = closed-road hatch (after the route).
 const ROAD_VS = `#version 300 es
 layout(location = 0) in vec2 a_center;
 layout(location = 1) in vec2 a_normal;
@@ -96,7 +98,8 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume: not drawn
     return;
   }
-  float minPx = u_pass == 2 ? 9.0 : 2.5;
+  // the hatch is at least 9 px wide; a closed road's halo starts from the same width so it stays visible
+  float minPx = u_pass == 2 || (u_pass == 1 && closed) ? 9.0 : 2.5;
   float extraPx = u_pass == 3 && u_pxPerM < ${LOD_OVERVIEW_PX_PER_M.toFixed(2)} ? 3.0 * occ : 0.0;
   float core = max(a_halfWidth, 0.5 * minPx / u_pxPerM) + 0.5 * extraPx / u_pxPerM;
   float haloPx = u_pass == 1 ? (st.g > 0.5 ? ${SELECTED_HALO_PX.toFixed(1)} : ${HOVER_HALO_PX.toFixed(1)}) : 0.0;
@@ -173,6 +176,35 @@ out vec4 o;
 void main() {
   bool edge = abs(v_px.x) > 2.0 || abs(v_px.y) > v_halfLen - 1.0;
   o = vec4(edge ? vec3(0.04) : vec3(0.97), 1.0);
+}`;
+
+// Bridge decks: the deck quad widened to DECK_MIN_PX on screen, with a dark railing on both long edges.
+const DECK_VS = `#version 300 es
+layout(location = 0) in vec2 a_center;
+layout(location = 1) in vec2 a_normal;
+layout(location = 2) in float a_side;
+layout(location = 3) in float a_halfM;
+uniform vec2 u_center;
+uniform vec2 u_scale;
+uniform float u_pxPerM;
+out float v_acrossPx;
+flat out float v_halfPx;
+void main() {
+  float halfPx = max(a_halfM * u_pxPerM, ${(DECK_MIN_PX / 2).toFixed(1)});
+  vec2 p = a_center + a_normal * a_side * (halfPx / u_pxPerM);
+  gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
+  v_acrossPx = a_side * halfPx;
+  v_halfPx = halfPx;
+}`;
+
+const DECK_FS = `#version 300 es
+precision highp float;
+in float v_acrossPx;
+flat in float v_halfPx;
+out vec4 o;
+void main() {
+  bool railing = abs(v_acrossPx) > v_halfPx - ${RAILING_PX.toFixed(1)};
+  o = vec4(railing ? vec3(0.02, 0.022, 0.025) : vec3(${COLORS.deck.map((c) => c.toFixed(3)).join(', ')}), 1.0);
 }`;
 
 // Vehicles: instanced quads from the AoS frame buffer (stride 16 bytes).
@@ -303,6 +335,7 @@ export function linkCapacity(lanes: number, length: number): number {
 
 function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
   const prog = gl.createProgram()!;
+  const shaders: WebGLShader[] = [];
   for (const [type, src] of [
     [gl.VERTEX_SHADER, vs],
     [gl.FRAGMENT_SHADER, fs],
@@ -312,8 +345,10 @@ function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgr
     gl.compileShader(sh);
     if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(`shader: ${gl.getShaderInfoLog(sh)}`);
     gl.attachShader(prog, sh);
+    shaders.push(sh);
   }
   gl.linkProgram(prog);
+  for (const sh of shaders) gl.deleteShader(sh); // flagged; freed with the program
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`link: ${gl.getProgramInfoLog(prog)}`);
   return prog;
 }
@@ -349,13 +384,14 @@ export class CityRenderer {
   private buildings: Mesh | null = null;
   private decks: Mesh | null = null;
   private pads: Mesh | null = null;
-  /** GL_LINES: building outlines (detail zoom) and bridge railings. */
+  /** GL_LINES: building outlines (detail zoom). */
   private outlines: Mesh | null = null;
-  private railings: Mesh | null = null;
   private roads: Mesh | null = null;
   private bars: Mesh | null = null;
-  private barKey = '';
+  private barClosed: number[] = [];
   private readonly barProg: WebGLProgram;
+  private readonly deckProg: WebGLProgram;
+  private readonly uDeck: Uniforms;
   private linkRowsN = 1;
   /** Test-only: skip drawing vehicles (so road pixels can be measured). */
   hideVehicles = false;
@@ -388,6 +424,8 @@ export class CityRenderer {
     this.uVeh = uniforms(gl, this.veh, ['u_center', 'u_scale', 'u_pxPerM', 'u_dtSim', 'u_links', 'u_linkRows']);
     this.barProg = compile(gl, BAR_VS, BAR_FS);
     this.uBar = uniforms(gl, this.barProg, ['u_center', 'u_scale', 'u_pxPerM']);
+    this.deckProg = compile(gl, DECK_VS, DECK_FS);
+    this.uDeck = uniforms(gl, this.deckProg, ['u_center', 'u_scale', 'u_pxPerM']);
     this.linkTex = gl.createTexture()!;
     this.stateTex = gl.createTexture()!;
     for (const t of [this.linkTex, this.stateTex]) {
@@ -457,7 +495,7 @@ export class CityRenderer {
     const gl = this.gl;
     for (const m of this.allMeshes()) this.deleteMesh(m);
     this.water = this.banks = this.parks = this.buildings = this.decks = this.pads = null;
-    this.outlines = this.railings = this.roads = this.bars = null;
+    this.outlines = this.roads = this.bars = null;
     gl.deleteVertexArray(this.vehVao);
     gl.deleteBuffer(this.vehBuf);
     gl.deleteBuffer(this.vehQuad);
@@ -470,11 +508,11 @@ export class CityRenderer {
     }
     gl.deleteVertexArray(this.ringVao);
     gl.deleteBuffer(this.ringBuf);
-    for (const p of [this.solid, this.road, this.veh, this.routeProg, this.ringProg, this.barProg]) gl.deleteProgram(p);
+    for (const p of [this.solid, this.road, this.veh, this.routeProg, this.ringProg, this.barProg, this.deckProg]) gl.deleteProgram(p);
   }
 
   private allMeshes(): (Mesh | null)[] {
-    return [this.water, this.banks, this.parks, this.buildings, this.decks, this.pads, this.outlines, this.railings, this.roads, this.bars];
+    return [this.water, this.banks, this.parks, this.buildings, this.decks, this.pads, this.outlines, this.roads, this.bars];
   }
 
   setNetwork(geometry: RoadGeometry, decor: CityDecor): void {
@@ -482,24 +520,17 @@ export class CityRenderer {
     this.geometry = geometry;
     for (const m of this.allMeshes()) this.deleteMesh(m);
     this.bars = null;
-    this.barKey = '';
+    this.barClosed = [];
     this.water = this.solidMesh(decor.water);
     this.banks = this.solidMesh(decor.banks);
     this.parks = this.solidMesh(decor.parks);
     this.buildings = this.solidMesh(decor.buildings);
-    this.decks = this.solidMesh(decor.bridgeDecks);
+    this.decks = this.deckMesh(decor.bridgeDecks);
     this.pads = this.solidMesh(decor.pads);
-    // building outlines (shown at detail zoom) and the decks' long edges as railings
+    // building outlines (shown at detail zoom)
     const ol: number[] = [];
     for (const [x0, y0, x1, y1] of decor.buildingBoxes) ol.push(x0, y0, x1, y0, x1, y0, x1, y1, x1, y1, x0, y1, x0, y1, x0, y0);
     this.outlines = this.solidMesh(new Float32Array(ol));
-    const rl: number[] = [];
-    const d = decor.bridgeDecks;
-    for (let i = 0; i + 12 <= d.length; i += 12) {
-      // quad vertices c0, c1, c2, c0, c2, c3: long sides c0–c1 and c2–c3
-      rl.push(d[i]!, d[i + 1]!, d[i + 2]!, d[i + 3]!, d[i + 4]!, d[i + 5]!, d[i + 10]!, d[i + 11]!);
-    }
-    this.railings = this.solidMesh(new Float32Array(rl));
 
     // Road quads: center, normal, side, half width, along, link, lanes (9 floats per vertex).
     const v: number[] = [];
@@ -555,7 +586,8 @@ export class CityRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, LINK_TEX_WIDTH, 3 * rows, 0, gl.RGBA, gl.FLOAT, table);
     // per-link state (closed, selected, hovered, occupancy): link i at (i mod 1024, floor(i / 1024))
     this.stateBytes = new Uint8Array(LINK_TEX_WIDTH * rows * 4);
-    this.uploadState();
+    gl.bindTexture(gl.TEXTURE_2D, this.stateTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, LINK_TEX_WIDTH, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.stateBytes);
   }
 
   /** Upload one frame's records (the AoS buffer as is). The caller may then return the buffer. */
@@ -593,9 +625,11 @@ export class CityRenderer {
     });
     this.uploadState();
     // Rebuild the barrier mesh only when the closed set changes.
-    const key = Array.from(closed).join(',');
-    if (key !== this.barKey) {
-      this.barKey = key;
+    const prev = this.barClosed;
+    let same = prev.length === closed.length;
+    for (let i = 0; same && i < closed.length; i++) same = prev[i] === closed[i];
+    if (!same) {
+      this.barClosed = Array.from(closed);
       this.deleteMesh(this.bars);
       this.bars = this.barMesh(closed);
     }
@@ -671,7 +705,40 @@ export class CityRenderer {
   private uploadState(): void {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.stateTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, LINK_TEX_WIDTH, this.linkRowsN, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.stateBytes);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, LINK_TEX_WIDTH, this.linkRowsN, gl.RGBA, gl.UNSIGNED_BYTE, this.stateBytes);
+  }
+
+  /** Deck quads (c0, c1, c2, c0, c2, c3; long sides c0–c1, c3–c2) as centre line + half width. */
+  private deckMesh(d: Float32Array): Mesh {
+    const gl = this.gl;
+    const v: number[] = []; // centre(2), normal(2), side(1), half width m(1)
+    for (let i = 0; i + 12 <= d.length; i += 12) {
+      const [x0, y0, x1, y1, x2, y2, x3, y3] = [d[i]!, d[i + 1]!, d[i + 2]!, d[i + 3]!, d[i + 4]!, d[i + 5]!, d[i + 10]!, d[i + 11]!];
+      const half = Math.hypot(x0 - x3, y0 - y3) / 2;
+      if (half === 0) continue;
+      const [nx, ny] = [(x0 - x3) / (2 * half), (y0 - y3) / (2 * half)];
+      const [ax, ay, bx, by] = [(x0 + x3) / 2, (y0 + y3) / 2, (x1 + x2) / 2, (y1 + y2) / 2];
+      for (const [end, side] of [[0, 1], [1, 1], [1, -1], [0, 1], [1, -1], [0, -1]] as const) {
+        v.push(end ? bx : ax, end ? by : ay, nx, ny, side, half);
+      }
+    }
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const buf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STATIC_DRAW);
+    const F = 4;
+    for (const [loc, size, off] of [
+      [0, 2, 0],
+      [1, 2, 2],
+      [2, 1, 4],
+      [3, 1, 5],
+    ] as const) {
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 6 * F, off * F);
+    }
+    gl.bindVertexArray(null);
+    return { vao, buf, count: v.length / 6 };
   }
 
   /** Barrier bars across each closed link (positions in world m; size in CSS px, in the shader). */
@@ -747,8 +814,16 @@ export class CityRenderer {
     fill(this.parks, COLORS.park);
     fill(this.buildings, COLORS.building);
     if (camera.zoom >= LOD_DETAIL_PX_PER_M) fill(this.outlines, COLORS.outline, gl.LINES);
-    fill(this.decks, COLORS.deck);
-    fill(this.railings, COLORS.railing, gl.LINES);
+    if (this.decks && this.decks.count > 0) {
+      const uD = this.uDeck;
+      gl.useProgram(this.deckProg);
+      gl.uniform2f(uD['u_center']!, camera.cx, camera.cy);
+      gl.uniform2f(uD['u_scale']!, ...scale);
+      gl.uniform1f(uD['u_pxPerM']!, camera.zoom);
+      gl.bindVertexArray(this.decks.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, this.decks.count);
+      gl.useProgram(this.solid);
+    }
     fill(this.pads, COLORS.pad);
 
     const uR = this.uRoad;
@@ -765,20 +840,10 @@ export class CityRenderer {
     gl.uniform1i(uR['u_links']!, 1);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindVertexArray(this.roads.vao);
-    // base roads, then congested ones on top, then the halo, then the closed-road hatch
-    for (const pass of [0, 3, 1, 2]) {
+    // base roads, then congested ones on top, then the halo
+    for (const pass of [0, 3, 1]) {
       gl.uniform1i(uR['u_pass']!, pass);
       gl.drawArrays(gl.TRIANGLES, 0, this.roads.count);
-    }
-
-    if (this.bars && this.bars.count > 0) {
-      const uB = this.uBar;
-      gl.useProgram(this.barProg);
-      gl.uniform2f(uB['u_center']!, camera.cx, camera.cy);
-      gl.uniform2f(uB['u_scale']!, ...scale);
-      gl.uniform1f(uB['u_pxPerM']!, camera.zoom);
-      gl.bindVertexArray(this.bars.vao);
-      gl.drawArrays(gl.TRIANGLES, 0, this.bars.count);
     }
 
     if (this.route) {
@@ -789,6 +854,22 @@ export class CityRenderer {
       gl.uniform1f(uRt['u_pxPerM']!, camera.zoom);
       gl.bindVertexArray(this.route.vao);
       gl.drawArrays(gl.TRIANGLES, 0, this.route.count);
+    }
+
+    // closed roads on top of route and halo: hatch, then barriers
+    gl.useProgram(this.road);
+    gl.bindVertexArray(this.roads.vao);
+    gl.uniform1i(uR['u_pass']!, 2);
+    gl.drawArrays(gl.TRIANGLES, 0, this.roads.count);
+
+    if (this.bars && this.bars.count > 0) {
+      const uB = this.uBar;
+      gl.useProgram(this.barProg);
+      gl.uniform2f(uB['u_center']!, camera.cx, camera.cy);
+      gl.uniform2f(uB['u_scale']!, ...scale);
+      gl.uniform1f(uB['u_pxPerM']!, camera.zoom);
+      gl.bindVertexArray(this.bars.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, this.bars.count);
     }
 
     if (this.vehCount > 0 && !this.hideVehicles) {

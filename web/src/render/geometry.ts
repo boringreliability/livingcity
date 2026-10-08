@@ -81,14 +81,9 @@ export function buildRoadGeometry(network: NetworkArrays): RoadGeometry {
   return { links, bounds };
 }
 
-/** Lateral offset of a lane's centre from the drawn centerline, along +n (lane 0 = rightmost). */
-export function laneOffset(lanes: number, lane: number): number {
-  return ((lanes - 1) / 2 - lane) * LANE_WIDTH_M;
-}
-
 /** World position of a vehicle at offset `s` in `lane` (lane 0 = rightmost). */
 export function vehiclePosition(link: LinkGeom, s: number, lane: number): [number, number] {
   const t = Math.min(1, Math.max(0, s / link.length));
-  const lat = laneOffset(link.lanes, lane);
+  const lat = ((link.lanes - 1) / 2 - lane) * LANE_WIDTH_M; // lane centre along +n
   return [link.x0 + (link.x1 - link.x0) * t + link.nx * lat, link.y0 + (link.y1 - link.y0) * t + link.ny * lat];
 }

@@ -21,7 +21,7 @@ function writeCollapsed(collapsed: boolean): void {
 /** Small drawn samples of each map symbol: every state reads by shape, pattern or lightness, never by hue alone. */
 const SAMPLES: { label: string; svg: ReactElement }[] = [
   {
-    label: 'Closed road (hatched, with barriers)',
+    label: 'Closed road (hatch, barriers)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <defs>
@@ -36,7 +36,7 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
     ),
   },
   {
-    label: 'Queued car (square, dark brake band)',
+    label: 'Queued car (square, brake band)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <rect x="11" y="2" width="10" height="10" fill="#f5a833" />
@@ -45,7 +45,7 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
     ),
   },
   {
-    label: 'Moving car (long and slim)',
+    label: 'Moving car (long, slim)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <rect x="6" y="5" width="22" height="4" fill="#dbe5f2" />
@@ -53,7 +53,7 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
     ),
   },
   {
-    label: 'Congestion (wider, lighter road)',
+    label: 'Congestion (wider, lighter)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <line x1="0" y1="4" x2="34" y2="4" stroke="#3d4550" strokeWidth="2" />
@@ -62,7 +62,7 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
     ),
   },
   {
-    label: 'Selected road or followed car (halo, ring)',
+    label: 'Selected / followed (halo, ring)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <line x1="0" y1="7" x2="18" y2="7" stroke="#ffffff" strokeWidth="6" />

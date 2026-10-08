@@ -137,3 +137,17 @@ pnpm -C web build:wasm && pnpm -C web dev
 
 ## Verification
 The Gold reviewer inspects screenshots (colour and grayscale) at both zoom levels, runs all suites, and checks draw calls/frame time are not worse than core-005 by more than 25 %.
+
+## Gold refinements (after Gold r1, REJECTED)
+- **Legend (MAJOR 1):** a compact horizontal layout (toggle button + a 3 × 2 grid with short labels, about 56 px high) inside the bottom inset band, to the right of the metrics strip. It no longer covers the city at 1280 × 800 or 1280 × 720. Its contract is unchanged: region "Legend", `aria-expanded`, expanded by default, five drawn samples, collapsed state persisted.
+- **River (MAJOR 2):** the profile margin is 2000 m (the test requires ≥ 500 m), so the river never visibly starts or ends in a fitted view.
+- **Bridge decks:** their own pass, with a minimum on-screen width of `DECK_MIN_PX = 12` and a 1.5 px dark railing on both long edges (this replaces the 1 px GL_LINES railings, which could not be seen). `DECK_HALF_M` is 20.
+- **Draw order now follows the spec:** roads → halo → route → closed hatch → barriers → vehicles → ring. A closed road's halo starts from the hatch's 9 px minimum width, so a selected closed road shows its halo at every zoom.
+- **Cleanup:**
+  - `laneOffset` is no longer exported;
+  - the state texture is allocated once and then updated with `texSubImage2D`;
+  - the barrier key is an array compare, not a per-frame string;
+  - labels are repositioned only when the camera moves;
+  - label keys are unique;
+  - shader objects are deleted after linking.
+- **Accepted, not changed:** the hatch is dropped on closed links shorter than 14 px on screen (about zoom < 0.07, far below fit zoom); the barriers still mark them.
