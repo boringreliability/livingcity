@@ -17,15 +17,15 @@ export const HOVER_HALO_PX = 2;
 export const MOVING_MIN_PX = [5.0, 1.8] as const;
 export const QUEUED_MIN_PX = [3.4, 3.4] as const;
 /** Below this zoom (px/m) congestion also widens roads; above LOD_DETAIL lane marks and building outlines show. */
-export const LOD_OVERVIEW_PX_PER_M = 0.5;
-export const LOD_DETAIL_PX_PER_M = 2;
+const LOD_OVERVIEW_PX_PER_M = 0.5;
+const LOD_DETAIL_PX_PER_M = 2;
 /** Congestion reaches its full look at this occupancy (vehicles ÷ capacity). */
-export const CONGESTION_FULL_AT = 0.5;
+const CONGESTION_FULL_AT = 0.5;
 /** Closed roads: hatch stops this far short of each junction (CSS px), barriers at these fractions. */
-export const HATCH_JUNCTION_INSET_PX = 6;
-export const BARRIER_AT = [0.12, 0.88] as const;
+const HATCH_JUNCTION_INSET_PX = 6;
+const BARRIER_AT = [0.12, 0.88] as const;
 /** Bridge decks keep at least this on-screen width (CSS px), with a dark railing edge of RAILING_PX. */
-export const DECK_MIN_PX = 12;
+const DECK_MIN_PX = 12;
 const RAILING_PX = 1.5;
 
 const COLORS = {
@@ -266,11 +266,11 @@ void main() {
 }`;
 
 /** Tracked vehicle ring: radii in CSS px (screen space, independent of zoom). */
-export const RING_INNER_PX = 7;
-export const RING_OUTER_PX = 10;
+const RING_INNER_PX = 7;
+const RING_OUTER_PX = 10;
 const RING_EDGE_PX = 1.5;
 /** Route highlight: dashed centre line width and dash period, CSS px. */
-export const ROUTE_WIDTH_PX = 3;
+const ROUTE_WIDTH_PX = 3;
 const ROUTE_DASH_PX = 12;
 
 // Route highlight: a screen-space dashed line along the remaining route's link centrelines.

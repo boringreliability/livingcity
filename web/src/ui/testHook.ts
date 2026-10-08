@@ -39,7 +39,7 @@ export interface LivingCitySnapshot {
   drawnCameras: { a: { cx: number; cy: number; zoom: number }; b: { cx: number; cy: number; zoom: number } } | null;
 }
 
-export interface LivingCityDiagnostics {
+interface LivingCityDiagnostics {
   perf: PerfStats | null;
   render: RenderStats;
   frameBytes: number;
@@ -65,7 +65,7 @@ export interface PerfRecording {
   timerResolutionMs: number;
 }
 
-export interface LivingCityHook {
+interface LivingCityHook {
   snapshot(): LivingCitySnapshot;
   /** Screen (CSS px, page coordinates) of a link's drawn midpoint, or null if off-screen. */
   linkScreenCenter(link: number): [number, number] | null;

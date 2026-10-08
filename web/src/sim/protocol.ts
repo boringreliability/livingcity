@@ -214,7 +214,7 @@ export interface TrackedVehicle {
   route: Uint32Array;
 }
 
-export type TrackedOutcome = 'completed' | 'removed_unreachable' | 'removed_gridlock' | 'unknown';
+type TrackedOutcome = 'completed' | 'removed_unreachable' | 'removed_gridlock' | 'unknown';
 
 export interface TrackedGone {
   gone: true;
@@ -238,7 +238,7 @@ export interface LinkDetail {
  * route_switches, blocked_ticks, route_len, …route_len link ids (remaining, current first)].
  * State codes: 0 waiting, 1 driving, 2 queued, 3 stranded, 4 no route.
  */
-export const VEHICLE_DETAIL_HEADER = 13;
+const VEHICLE_DETAIL_HEADER = 13;
 const STATES: TrackedState[] = ['waiting', 'driving', 'queued', 'stranded', 'no_route'];
 
 export function decodeVehicleDetail(a: ArrayLike<number>): TrackedVehicle | null {

@@ -1,4 +1,4 @@
-# Living City: measured performance (epic city, ward city-005)
+# Living City: measured performance (wards city-005 and timeline-005)
 
 Every number below comes from a run. The `@perf` harness (`pnpm -C web e2e:perf`, `web/e2e/perf.spec.ts`) writes the JSON files in `web/perf-results/`. One manual run on a hardware GPU is recorded in `web/perf-results/manual-hardware-gpu.json`, and a node + wasm throughput probe in `web/perf-results/network-throughput-probe.json`. Nothing here is estimated. Where a target is missed, the report says so and names the measured bottleneck.
 
@@ -48,11 +48,30 @@ Frame payloads: 27–33 kB at about 1,700–2,000 vehicles on the network, and 9
 | ≥ 5,000 on the network in the stress run (ward city-005) | **Met:** 5,899 max (harness) and 5,772 (hardware run). |
 | Speed controls show when the engine cannot keep up | Every scenario reached its target rate. The *behind* indicator and its honesty are covered by the core-004 and core-005 tests. |
 
+## Timeline
+
+Measured by `perf_timeline_recorded` (`web/e2e/perf_timeline.spec.ts`, the integration ward of epic timeline). Every number in this section comes from `web/perf-results/timeline.json`.
+
+The run: River City at 60×, with the replay window filled first (2.6 sim h retained, snapshots every 120 ticks). The harness used headless Chromium with the SwiftShader software GPU, at viewport 1280 × 800 and DPR 1, on an Apple M4 Pro (browser, hardware and launch arguments are in the JSON).
+
+| Measurement | Result | How |
+|---|---|---|
+| Seek latency (in the app) | median **86.9 ms**, p95 91.7, max 92.9 | 24 clicks spread over the whole window, replaying 4–118 ticks from the snapshot below each target. The time runs from the pointerdown to the first animation frame that shows the target. |
+| Branch (intervention in A's past → first frame of B) | **38.3 ms** | keydown B on the timeline, timed in the page |
+| Snapshot memory | A **44.3 MiB**, B **37.0 MiB**, pair **81.3 MiB** | against a budget of 48 MiB per scenario; A is still at 44.3 after the lockstep run |
+| Tick cost, single view | mean **0.046 ms** | ticks 15646–18047 of A (1644 on the network, median) |
+| Tick cost, lockstep A + B | mean **0.084 ms**, ×**1.84** single view | the same A ticks, 15648–18056 |
+| Render interval | single **50** ms median; lockstep **83.3** ms median | SwiftShader |
+
+- **Seek latency is bounded by the frame rate here** (`frameBound: true`). The median is below two render intervals of 50 ms, so the number mostly measures when the next SwiftShader frame is drawn, not the replay itself. The replay's own cost is measured natively by `cargo run -p sim-core --release --example timeline_probe`.
+- **Tick costs are below ten times the clock resolution** (0.1 ms in the worker, `tickBelowTimerResolution: true`). Per-tick percentiles are therefore not meaningful, and only the means are cited.
+- **Lockstep.** Both runs held the requested rate. The lockstep frame interval grows because two canvases are drawn in software, not because of the sim.
+
 ## How to reproduce
 
 ```bash
 pnpm -C web build:wasm
-pnpm -C web e2e:perf          # rewrites web/perf-results/{baseline-1x,baseline-20x,closure-burst,stress-5x}.json
+pnpm -C web e2e:perf          # rewrites web/perf-results/{baseline-1x,baseline-20x,closure-burst,stress-5x,timeline}.json
 ```
 
 Each JSON holds the scenario, the run conditions (browser, renderer, viewport, DPR, headless, launch args, hardware), every statistic above, the coverage (frames, ticks and render samples recorded, wall ms), and the targets with `met`. The harness has been run once for this report, and the Gold review re-runs it and compares.

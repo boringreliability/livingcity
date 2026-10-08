@@ -64,7 +64,7 @@ export interface SimLike {
   free?(): void;
 }
 
-export interface HostDeps {
+interface HostDeps {
   /** `demandScale` is 1 unless the init asked for stress demand. */
   createSim(demandSeed: number, behaviorSeed: number, city: CityName, demandScale: number): SimLike;
   /** The wasm linear memory (read the frame through it). */

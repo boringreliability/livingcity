@@ -26,7 +26,7 @@ pnpm -C web build                      # typecheck + production build
 pnpm -C web typecheck
 pnpm -C web test                       # Vitest (all)
 pnpm -C web exec vitest run tests/diagnostics.test.ts -t "warmup"    # one file / one test
-pnpm -C web e2e                        # Playwright (excludes @perf), ~4 min
+pnpm -C web e2e                        # Playwright (excludes @perf), ~13 min
 pnpm -C web exec playwright test e2e/look.spec.ts -g "legend"       # one spec / one test
 pnpm -C web e2e:perf                   # performance harness → web/perf-results/*.json (docs/performance.md)
 cargo test --workspace                 # Rust (calibration tests are skipped in debug builds)

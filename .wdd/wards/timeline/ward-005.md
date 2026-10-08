@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "The full brief workflow in the browser, measured"
 epic: "timeline"
-status: "approved"
+status: "gold"
 dependencies: ["timeline-004"]
 layer: "fullstack"
 estimated_tests: 9
