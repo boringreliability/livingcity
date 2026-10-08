@@ -535,3 +535,29 @@ fn window_metrics_exclude_removed_spawns() {
         assert_metrics_eq(&w.window_metrics(from), &brute(&w, from), &format!("removed spawns, from {from}"));
     }
 }
+
+// ─── 18 (Red r3 MAJOR 1) ─────────────────────────────────────────────────
+/// Branching inside a budgeted, already-evicted window (the production configuration).
+#[test]
+fn branch_inside_an_evicted_window() {
+    let c = three_bridges(2026, 7);
+    let lm = c.landmarks;
+    let cmds = [close(lm.central_bridge[0], 1500)];
+    let mut sizer = World::from_scenario(c.scenario.clone()).unwrap();
+    for _ in 0..600 {
+        sizer.step();
+    }
+    let mut a = Timeline::new(world(&c.scenario, &cmds), 4 * sizer.snapshot().bytes());
+    a.step_n(2400);
+    let start = a.window().window_start;
+    assert!(start > 0, "precondition: eviction happened");
+    for at in [start, start + 50, 2400 - 7] {
+        let b = a.branch(at, UNLIMITED).unwrap();
+        let inherited: Vec<Command> = cmds.iter().copied().filter(|c| c.tick < at).collect();
+        assert_eq!(observe(b.world()), observe(&stepped(&c.scenario, &inherited, at)), "branch({at}) of an evicted window");
+        let mut want: Vec<u64> = a.snapshot_ticks().into_iter().filter(|&t| t < at).collect();
+        want.push(at);
+        assert_eq!(b.snapshot_ticks(), want);
+        assert_eq!(b.window().window_start, start);
+    }
+}

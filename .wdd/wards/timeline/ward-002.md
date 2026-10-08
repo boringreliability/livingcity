@@ -6,7 +6,7 @@ epic: "timeline"
 status: "red"
 dependencies: ["timeline-001"]
 layer: "rust"
-estimated_tests: 17
+estimated_tests: 18
 created: "2026-10-08"
 completed: null
 ---
@@ -76,7 +76,7 @@ File: `crates/sim-core/tests/timeline_002_branch.rs`. It runs in the default tes
 | 3 | `branches_are_independent` | after `branch(1800)`, B closes the Old Bridge at 1800 and A runs on with its own commands. To 4200, A equals its uninterrupted reference at every tick, and B equals a reference with A's commands < 1800 plus B's own |
 | 4 | `identical_demand_across_branches` | A with the main bridge closed, B with it open (branch at 1800), both run to 5400: `generated_trips()` are equal (all fields), while `completed_log()` differs |
 | 5 | `branch_snapshots_and_history` | B's snapshot ticks are the original's retained ticks < `at` plus `at` (also for an `at` that is not a multiple of 120). Seeks in B to ticks before `at` equal A's history. B's own snapshots continue at the multiples of 120 |
-| 6 | `branch_budget` | B with a budget of 3 snapshots holds ≤ budget bytes and keeps `at`'s snapshot as the newest. B with an unlimited budget keeps all copies |
+| 6 | `branch_budget` | B with a budget of 3 snapshots holds ≤ budget bytes and keeps `at`'s snapshot as the newest. The budget evicts the oldest copies, so there is no gap. B with an unlimited budget keeps all copies. A budget below one snapshot keeps only `at` |
 | 7 | `branch_outside_window_is_refused` | `branch(head+1)` and `branch(window_start−1)` return `OutsideWindow`, and the original is unchanged |
 | 8 | `branch_edits_never_touch_the_original` | B seeks back, edits its future (T1) and steps. A's hash at every tick, head, snapshots and command log are unchanged |
 | 9 | `branch_of_a_branch_and_at_head` | branching at the head, at `window_start`, at a snapshot tick (no duplicate snapshot), and branching a branch all equal their references |
@@ -88,6 +88,7 @@ File: `crates/sim-core/tests/timeline_002_branch.rs`. It runs in the default tes
 | 15 | `window_metrics_exclude_spawns_mixed_with_demand` | three_bridges with explicit spawns every 60 ticks from 600, interleaved with demand. Equal to brute force for from ∈ {0, 600, 1000}; spawns are never in a cohort (probed: 661 spawned, 641 generated) |
 | 16 | `window_metrics_count_gridlock_removals` | a demand-driven one-way ring (4 zones, flows going three quarters round at 1,200 veh/h) deadlocks. The cohort has gridlock removals (probed: 15 at 4000) and no unreachable ones. Equal to brute force for from ∈ {0, 500, 2000} |
 | 17 | `window_metrics_exclude_removed_spawns` | three_bridges with all bridges closed for good at 500 and explicit spawns every 20 ticks in [300, 500), run to 3000. Removed spawns are in no cohort: equal to brute force for from ∈ {0, 400, 1000} (probed: 1,123 spawned, 1,113 generated, the 10 spawns all removed as unreachable) |
+| 18 | `branch_inside_an_evicted_window` | the original has a budget of 4 snapshots, so its window is evicted (`window_start` > 0). For `at` ∈ {window_start, window_start + 50, 2393}: B equals the reference, B's snapshots are A's retained ones < `at` plus `at`, and B's `window_start` equals A's |
 
 ## Must NOT
 - Modify the original in `branch` (it takes `&self`).
