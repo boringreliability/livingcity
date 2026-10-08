@@ -220,7 +220,8 @@ button.bridge.closed {
 
 .zone {
   position: absolute;
-  transform: translate(-50%, -150%);
+  /* centred on the zone's point (positioned every animation frame) */
+  transform: translate(-50%, -50%);
   font-size: 12px;
   color: #c7d0da;
   white-space: nowrap;
@@ -228,13 +229,42 @@ button.bridge.closed {
   text-shadow: 0 1px 3px #000;
 }
 
-.zone.hospital::before {
-  content: '✚ ';
+.zone-icon {
+  opacity: 0.85;
+}
+
+.legend {
+  right: 16px;
+  bottom: 16px;
+  width: 270px;
+  font-size: 12px;
+}
+
+.legend-toggle {
+  width: 100%;
+  text-align: left;
+  font-weight: 600;
+}
+
+.legend ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.legend li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .error {
-  bottom: 16px;
-  right: 16px;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 420px;
   color: #ffd27a;
 }
 

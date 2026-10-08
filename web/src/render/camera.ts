@@ -1,4 +1,5 @@
 import type { Bounds } from './geometry';
+import type { Insets } from './layout';
 
 export const MIN_ZOOM = 0.05; // CSS px per metre
 export const MAX_ZOOM = 40;
@@ -42,6 +43,20 @@ export class Camera {
     this.zoom = clampZoom(this.zoom * factor);
     this.cx = wx - (sx - this.width / 2) / this.zoom;
     this.cy = wy + (sy - this.height / 2) / this.zoom;
+  }
+
+  /** Center and zoom so that `bounds` fits inside the viewport minus `insets` (CSS px), centred there. */
+  fitInsets(bounds: Bounds, insets: Insets): void {
+    const w = Math.max(1, this.width - insets.left - insets.right);
+    const h = Math.max(1, this.height - insets.top - insets.bottom);
+    const bw = bounds.maxX - bounds.minX;
+    const bh = bounds.maxY - bounds.minY;
+    this.zoom = clampZoom(Math.min(bw > 0 ? w / bw : Infinity, bh > 0 ? h / bh : Infinity));
+    // the inset rectangle's centre, in screen px, holds the bounds' centre
+    const sx = insets.left + w / 2;
+    const sy = insets.top + h / 2;
+    this.cx = (bounds.minX + bounds.maxX) / 2 - (sx - this.width / 2) / this.zoom;
+    this.cy = (bounds.minY + bounds.maxY) / 2 + (sy - this.height / 2) / this.zoom;
   }
 
   /** Center and zoom so that `bounds` fits with `paddingPx` margin. */

@@ -36,6 +36,12 @@ export interface LivingCityHook {
   trackedScreenCenter(): [number, number] | null;
   /** What a click at page point (x, y) would select, without selecting. */
   pickAt(x: number, y: number): { vehicle: number | null; link: number | null };
+  /** Test-only rendering switches. */
+  setDebug(opts: { hideVehicles?: boolean }): void;
+  /** The simulation's storage capacity of a link (lanes × max(1, floor(length / 7.5))). */
+  linkCapacity(link: number): number;
+  /** Links ending at `link`'s start node, without its reverse direction and zone connectors, ascending. */
+  approachLinks(link: number): number[];
 }
 
 declare global {

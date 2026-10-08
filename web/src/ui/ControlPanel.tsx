@@ -12,6 +12,8 @@ interface Props {
   onToggleRunning(): void;
   onSpeed(speed: number): void;
   onToggleMainBridge(): void;
+  /** Disable every control (e.g. when the city cannot be drawn). */
+  disabled?: boolean;
 }
 
 export function ControlPanel(p: Props) {
@@ -20,10 +22,10 @@ export function ControlPanel(p: Props) {
   return (
     <section className="panel controls" aria-label="Simulation controls">
       <div className="row">
-        <button type="button" className="primary" onClick={p.onToggleRunning}>
+        <button type="button" className="primary" onClick={p.onToggleRunning} disabled={p.disabled}>
           {p.running ? 'Pause' : 'Play'}
         </button>
-        <select aria-label="Speed" value={p.speed} onChange={(e) => p.onSpeed(Number(e.target.value))}>
+        <select aria-label="Speed" value={p.speed} onChange={(e) => p.onSpeed(Number(e.target.value))} disabled={p.disabled}>
           {SPEEDS.map((s) => (
             <option key={s} value={s}>
               {s}×
@@ -43,6 +45,7 @@ export function ControlPanel(p: Props) {
         aria-label="Close the main bridge"
         aria-pressed={p.mainBridgeClosed}
         onClick={p.onToggleMainBridge}
+        disabled={p.disabled}
       >
         <span aria-hidden="true" className="barrier-icon" />
         {p.mainBridgeClosed ? 'Main bridge closed — reopen' : 'Close the main bridge'}

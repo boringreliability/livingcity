@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Camera } from './render/camera';
-import { riverDecor } from './render/decor';
+import { cityDecor, type CityLabel } from './render/cities';
 import { buildRoadGeometry, vehiclePosition, type RoadGeometry } from './render/geometry';
 import { pickLink, pickVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
-import { CityRenderer } from './render/renderer';
+import { FIT_INSETS } from './render/layout';
+import { CityRenderer, linkCapacity } from './render/renderer';
 import { createSimClient, type SimClient } from './sim/client';
 import { decodeVehicles, type DecodedVehicles } from './sim/frame';
 import {
@@ -20,12 +21,12 @@ import {
 import { ControlPanel, SPEEDS } from './ui/ControlPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
+import { Legend } from './ui/Legend';
 import { VehiclePanel } from './ui/VehiclePanel';
 import type { LivingCitySnapshot } from './ui/testHook';
 import './styles.css';
 
 const DEFAULT_SPEED = 20;
-const FIT_PADDING_PX = 64;
 /** Wheel zoom: factor per 100 px of wheel delta (one notch ≈ 16 %). */
 const WHEEL_FACTOR_PER_100PX = 1.16;
 const CLICK_SLOP_PX = 4;
@@ -74,6 +75,11 @@ export function App() {
   const speedRef = useRef(DEFAULT_SPEED);
   const [mainPending, setMainPending] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [noGl, setNoGl] = useState(false);
+  const [labels, setLabels] = useState<CityLabel[]>([]);
+  const labelsRef = useRef<CityLabel[]>([]);
+  /** The label elements, positioned on every animation frame (not only on sim frames). */
+  const labelEls = useRef<(HTMLSpanElement | null)[]>([]);
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
   const [following, setFollowing] = useState(false);
@@ -86,7 +92,7 @@ export function App() {
 
   const pushLinkState = useCallback(() => {
     const f = frameRef.current;
-    if (renderer.current && f) renderer.current.setLinkState(f.closed, selectedRef.current, hoveredRef.current, f.linkQueued);
+    if (renderer.current && f) renderer.current.setLinkState(f.closed, selectedRef.current, hoveredRef.current, f.linkCounts);
   }, []);
 
   const select = useCallback(
@@ -121,7 +127,10 @@ export function App() {
     try {
       renderer.current = new CityRenderer(canvas);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // only a missing WebGL2 context is reported as such; anything else (e.g. a shader error) as is
+      setError(msg.includes('WebGL2 is not available') ? 'WebGL2 is not available: this browser cannot draw the city.' : msg);
+      setNoGl(true);
       return;
     }
     const c = createSimClient(2026, 7, parseCityName(new URLSearchParams(window.location.search).get('city')));
@@ -131,8 +140,11 @@ export function App() {
       readyRef.current = r;
       const g = buildRoadGeometry(r.network);
       geometry.current = g;
-      renderer.current!.setNetwork(g, riverDecor(r.network, g.bounds, r.river));
-      camera.fit(g.bounds, FIT_PADDING_PX);
+      const decor = cityDecor(r, g);
+      labelsRef.current = decor.labels;
+      setLabels(decor.labels);
+      renderer.current!.setNetwork(g, decor);
+      camera.fitInsets(g.bounds, FIT_INSETS);
       setReady(r);
       c.setSpeed(speedRef.current);
       c.setRunning(true);
@@ -237,6 +249,13 @@ export function App() {
         if (at) [camera.cx, camera.cy] = at;
       }
       renderer.current?.draw(camera, now, simPerMs);
+      labelsRef.current.forEach((l, i) => {
+        const el = labelEls.current[i];
+        if (!el) return;
+        const [sx, sy] = camera.worldToScreen(l.x, l.y);
+        el.style.left = `${sx}px`;
+        el.style.top = `${sy}px`;
+      });
       renderFrames.current++;
       raf = requestAnimationFrame(loop);
     };
@@ -300,7 +319,7 @@ export function App() {
         e.preventDefault();
         if (!e.repeat) toggleRunning(); // holding Space must not flicker play/pause
       } else if (e.key === 'b' || e.key === 'B') {
-        toggleMainBridge();
+        if (!e.repeat) toggleMainBridge(); // holding B must not flicker the bridge
       } else if (e.key === '+' || e.key === '=' || e.key === '-') {
         const i = SPEEDS.indexOf(speed as (typeof SPEEDS)[number]);
         const next = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, i + (e.key === '-' ? -1 : 1)))]!;
@@ -419,6 +438,26 @@ export function App() {
         const at = renderer.current?.trackedWorldPosition(performance.now(), simPerMsRef.current);
         return at ? toPage(at[0], at[1]) : null;
       },
+      setDebug: (opts: { hideVehicles?: boolean }) => {
+        if (renderer.current && opts.hideVehicles !== undefined) renderer.current.hideVehicles = opts.hideVehicles;
+      },
+      linkCapacity: (link: number) => {
+        const n = readyRef.current?.network;
+        return n && link >= 0 && link < n.linkFrom.length ? linkCapacity(n.linkLanes[link]!, n.linkLength[link]!) : 0;
+      },
+      approachLinks: (link: number) => {
+        const n = readyRef.current?.network;
+        if (!n || link < 0 || link >= n.linkFrom.length) return [];
+        const start = n.linkFrom[link]!;
+        const out: number[] = [];
+        for (let l = 0; l < n.linkFrom.length; l++) {
+          if (n.linkTo[l] !== start) continue;
+          if (n.linkFrom[l] === n.linkTo[link]) continue; // the reverse direction
+          if (n.nodeIsZone[n.linkFrom[l]!]) continue; // zone connectors
+          out.push(l);
+        }
+        return out;
+      },
       pickAt: (x: number, y: number) => {
         const r = canvasRef.current?.getBoundingClientRect();
         if (!r) return { vehicle: null, link: null };
@@ -448,7 +487,13 @@ export function App() {
   return (
     <main className="app">
       <canvas ref={canvasRef} className="city" aria-label="City map" />
-      {ready && <ZoneLabels ready={ready} camera={camera} />}
+      <div className="labels" aria-hidden="true">
+        {labels.map((l, i) => (
+          <span key={l.text} ref={(el) => void (labelEls.current[i] = el)} className={`zone ${l.kind}`}>
+            <span className="zone-icon">{l.icon}</span> {l.text}
+          </span>
+        ))}
+      </div>
       <ControlPanel
         running={running}
         speed={speed}
@@ -458,6 +503,7 @@ export function App() {
         onToggleRunning={toggleRunning}
         onSpeed={changeSpeed}
         onToggleMainBridge={toggleMainBridge}
+        disabled={noGl}
       />
       <div className="side">
         {sel && frame && ready && (
@@ -486,28 +532,12 @@ export function App() {
         )}
       </div>
       <MetricsStrip simTimeS={frame?.simTimeS ?? 0} metrics={frame?.metrics ?? {}} />
+      <Legend />
       {error && (
         <p role="alert" className="panel error">
           {error}
         </p>
       )}
     </main>
-  );
-}
-
-/** District labels: HTML overlay that never intercepts the pointer; re-laid out on every React render. */
-function ZoneLabels({ ready, camera }: { ready: ReadyMessage; camera: Camera }) {
-  const xy = ready.network.nodeXy;
-  return (
-    <div className="labels" aria-hidden="true">
-      {ready.zones.map((z) => {
-        const [sx, sy] = camera.worldToScreen(xy[2 * z.node]!, xy[2 * z.node + 1]!);
-        return (
-          <span key={z.node} className={`zone ${z.kind}`} style={{ left: sx, top: sy }}>
-            {z.name}
-          </span>
-        );
-      })}
-    </div>
   );
 }
