@@ -126,7 +126,7 @@ These pin the names the tests use.
   - `ticksMeasured` (from `TickWindow`);
   - `encodeMs`, the measured wall ms of the last frame's encode and copy;
   - `frameTicks` and `frameTickMs`: the ticks executed since the previous frame and their measured ms. Their sums over consecutive frames are exactly the executed ticks and the measured time, and the perf harness records them;
-  - `timerResolutionMs`: the smallest positive difference between consecutive `perfNow()` readings, measured when the host is created (≤ 1,000 reads; 0 if none is positive).
+  - `timerResolutionMs`: the smallest positive difference between consecutive `perfNow()` readings, measured when the host is created. Reads continue until at least 3 positive differences are seen, bounded by 50 ms of `now()` (0 if none is positive within the bound).
 - `WARMUP_SIM_S = 900` lives in `protocol.ts`. `createSimClient(demandSeed, behaviorSeed, city?, opts?: { warmupS?, demandScale? })`, and the app passes `WARMUP_SIM_S` and the parsed scale.
 - `parseDemandScale(value: string | null): { scale: number; invalid: boolean }`:
   - null or empty gives `{ 1, false }`;
@@ -168,7 +168,8 @@ These pin the names the tests use.
   - tick ms median/p95 are weighted by ticks (`weightedPercentile`), and the mean is Σms ÷ Σticks;
   - `tickMsMaxFrame` is the largest per-frame mean;
   - `ticksRecorded`, `framesRecorded` and `renderSamples` state the coverage;
-  - `timerResolutionMs` is recorded. `tickBelowTimerResolution` is true when the tick p95 is under 10 × the resolution; the report must then cite `tickMsMean` and not present the percentiles as tick times.
+  - `timerResolutionMs` is recorded. `tickBelowTimerResolution` is true when the resolution is unknown (≤ 0) or the tick p95 is under 10 × the resolution; the report must then cite `tickMsMean` and not present the percentiles as tick times.
+  - `conditions.headless` comes from the real browser user agent (CDP `Browser.getVersion`), not the page's (which `devices[...]` overrides).
 - The JSON also records the run conditions (viewport, DPR, headless from the user agent, launch args, the app's renderer) and the brief's targets with met / missed:
   - "10,000 active vehicles" is scored on **vehicles on the network** (Red r2 A1). The sim's `active` also counts trips waiting at their origin, so `activeMax` and `waitingAtOriginMax` are recorded beside it;
   - ~60 FPS means a render interval median ≤ 17.5 ms;

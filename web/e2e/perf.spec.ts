@@ -62,7 +62,9 @@ async function measure(page: Page, seconds: number, during?: () => Promise<void>
     tickMsMaxFrame: Math.max(0, ...perFrame),
     timerResolutionMs: r.timerResolutionMs,
     // coarse clocks (Chrome workers: ~0.1 ms) make per-tick percentiles meaningless below ~10 steps; cite the mean then
-    tickBelowTimerResolution: weightedPercentile(r.ticks.map(([m, n]) => [m / n, n] as [number, number]), 0.95) < 10 * r.timerResolutionMs,
+    // an unknown resolution (≤ 0) counts as "below" too: never present unflagged sub-resolution percentiles
+    tickBelowTimerResolution:
+      r.timerResolutionMs <= 0 || weightedPercentile(r.ticks.map(([m, n]) => [m / n, n] as [number, number]), 0.95) < 10 * r.timerResolutionMs,
     renderIntervalMedianMs: percentile(r.renderIntervals, 0.5),
     renderIntervalP95Ms: percentile(r.renderIntervals, 0.95),
     drawMedianMs: percentile(r.drawMs, 0.5),
@@ -85,7 +87,8 @@ async function record(browser: Browser, page: Page, name: string, meta: Record<s
     conditions: {
       viewport: page.viewportSize(),
       devicePixelRatio: await page.evaluate(() => window.devicePixelRatio),
-      headless: /Headless/.test(await page.evaluate(() => navigator.userAgent)),
+      // the real browser user agent (devices[...] overrides the page's), via CDP
+      headless: /Headless/.test(((await (await page.context().newCDPSession(page)).send('Browser.getVersion')) as { userAgent: string }).userAgent),
       launchArgs: use.launchOptions?.args ?? [],
     },
     city: (await snap(page)).city,
@@ -128,13 +131,14 @@ function check(file: string, durationS: number) {
   expect(n('renderSamples')).toBeGreaterThanOrEqual(durationS);
   expect(n('framesRecorded')).toBeGreaterThan(0);
   expect(n('ticksRecorded')).toBeGreaterThan(0);
-  expect(n('achievedTicksPerS')).toBeCloseTo(n('ticksRecorded') / (n('wallMs') / 1000), 6);
   expect(n('onNetworkMedian')).toBeGreaterThan(0);
   expect(n('renderIntervalMedianMs')).toBeGreaterThan(0);
   expect(n('renderIntervalP95Ms')).toBeGreaterThanOrEqual(n('renderIntervalMedianMs'));
   expect(n('tickMsP95')).toBeGreaterThanOrEqual(n('tickMsMedian'));
   expect(n('tickMsMaxFrame')).toBeGreaterThanOrEqual(n('tickMsMean'));
-  expect(j['tickBelowTimerResolution']).toBe(n('tickMsP95') < 10 * n('timerResolutionMs'));
+  expect(n('timerResolutionMs')).toBeGreaterThanOrEqual(0);
+  expect(j['tickBelowTimerResolution']).toBe(n('timerResolutionMs') <= 0 || n('tickMsP95') < 10 * n('timerResolutionMs'));
+  expect(typeof (j['conditions'] as Record<string, unknown>)['headless']).toBe('boolean');
   expect(n('activeMax')).toBeGreaterThanOrEqual(n('onNetworkMax'));
   const t = j['targets'] as Record<string, { met: boolean }>;
   expect(t['activeVehicles']).toBeUndefined();

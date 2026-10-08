@@ -246,7 +246,7 @@ test('full_demo_on_river_city', async ({ page }) => {
   await expect.poll(async () => (await snap(page)).closed, { timeout: 10_000 }).toEqual(expect.arrayContaining(lm.central_bridge));
   const closedAt = (await snap(page)).tick;
   // Then within 15 sim minutes queued doubles and an Old/North Bridge approach spills back
-  // (Red r1 sweep: at most 5.5 and 9.7 sim min for closures in the window this test closes in)
+  // (Red r2 re-probe with this test's sampling and click lag: at most 6.7 and 10.1 sim min)
   let doubled = false;
   let spilled: { approach: number; feeder: number } | null = null;
   await expect
