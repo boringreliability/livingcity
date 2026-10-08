@@ -413,6 +413,7 @@ export function App() {
     camera.fitInsets(g.bounds, comparingNow ? COMPARE_FIT_INSETS : FIT_INSETS);
     selectedRef.current = null;
     selectedSideRef.current = 'A';
+    hoveredRef.current = null;
     setSelected(null);
     setSelectedSide('A');
     pushLinkState();
@@ -890,6 +891,7 @@ export function App() {
       />
       {diagOpen && (
         <DiagnosticsPanel
+          comparing={comparingNow}
           perf={frame?.perf ?? null}
           render={renderStats()}
           onNetwork={frame?.metrics['on_network'] ?? 0}

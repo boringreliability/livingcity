@@ -15,10 +15,12 @@ interface Props {
   active: number;
   frameBytes: number;
   clock: ClockStatus | null;
+  /** Lockstep A + B: the tick cost is the pair's; the frame rows are A's. */
+  comparing?: boolean;
 }
 
 /** Measured performance counters (contract C5): sim tick time and render time are shown separately. */
-export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, clock }: Props) {
+export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, clock, comparing = false }: Props) {
   const row = (label: string, testId: string, value: string, title?: string) => (
     <div className="diag-row" title={title}>
       <dt>{label}</dt>
@@ -30,7 +32,7 @@ export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, 
     <section className="panel diagnostics" aria-label="Diagnostics">
       <h2>Diagnostics</h2>
       <dl>
-        {row('sim tick (median / p95)', 'diag-tick', `${(perf?.tickMsMedian ?? 0).toFixed(3)} / ${(perf?.tickMsP95 ?? 0).toFixed(3)} ms`,
+        {row(comparing ? 'sim tick, A + B (median / p95)' : 'sim tick (median / p95)', 'diag-tick', `${(perf?.tickMsMedian ?? 0).toFixed(3)} / ${(perf?.tickMsP95 ?? 0).toFixed(3)} ms`,
           `Wall time per simulation tick over the last ${perf?.ticksMeasured ?? 0} ticks (timer step ${(perf?.timerResolutionMs ?? 0).toFixed(3)} ms)`)}
         {row('sim tick (mean)', 'diag-tick-mean', `${(perf?.tickMsMean ?? 0).toFixed(3)} ms`,
           'Total measured time ÷ ticks: unlike the percentiles, it resolves costs below the timer step')}
@@ -39,7 +41,7 @@ export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, 
         {row('render interval (median / p95)', 'diag-render', `${render.intervalMedianMs.toFixed(1)} / ${render.intervalP95Ms.toFixed(1)} ms`,
           `Time between drawn pictures over the last ${render.samples} frames`)}
         {row('draw CPU (median / p95)', 'diag-draw', `${render.drawMedianMs.toFixed(1)} / ${render.drawP95Ms.toFixed(1)} ms`)}
-        {row('vehicles (on network / active)', 'diag-vehicles', `${onNetwork} / ${active}`, 'Active also counts trips still waiting at their origin')}
+        {row(comparing ? 'vehicles in A (on network / active)' : 'vehicles (on network / active)', 'diag-vehicles', `${onNetwork} / ${active}`, 'Active also counts trips still waiting at their origin')}
         {row('frame size', 'diag-bytes', `${frameBytes} B`)}
         {row('speed', 'diag-speed', `${achieved.toFixed(1)}× of ${clock?.multiplier ?? 0}×`, 'Achieved vs. requested simulation speed')}
       </dl>

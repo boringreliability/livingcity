@@ -397,6 +397,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       return;
     }
     // the replaced B goes first: A plus one B at most, also while replacing
+    sim = a;
     scenarios[1]?.free?.();
     scenarios = [a];
     comparing = false;

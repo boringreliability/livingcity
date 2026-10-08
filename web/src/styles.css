@@ -135,6 +135,14 @@ select {
   cursor: pointer;
 }
 
+/* a disabled control reads as unavailable without hue: faded, dashed edge, no pointer */
+button:disabled,
+select:disabled {
+  opacity: 0.45;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
 button:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--accent);
@@ -520,7 +528,7 @@ button.bridge.closed {
 
 .side-label {
   position: absolute;
-  top: 128px;
+  top: 92px;
   padding: 2px 8px;
   font-size: 12px;
   font-weight: 600;
@@ -529,8 +537,9 @@ button.bridge.closed {
   pointer-events: none;
 }
 
+/* A's label at the inner (right) edge of its half: clear of the control panel and of the roads */
 .side-label.side-a {
-  left: 12px;
+  right: calc(50% + 12px);
   border-style: solid;
 }
 
