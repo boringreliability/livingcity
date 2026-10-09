@@ -101,6 +101,8 @@ export function App() {
    * worker handled; tracking from frames older than our last request is stale and ignored. */
   const inspectSeqRef = useRef(0);
   const followingRef = useRef(false);
+  /** The user moved the camera (pan, zoom, Follow) since the last fit: a resize then keeps the view. */
+  const cameraTouched = useRef(false);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
   /** Render-side measurement (C5): rAF intervals and draw CPU time over the last 300 frames. */
@@ -170,6 +172,11 @@ export function App() {
     const [sx, sy] = camera.worldToScreen(l.x, l.y);
     el.style.left = `${sx}px`;
     el.style.top = `${sy}px`;
+    // a label that would be cut at its layer's edge (a split-view half, the window) is hidden, never half-drawn
+    const layer = el.parentElement?.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const cut = !!layer && (r.left < layer.left - 0.5 || r.right > layer.right + 0.5 || r.top < layer.top - 0.5 || r.bottom > layer.bottom + 0.5);
+    el.style.visibility = cut ? 'hidden' : '';
   };
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
@@ -204,6 +211,7 @@ export function App() {
 
   const follow = useCallback((on: boolean) => {
     followingRef.current = on;
+    if (on) cameraTouched.current = true; // Follow moves the camera: no refit on resize afterwards
     setFollowing(on);
   }, []);
 
@@ -258,6 +266,7 @@ export function App() {
       setLabels(decor.labels);
       renderer.current!.setNetwork(g, decor);
       camera.fitInsets(g.bounds, FIT_INSETS);
+      cameraTouched.current = false;
       setReady(r);
       c.setSpeed(speedRef.current);
       c.setRunning(true);
@@ -414,6 +423,7 @@ export function App() {
     renderer.current?.resize(r.width, r.height, dpr);
     rendererB.current?.resize(r.width, r.height, dpr);
     camera.fitInsets(g.bounds, comparingNow ? COMPARE_FIT_INSETS : FIT_INSETS);
+    cameraTouched.current = false;
     selectedRef.current = null;
     selectedSideRef.current = 'A';
     hoveredRef.current = null;
@@ -437,6 +447,9 @@ export function App() {
       camera.setViewport(r.width, r.height);
       renderer.current?.resize(r.width, r.height, window.devicePixelRatio || 1);
       rendererB.current?.resize(r.width, r.height, window.devicePixelRatio || 1);
+      // an untouched view keeps showing the whole city; a camera the user moved stays where it is
+      const g = geometry.current;
+      if (g && !cameraTouched.current) camera.fitInsets(g.bounds, compareViewRef.current ? COMPARE_FIT_INSETS : FIT_INSETS);
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -674,6 +687,7 @@ export function App() {
           drag.moved = true;
           if (followingRef.current) follow(false); // a manual pan ends Follow
           camera.panBy(dx, dy);
+          cameraTouched.current = true;
           drag.x = e.clientX;
           drag.y = e.clientY;
         }
@@ -701,6 +715,7 @@ export function App() {
       e.preventDefault();
       const [x, y] = local(e);
       camera.zoomAt(x, y, Math.pow(WHEEL_FACTOR_PER_100PX, -e.deltaY / 100));
+      cameraTouched.current = true;
     };
     const canvases = canvasB ? [canvasA, canvasB] : [canvasA];
     for (const canvas of canvases) {

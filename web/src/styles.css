@@ -450,18 +450,21 @@ button.bridge.closed {
   color: var(--muted);
 }
 
-/* Scenarios (once B exists): one row in the top band, centred: clear of the control panel (left),
-   the road/vehicle panels (right) and the city (below the band). The viewed one is named in text
-   inside a pattern frame. */
+/* Scenarios (once B exists): in the top band, centred between the control panel (left, 326 px) and
+   the right column (240 px), wrapping into rows when narrow, so it never overlaps either (ward
+   polish-002). The viewed one is named in text inside a pattern frame. */
 .scenarios {
   top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 358px;
+  right: 272px;
+  width: fit-content;
+  margin: 0 auto;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  white-space: nowrap;
 }
 
 .scenarios .row {
@@ -588,13 +591,38 @@ button.bridge.closed {
   clip: rect(0 0 0 0);
 }
 
-/* narrower windows: the scenario panel wraps instead of covering the control panel */
-@media (max-width: 1199px) {
+/* Narrow windows (ward polish-002): the band between the side panels is too narrow, so the scenario
+   panel goes below the control panel and the diagnostics panel below it. */
+@media (max-width: 959px) {
   .scenarios {
-    flex-wrap: wrap;
-    justify-content: center;
-    white-space: normal;
-    max-width: 330px;
-    left: calc(50% + 70px);
+    top: 132px;
+    left: 16px;
+    right: auto;
+    margin: 0;
+    max-width: 326px;
+    box-sizing: border-box;
+  }
+
+  .app:has(.scenarios) .diagnostics {
+    top: 260px;
+  }
+}
+
+/* The legend and the metrics share the bottom band only when both fit (≥ 1260 px): narrower, the legend
+   sits just above the metrics, still inside the bottom inset band. */
+@media (max-width: 1259px) {
+  .legend {
+    bottom: 112px;
+  }
+}
+
+/* Comparing at ≥ 1000 px: the road panel moves to A's bottom-left corner, above the side label and
+   left of the comparison, where no road is drawn (the top-right would cover B's roads). */
+@media (min-width: 1000px) {
+  .app.comparing .side {
+    top: auto;
+    right: auto;
+    left: 16px;
+    bottom: 74px;
   }
 }

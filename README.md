@@ -25,7 +25,7 @@ pnpm -C web build:wasm                   # build the wasm simulation (again afte
 pnpm -C web dev                          # dev server; open the printed URL (http://localhost:5173)
 ```
 
-The app opens on River City after a 15-minute (sim time) warm-up, so traffic is already flowing. The production build is `pnpm -C web build`, which typechecks and writes `web/dist/`.
+The app opens on River City after a 15-minute (sim time) warm-up, so traffic is already flowing. It is laid out for desktop windows at least 768 px wide; narrower windows are not supported in v1. The production build is `pnpm -C web build`, which typechecks and writes `web/dist/`.
 
 ### URL parameters
 - `?city=three_bridges`: the small core test city instead of River City.
