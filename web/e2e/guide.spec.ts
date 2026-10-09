@@ -82,6 +82,13 @@ test('steps_tick_from_real_actions', async ({ page }) => {
   const closedAt = (await snap(page)).tick;
   await expect.poll(async () => (await done(page))[0]).toBe(true);
   expect((await done(page))[1]).toBe(false);
+  // not before 3 sim minutes: paused at ~280 ticks, step 2 is not done yet
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000, intervals: [50] }).toBeGreaterThanOrEqual(closedAt + 280);
+  await pause(page);
+  expect((await snap(page)).tick, 'paused before 3 sim min').toBeLessThan(closedAt + 360);
+  await sleep(500);
+  expect((await done(page))[1], 'step 2 not before 3 sim min').toBe(false);
+  await page.keyboard.press('Space');
   // 3 sim minutes with the bridge closed
   await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000 }).toBeGreaterThan(closedAt + 380);
   await expect.poll(async () => (await done(page))[1]).toBe(true);
@@ -168,13 +175,22 @@ test('no_step_ticks_by_time_alone', async ({ page }) => {
   await sleep(500);
   expect(await done(page), 'another road: nothing').toEqual([false, false, false, false, false]);
   await page.keyboard.press('Escape');
-  // the main bridge closed, then paused for 12 s of wall time: only step 1 (wall time is not sim time)
+  // the main bridge closed and running at 1× for 12 s of wall time (≈ 24 ticks): only step 1
   const lm = (await snap(page)).landmarks!;
+  await page.getByRole('combobox', { name: 'Speed' }).selectOption('1');
+  await blur(page);
   await page.getByRole('button', { name: /close the main bridge/i }).click();
   await expect.poll(async () => (await snap(page)).closed).toEqual(expect.arrayContaining(lm.central_bridge));
+  const tc = (await snap(page)).tick;
+  await sleep(12_000);
+  expect((await snap(page)).tick - tc, 'running, but far from 3 sim min').toBeLessThan(300);
+  expect(await done(page), 'running 12 s at 1×: only step 1').toEqual([true, false, false, false, false]);
+  // and paused for 12 s of wall time: still only step 1
   await pause(page);
   await sleep(12_000);
   expect(await done(page), 'paused 12 s: only step 1').toEqual([true, false, false, false, false]);
+  await page.getByRole('combobox', { name: 'Speed' }).selectOption('60');
+  await blur(page);
   // reopened, then ≥ 4 sim min running with the bridge open: still no step 2 (not "closed throughout")
   await page.getByRole('button', { name: /close the main bridge/i }).click();
   await blur(page);
@@ -236,10 +252,11 @@ test('guide_keyboard_and_axe', async ({ page }) => {
   const bad = r.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');
   expect(bad.map((v) => `${v.impact} ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([]);
   await blur(page);
+  const hide = guide(page).getByRole('button', { name: 'Hide demo guide' });
   let on = false;
   for (let i = 0; i < 60 && !on; i++) {
     await page.keyboard.press('Tab');
-    on = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Hide demo guide' || document.activeElement?.textContent?.trim() === 'Hide demo guide');
+    on = await hide.evaluate((el) => el === document.activeElement);
   }
   expect(on, 'Tab reaches "Hide demo guide"').toBe(true);
   await page.keyboard.press('Escape');
@@ -254,8 +271,9 @@ test('speed_hint_when_b_lags', async ({ page }) => {
   await pause(page);
   await stepBack(page);
   await stepBack(page);
-  // in A (even behind its head) at 20×: no hint
+  // in A (even behind its head) at 20×: no hint; and rewinding without a closure does not tick step 3
   await expect(guide(page)).not.toContainText('60×');
+  expect((await done(page))[2], 'step 3 needs step 1').toBe(false);
   await page.keyboard.press('b');
   await expect.poll(async () => (await snap(page)).scenario).toBe('B');
   // B is viewed at its branch tick, below A's head; speed 20×

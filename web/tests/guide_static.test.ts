@@ -15,11 +15,12 @@ describe('polish-004 static', () => {
     const src = read('web/src/ui/DemoGuide.tsx').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
     // no worker access at all
     expect(src).not.toMatch(/from ['"][^'"]*sim\/(client|host|worker)['"]/);
-    expect(src).not.toMatch(/\b(postMessage|createSimClient|closeLink|openLink|setRunning|setSpeed|seek|branch|compare)\s*\(/);
+    expect(src).not.toMatch(/\b(postMessage|createSimClient)\s*\(/);
+    expect(src).not.toMatch(/\.(closeLink|openLink|setRunning|setSpeed|seek|branch|compare|returnBuffer|inspectVehicle|inspectLink)\s*\(/);
     // its only function-typed prop is onHide (interface or type alias; methods or arrow types)
-    const props = src.match(/(?:interface\s+\w*Props\s*|type\s+\w*Props\s*=\s*)\{([\s\S]*?)\n\}/);
+    const props = src.match(/(?:interface\s+\w*Props(?:\s+extends\s+[^{]+)?\s*|type\s+\w*Props\s*=\s*)\{([\s\S]*?)\n\}/);
     expect(props, 'a Props interface or type').not.toBeNull();
-    const fns = [...props![1]!.matchAll(/^\s*(\w+)\??\s*(?:\(|:\s*(?:\([^)]*\)\s*=>|\(\)\s*=>|Function|\w*Callback))/gm)].map((m) => m[1]);
+    const fns = [...props![1]!.matchAll(/^\s*(?:readonly\s+)?(\w+)\??\s*(?:\(|:\s*(?:\([^)]*\)\s*=>|Function|VoidFunction|\w*Callback|\w*Handler))/gm)].map((m) => m[1]);
     expect(fns).toEqual(['onHide']);
   });
 
