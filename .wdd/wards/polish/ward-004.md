@@ -3,7 +3,7 @@ ward: 4
 revision: null
 name: "First-run demonstration"
 epic: "polish"
-status: "red"
+status: "approved"
 dependencies: ["polish-003"]
 layer: "typescript"
 estimated_tests: 9
