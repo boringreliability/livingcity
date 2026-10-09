@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "Profile and optimize the measured per-frame bottlenecks"
 epic: "polish"
-status: "planned"
+status: "red"
 dependencies: ["polish-004"]
 layer: "fullstack"
 estimated_tests: 10
@@ -77,8 +77,8 @@ The robustness items f1, f2 and g7 are in scope too: restart after a wasm trap, 
 - **Paused frames.** While paused and idle, the host does not post frames every iteration.
   - It posts one frame after every handled message (seek, command, inspect, view, compare, speed, branch, and so on) and at most **2 heartbeat frames per second** otherwise.
   - The UI keeps rendering (hover, pan and zoom do not need new frames).
-- **Frame pool.** A buffer that is large enough is reused, using a `vehicles` view of length `count × 16`. The pool is not cleared on post, and A and B have separate pools.
-  - In steady state, with buffers returned, there is no new `ArrayBuffer` per frame, in single view or while comparing.
+- **Frame pool, per side.** A and B each have their own pool. B's returned buffer is reused for B's next frame when the size fits exactly, even though A posts in between. Today A's post clears B's buffers too.
+  - The pool rule itself stays as the frozen host tests pin it (exact `count × 16` bytes, F2; a returned buffer that does not fit the next frame is dropped, G8). "No allocation per frame" is therefore not achievable in general and is recorded as a pinned deviation.
 - **Restart after a trap.**
   - A trap (any exception from a wasm call) posts a **fatal** error and halts.
   - The UI shows a non-dismissible banner, "The simulation stopped: …", with a **"Restart simulation"** button. It creates a new worker and re-initializes (same city, seeds and warm-up), and the banner disappears when the new worker is ready.
@@ -106,7 +106,7 @@ The robustness items f1, f2 and g7 are in scope too: restart after a wasm trap, 
 | 4 | `schedules_visit_only_due_slots` (Rust) | One tick on River City ×5 after 1 sim h, with every slot's `in_periodic`/retry state preserved: the periodic step visits ≤ 1.2 × (live slots / 240) + 10 slots, and the retry step visits only due slots. Counted with doc-hidden `World::last_step_visits()` (periodic, retries). The golden hashes (test 1) prove the order is unchanged. |
 | 5 | `branch_shares_snapshots` (Rust) | After `branch(at)` on a 3 sim h River City timeline, `shared_snapshots` equals the number of A's retained snapshots below `at`, or B's kept count if B's budget is smaller. B's `snapshot_bytes` ≤ B's budget. A and B remain independent: stepping B does not change A's hash, and a seek in A does not change B's. |
 | 6 | `paused_host_posts_rarely` (vitest, real wasm host, fake clock) | Paused and idle for 5 s of fake time (iterate every 16 ms): at most 11 frames, against ~312 today. After a `seek`, a `command`, an `inspectLink`, a `viewScenario` and a `setSpeed`, each is followed by a frame within one iteration. Running: a frame at least every 2 iterations (unchanged). |
-| 7 | `frame_buffers_are_reused` (vitest, real wasm host) | Running for 200 iterations with every posted `vehicles` buffer returned: after a 20-iteration warm-up, the posted buffers come from ≤ 3 distinct `ArrayBuffer` objects. The same holds in compare (A and B posts, ≤ 3 each). A frame's `count × 16` ≤ its buffer's length, and the `vehicles` view length equals `count × 16`. |
+| 7 | `compare_pools_are_per_side` (vitest, real wasm host) | In compare (paused, then stepping), every posted frame's buffer is returned right away. When B's next frame has the same `count` as B's previous one, its `vehicles` buffer is the very `ArrayBuffer` returned for B (identity), although an A frame was posted in between. The same holds for A. Frames stay exactly `count × 16` bytes. |
 | 8 | `trap_offers_restart` (e2e) | Trigger `debugTrap` through the test hook (`__livingcity.debugTrap()`). An alert "The simulation stopped" with a "Restart simulation" button appears. It has no Dismiss. Other actions (seek, compare) do not clear it. "Restart simulation" brings a living city back: the tick advances past the warm-up and the alert is gone. No page error is thrown. |
 | 9 | `reinit_resets_the_clock` (vitest) | A `SimClock` with backlog, credit, an ms-per-tick estimate and a full achieved window, after `reset()` (called by `init`), behaves exactly like a new `SimClock`: the same `plan()` and `status()` sequence for the same input. |
 | 10 | `performance_doc_cites_the_probe` (vitest, static + probe output) | `docs/performance.md` has a "Profiling and optimization" section. It names the cause (full slot scans, active vs on-network). Every number in it appears in `web/perf-results/frame-cost.json`, which `frame_cost_probe` writes. That JSON has before/after `metrics` and `step` means at ×1, ×3 and ×5. The "before" values are taken with `metrics_full_scan()`, plus the step means measured at commit `4e5d5c1` and recorded in the JSON as `baseline`. |
