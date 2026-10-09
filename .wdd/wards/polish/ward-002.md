@@ -3,7 +3,7 @@ ward: 2
 revision: null
 name: "Layout that fits: resize refit, split-view panels and narrow widths"
 epic: "polish"
-status: "planned"
+status: "red"
 dependencies: ["polish-001"]
 layer: "typescript"
 estimated_tests: 6
