@@ -85,9 +85,11 @@ test('steps_tick_from_real_actions', async ({ page }) => {
   // 3 sim minutes with the bridge closed
   await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000 }).toBeGreaterThan(closedAt + 380);
   await expect.poll(async () => (await done(page))[1]).toBe(true);
-  // pause and rewind
+  // pause and rewind (pausing alone is not enough)
   expect((await done(page))[2]).toBe(false);
   await pause(page);
+  await sleep(500);
+  expect((await done(page))[2], 'step 3 not on pause alone').toBe(false);
   await stepBack(page);
   await expect.poll(async () => (await done(page))[2]).toBe(true);
   // another decision in A's past: a branch
@@ -95,6 +97,29 @@ test('steps_tick_from_real_actions', async ({ page }) => {
   await page.keyboard.press('b');
   await expect.poll(async () => (await snap(page)).scenario).toBe('B');
   await expect.poll(async () => (await done(page))[3]).toBe(true);
+  expect((await done(page))[4], 'step 5 not before compare').toBe(false);
+  // with a branch, the guide still covers no road (compared with the same view, guide hidden)
+  const covered = () =>
+    page.evaluate(() => {
+      const h = window.__livingcity!;
+      const boxes = [...document.querySelectorAll('section.panel, .side-label')]
+        .filter((e) => getComputedStyle(e).visibility !== 'hidden' && e.getBoundingClientRect().width > 0)
+        .map((e) => e.getBoundingClientRect());
+      let n = 0;
+      for (let l = 0; l < h.snapshot().linkCounts.length; l++)
+        for (let k = 0; k < 10; k++) {
+          const q = h.linkScreenPoint(l, 0.05 + k * 0.1);
+          if (q && boxes.some((b) => q[0] >= b.left && q[0] <= b.right && q[1] >= b.top && q[1] <= b.bottom)) n++;
+        }
+      return n;
+    });
+  const withGuide = await covered();
+  await guide(page).getByRole('button', { name: 'Hide demo guide' }).click();
+  await expect(guide(page)).toBeHidden();
+  const withoutGuide = await covered();
+  expect(withGuide, 'the guide adds no covered road with a branch').toBeLessThanOrEqual(withoutGuide);
+  await page.getByRole('button', { name: 'Guide', exact: true }).click();
+  await expect(guide(page)).toBeVisible();
   // compare: the guide steps aside; afterwards step 5 is done and the demo complete
   await page.getByRole('button', { name: 'Compare side by side' }).click();
   await expect.poll(async () => (await snap(page)).compare).toBe(true);
@@ -108,7 +133,7 @@ test('steps_tick_from_real_actions', async ({ page }) => {
 
 // 3
 test('no_step_ticks_by_time_alone', async ({ page }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(300_000);
   await ready(page);
   await page.getByRole('combobox', { name: 'Speed' }).selectOption('60');
   await blur(page);
@@ -116,7 +141,7 @@ test('no_step_ticks_by_time_alone', async ({ page }) => {
   await sleep(15_000);
   expect((await snap(page)).tick - t0, 'the sim ran ≥ 7 sim min').toBeGreaterThanOrEqual(840);
   expect(await done(page)).toEqual([false, false, false, false, false]);
-  // closing and reopening another road ticks nothing
+  // another road closed for ≥ 4 sim min (then reopened) ticks nothing
   await pause(page);
   const found = await page.evaluate(() => {
     const h = window.__livingcity!;
@@ -136,11 +161,28 @@ test('no_step_ticks_by_time_alone', async ({ page }) => {
   const panel = page.getByRole('region', { name: 'Selected road' });
   await panel.getByRole('button', { name: 'Close link' }).click();
   await blur(page);
+  const t1 = (await snap(page)).tick;
   await page.keyboard.press('Space');
-  await sleep(1000);
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 60_000 }).toBeGreaterThan(t1 + 480);
   await panel.getByRole('button', { name: 'Reopen link' }).click();
-  await sleep(1000);
-  expect(await done(page)).toEqual([false, false, false, false, false]);
+  await sleep(500);
+  expect(await done(page), 'another road: nothing').toEqual([false, false, false, false, false]);
+  await page.keyboard.press('Escape');
+  // the main bridge closed, then paused for 12 s of wall time: only step 1 (wall time is not sim time)
+  const lm = (await snap(page)).landmarks!;
+  await page.getByRole('button', { name: /close the main bridge/i }).click();
+  await expect.poll(async () => (await snap(page)).closed).toEqual(expect.arrayContaining(lm.central_bridge));
+  await pause(page);
+  await sleep(12_000);
+  expect(await done(page), 'paused 12 s: only step 1').toEqual([true, false, false, false, false]);
+  // reopened, then ≥ 4 sim min running with the bridge open: still no step 2 (not "closed throughout")
+  await page.getByRole('button', { name: /close the main bridge/i }).click();
+  await blur(page);
+  const t2 = (await snap(page)).tick;
+  await page.keyboard.press('Space');
+  await expect.poll(async () => (await snap(page)).closed.filter((l) => lm.central_bridge.includes(l)).length, { timeout: 30_000 }).toBe(0);
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 60_000 }).toBeGreaterThan(t2 + 480);
+  expect((await done(page))[1], 'reopened: no step 2').toBe(false);
 });
 
 // 5
@@ -155,6 +197,11 @@ test('dismiss_is_remembered_and_reopenable', async ({ page, context }) => {
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
   await ready(page); // reload
   await expect(guide(page)).toBeHidden();
+  // a new page in the same context (localStorage, not sessionStorage)
+  const p1 = await context.newPage();
+  await ready(p1);
+  await expect(guide(p1)).toBeHidden();
+  await p1.close();
   await toggle.click();
   await expect(guide(page)).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
@@ -197,7 +244,7 @@ test('guide_keyboard_and_axe', async ({ page }) => {
   expect(on, 'Tab reaches "Hide demo guide"').toBe(true);
   await page.keyboard.press('Escape');
   await expect(guide(page)).toBeHidden();
-  expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).toBe('Guide');
+  await expect(page.getByRole('button', { name: 'Guide', exact: true })).toBeFocused();
 });
 
 // 7
@@ -207,6 +254,8 @@ test('speed_hint_when_b_lags', async ({ page }) => {
   await pause(page);
   await stepBack(page);
   await stepBack(page);
+  // in A (even behind its head) at 20×: no hint
+  await expect(guide(page)).not.toContainText('60×');
   await page.keyboard.press('b');
   await expect.poll(async () => (await snap(page)).scenario).toBe('B');
   // B is viewed at its branch tick, below A's head; speed 20×

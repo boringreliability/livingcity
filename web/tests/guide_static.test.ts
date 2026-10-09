@@ -16,11 +16,11 @@ describe('polish-004 static', () => {
     // no worker access at all
     expect(src).not.toMatch(/from ['"][^'"]*sim\/(client|host|worker)['"]/);
     expect(src).not.toMatch(/\b(postMessage|createSimClient|closeLink|openLink|setRunning|setSpeed|seek|branch|compare)\s*\(/);
-    // its only callback prop is onHide
-    const props = src.match(/interface\s+\w*Props\s*\{([\s\S]*?)\n\}/);
-    expect(props, 'a Props interface').not.toBeNull();
-    const callbacks = [...props![1]!.matchAll(/^\s*(on[A-Z]\w*)\??\s*[:(]/gm)].map((m) => m[1]);
-    expect(callbacks).toEqual(['onHide']);
+    // its only function-typed prop is onHide (interface or type alias; methods or arrow types)
+    const props = src.match(/(?:interface\s+\w*Props\s*|type\s+\w*Props\s*=\s*)\{([\s\S]*?)\n\}/);
+    expect(props, 'a Props interface or type').not.toBeNull();
+    const fns = [...props![1]!.matchAll(/^\s*(\w+)\??\s*(?:\(|:\s*(?:\([^)]*\)\s*=>|\(\)\s*=>|Function|\w*Callback))/gm)].map((m) => m[1]);
+    expect(fns).toEqual(['onHide']);
   });
 
   test('9 demo_doc_matches_the_guide', () => {

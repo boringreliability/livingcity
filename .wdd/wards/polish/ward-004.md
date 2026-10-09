@@ -26,7 +26,9 @@ A compact, dismissible **demo guide** inside the app shows the five steps. Each 
 
 ## Outputs
 **The guide (`web/src/ui/DemoGuide.tsx`, new; `section.panel` with `aria-label="Demo guide"`)**
-- **Placement.** It sits in the `.top-band` centre column, above the scenario panel. In narrow windows it joins the single column after the controls.
+- **Placement.** It sits at the top of the right column (`.side`), above the road and vehicle panels, so the scenario panel in the centre is untouched.
+  - At most 100 px tall: it fits in the top band above the city's roads, which start at y ≈ 121 at 1280 and 1024, and lower in narrower windows.
+  - At least 4 px clear of the centre column, at every supported width.
 - **Size.** It is compact: one line naming the current step, plus five numbered step markers. A done step shows ✓ and its number, so state is never shown by colour alone.
 - **Visibility.** It is hidden while comparing and during the warm-up.
 
@@ -65,7 +67,7 @@ Rules for the steps:
 - **Placement must not break pinned layout:**
   - `COMPARE_FIT_INSETS` and `FIT_INSETS` stay unchanged;
   - the guide never overlaps another panel at the supported widths (`layout.spec`);
-  - while it is visible in single view, the fitted city's roads are not under it at 1280×800 and 1024×768.
+  - while it is visible in single view, the fitted city's roads are not under it at 1280×800 and 1024×768, and it adds no covered road once a branch exists.
 - **"Running" for step 2** means the sim time advanced by at least 360 ticks (3 min) between the frame where the closure was first seen and a later frame, with the bridge still closed throughout.
 - **Determinism.** The guide cannot affect the sim, because it sends nothing.
 
@@ -73,12 +75,12 @@ Rules for the steps:
 | # | Test Name | Verifies |
 |---|-----------|----------|
 | 1 | `guide_shows_on_first_visit` (e2e) | In a fresh context, after ready, the region "Demo guide" is visible and lists 5 steps in `GUIDE_STEPS` order, none done (no ✓). It overlaps no other panel, and no sampled road point of the fitted city lies under it, at 1280×800 and 1024×768. It is not shown before the first frame. |
-| 2 | `steps_tick_from_real_actions` (e2e) | Close the main bridge → step 1 done. Run until the closure is 3 sim minutes old → step 2 done. Pause and rewind with ← → step 3 done. Close the North Bridge in A's past (a branch) → step 4 done. Enter compare: the guide is hidden. Leave compare: step 5 done and "Demo complete" is shown. Done steps show ✓ (text), not colour alone. |
-| 3 | `no_step_ticks_by_time_alone` (e2e) | With the guide open at 60× and no interaction for 15 s of wall time (≥ 7 sim min), no step is done. Closing and reopening a road elsewhere (not the main bridge) ticks no step. |
-| 4 | `guide_never_drives_the_simulation` (vitest, static) | `DemoGuide.tsx` imports nothing from `sim/client` or `sim/host` and receives no callback that sends to the worker. Its props are state values plus `onHide`. `GUIDE_STEPS` has exactly the 5 titles above, in order. |
-| 5 | `dismiss_is_remembered_and_reopenable` (e2e) | "Hide demo guide" hides it. After a reload it stays hidden. The "Guide" button (`aria-pressed=false`) shows it again (`aria-pressed=true`), and after a reload it is visible again. With `localStorage` throwing (init script), the guide is shown, can be hidden and shown, and no page error occurs. |
+| 2 | `steps_tick_from_real_actions` (e2e) | Close the main bridge → step 1 done. Run until the closure is 3 sim minutes old → step 2 done. Pause → step 3 not yet done; rewind with ← → step 3 done. An intervention in A's past (B on the slider; this branches) → step 4 done, step 5 not yet. With the branch, the guide adds no covered road point compared with the same view with the guide hidden. Enter compare: the guide is hidden. Leave compare: step 5 done and "Demo complete" is shown. Done steps show ✓ (text), not colour alone. |
+| 3 | `no_step_ticks_by_time_alone` (e2e) | At 60×, 15 s of wall time (≥ 7 sim min) with no interaction ticks no step. Another road (not the main bridge) closed for ≥ 480 ticks and reopened ticks no step. The main bridge closed, then paused for 12 s of wall time: only step 1 is done (wall time is not sim time). Reopened and run ≥ 480 ticks with the bridge open: step 2 is still not done (not "closed throughout"). |
+| 4 | `guide_never_drives_the_simulation` (vitest, static) | `DemoGuide.tsx` imports nothing from `sim/client`, `sim/host` or `sim/worker`, and calls no command function. Its props (interface or type) have exactly one function-typed member, `onHide`. The module must stay importable in Node: no CSS import or `window` access at top level. `GUIDE_STEPS` has exactly the 5 titles above, in order. |
+| 5 | `dismiss_is_remembered_and_reopenable` (e2e) | "Hide demo guide" hides it. After a reload, and on a new page in the same context, it stays hidden. The "Guide" button (`aria-pressed=false`) shows it again (`aria-pressed=true`), and after a reload it is visible again. With `localStorage` throwing (init script), the guide is shown, can be hidden and shown, and no page error occurs. |
 | 6 | `guide_keyboard_and_axe` (e2e) | Tab reaches "Hide demo guide". Esc with focus inside the guide hides it and focuses the "Guide" button. With the guide visible, axe reports no serious or critical violation. |
-| 7 | `speed_hint_when_b_lags` (e2e) | After branching and viewing B (below A's head) at 20×, the guide shows a hint containing "60×". After switching to 60× the hint is gone. The hint is not a button. |
+| 7 | `speed_hint_when_b_lags` (e2e) | In A at 20×, even behind its head, there is no hint. After branching and viewing B (below A's head; the guide remembers A's head from A's last frame) at 20×, the guide shows a hint containing "60×". After switching to 60× the hint is gone. The hint is not a button. |
 | 8 | `warmup_state_is_shown` (e2e) | With the wasm request delayed by 1.5 s (route interception), the status "Starting the city…" is visible before the first frame and is gone after ready. The guide is not visible during the warm-up. |
 | 9 | `demo_doc_matches_the_guide` (vitest, static) | `docs/demo.md` contains each `GUIDE_STEPS` title in order (as headings or bold step leads). README mentions the in-app guide and how to reopen it ("Guide"). |
 
