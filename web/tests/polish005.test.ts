@@ -93,7 +93,6 @@ describe('polish-005', () => {
       for (const f of w.frames().slice(before)) {
         seen++;
         expect(f.vehicles.byteLength).toBe(f.count * 16);
-        expect(f.vehicles.byteLength, 'not a detached buffer').toBeGreaterThanOrEqual(0);
         const prev = last[f.scenario];
         if (prev && prev.count === f.count) {
           expect(f.vehicles, `side ${f.scenario}: the buffer returned for this side is reused`).toBe(prev.buffer);
@@ -108,6 +107,20 @@ describe('polish-005', () => {
     expect(seen).toBeGreaterThan(100);
     expect(checked[0], 'A reuses').toBeGreaterThanOrEqual(10);
     expect(checked[1], 'B reuses').toBeGreaterThanOrEqual(10);
+  });
+
+  test('7b return_buffer_carries_the_side_end_to_end', () => {
+    const src = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    // the protocol declares it
+    expect(src('web/src/sim/protocol.ts')).toMatch(/type:\s*'returnBuffer';\s*buffer:\s*ArrayBuffer;\s*scenario\?:\s*0\s*\|\s*1/);
+    // the client takes it and sends it
+    const client = src('web/src/sim/client.ts');
+    expect(client).toMatch(/returnBuffer:\s*\(buffer,\s*scenario\)\s*=>\s*send\(\{\s*type:\s*'returnBuffer',\s*buffer,\s*scenario\s*\}/);
+    // every call in the app passes the frame's side
+    const app = src('web/src/App.tsx');
+    const calls = [...app.matchAll(/\.returnBuffer\(([^)]*)\)/g)].map((m) => m[1]!);
+    expect(calls.length).toBeGreaterThan(2);
+    for (const args of calls) expect(args.split(',').length, `returnBuffer(${args}) passes the side`).toBe(2);
   });
 
   test('9 reinit_resets_the_clock', () => {
@@ -165,7 +178,7 @@ describe('polish-005', () => {
     used.h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23 });
     used.h.handle({ type: 'setSpeed', multiplier: 60 });
     used.h.handle({ type: 'setRunning', running: true });
-    for (let k = 0; k < 200; k++) used.advance(k % 9 === 0 ? 8 : 1); // stalls: backlog and credit
+    for (let k = 0; k < 200; k++) used.advance(k % 9 === 0 ? 8 : 1); // uneven batches: a used clock (estimate, window, credit)
     const fresh = make(used.at());
     const n = used.posted.length;
     for (const x of [used, fresh]) {
@@ -185,7 +198,8 @@ describe('polish-005', () => {
       for (const scale of ['x1', 'x3', 'x5'])
         for (const k of ['metricsMs', 'stepMs']) expect(typeof json[phase]?.[scale]?.[k], `${phase}.${scale}.${k}`).toBe('number');
     expect(existsSync(join(ROOT, 'crates/sim-core/examples/frame_cost_probe.rs'))).toBe(true);
-    expect(typeof json['baseline'], 'the pre-ward step means (commit 4e5d5c1)').toBe('object');
+    expect(json['baseline'], 'the pre-ward step means (commit 4e5d5c1)').toBeTruthy();
+    for (const scale of ['x1', 'x3', 'x5']) expect(json['baseline']![scale]?.['stepMs'], `baseline.${scale}.stepMs = before`).toBe(json.before![scale]!.stepMs);
     // the optimization is real
     expect(json.after!.x5!.stepMs!, 'step at ×5 after ≤ 0.8 × before').toBeLessThanOrEqual(0.8 * json.before!.x5!.stepMs!);
     expect(json.after!.x5!.metricsMs!, 'metrics at ×5 after ≤ 0.25 × before').toBeLessThanOrEqual(0.25 * json.before!.x5!.metricsMs!);

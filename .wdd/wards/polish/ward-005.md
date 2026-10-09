@@ -93,19 +93,20 @@ The robustness items f1, f2 and g7 are in scope too: restart after a wasm trap, 
   - `core_004` frame tests: record layout, `link_stats`, and the metric arrays;
   - `timeline_001/002` tests: snapshot bytes accounting, budget eviction, branch independence;
   - host tests that expect a frame after each message.
-- **Heartbeat:** "at most 2 frames/s while paused and idle". A frozen test may wait up to 1 s for a paused frame, so 2/s still serves it.
+- **Paused frame rate:** pinned by frozen `review2` G4 and `review3` G4b (frames keep coming while paused); not changed here (e2 deviation).
 
 ## Tests
 | # | Test Name | Verifies |
 |---|-----------|----------|
 | 1 | `golden_hashes_hold` (Rust, release) | All golden hashes hold: the River City timeline and branch hashes at ×1 and ×5; ×5 right after the closure at ticks 2001/2005/2010/2017 (`0xf8197275a218e7a2`, `0x172ff966411cef43`, `0xdf43aa73ba51410f`, `0xda68962cd9f01abf`; the hashed reroute queues pin the processing order); three_bridges closed through a timeline (seek 1500, branch 1700: `0x6165bcebbe44f6d5` / `0x2cbc8cf112cb2e04`); and three_bridges at 1200/2400/3600. |
-| 2 | `incremental_metrics_equal_full_scan` (Rust) | Through River City ×3 (closures, a reopen, seeks back and forth, a branch) and three_bridges with all bridges closed (stranded vehicles, unreachable removals), `metrics()` equals `metrics_full_scan()` field by field, bit for bit (`f64::to_bits` for floats), at least every 60 ticks and right after every seek, restore and branch. |
+| 2 | `incremental_metrics_equal_full_scan` (Rust) | Through River City ×3 (closures, a reopen, seeks back and forth, a branch), three_bridges with all bridges closed (stranded vehicles, unreachable removals; also through a timeline with seeks and a branch), and the city-001 gridlock ring (every tick through the deadlock, reroutes, removals and drain; `removed_gridlock ≥ 1`), `metrics()` equals `metrics_full_scan()` field by field, bit for bit (`f64::to_bits` for floats), at least every 60 ticks and right after every seek, restore and branch. |
 | 3 | `metrics_is_cheap` (Rust, release only) | On River City ×5 after 1 sim h, over 500 calls each, `metrics()` mean ≤ 0.25 × `metrics_full_scan()` mean in the same process. |
 | 4 | `schedules_visit_only_due_slots` (Rust) | One tick on River City ×5 after 1 sim h, with every slot's `in_periodic`/retry state preserved: the periodic step visits ≤ 1.2 × (live slots / 240) + 10 slots, and the retry step visits only due slots. Counted with doc-hidden `World::last_step_visits()` (periodic, retries). The golden hashes (test 1) prove the order is unchanged. |
 | 5 | `branch_shares_snapshots` (Rust) | After `branch(at)` on a 3 sim h River City timeline, `shared_snapshots` equals the number of A's retained snapshots below `at`, or B's kept count if B's budget is smaller. B's `snapshot_bytes` ≤ B's budget. A and B remain independent: stepping B does not change A's hash, and a seek in A does not change B's. |
 | 6 | `every_message_gets_a_frame` (vitest, real wasm host, fake clock) | Paused: after a `command`, a `seek`, an `inspectLink`, a `viewScenario`, a `setSpeed`, an `inspectVehicle` and a `setRunning`, each is followed by a frame within one iteration. Running: at least 10 frames in 20 iterations. (No paused heartbeat bound: G4/G4b pin the paused rate.) |
 | 7 | `compare_pools_are_per_side` (vitest, real wasm host) | In compare, running at 1×: every posted frame's buffer is transferred back as in a real worker (`structuredClone` with transfer, a new object) and returned with its `scenario`. When a side's next frame has the same `count`, its `vehicles` is the very object returned for that side, although the other side posted in between (at least 10 such checks per side). Frames stay exactly `count × 16` bytes. |
 | 8 | `trap_offers_restart` (e2e) | Trigger `debugTrap` through the test hook (`__livingcity.debugTrap()`). An alert "The simulation stopped" with a "Restart simulation" button appears. It has no Dismiss. Other actions (seek, compare) do not clear it. "Restart simulation" brings a living city back: the tick advances past the warm-up and the alert is gone. No page error is thrown. |
+| 7b | `return_buffer_carries_the_side_end_to_end` (vitest, static) | The protocol declares `returnBuffer`'s `scenario?: 0 \| 1`; `client.returnBuffer(buffer, scenario)` sends it; every `.returnBuffer(…)` call in `App.tsx` passes two arguments (the frame's side). |
 | 9 | `reinit_resets_the_clock` (vitest) | (a) A running `SimClock` with backlog, credit, an ms-per-tick estimate and a full achieved window, after `reset()` (no `setRunning(false)` before it), behaves exactly like a new `SimClock`: the same `plan()` and `status()` sequence. (b) A host re-initialized while running posts the same ticks and clock fields as a fresh host started at the same moment, for 60 iterations. |
 | 10 | `performance_doc_cites_the_probe` (vitest, static + probe output) | `docs/performance.md` has a "Profiling and optimization" section. It names the cause (full slot scans, active vs on-network). Every number in it appears in `web/perf-results/frame-cost.json`, which `frame_cost_probe` writes. That JSON has before/after `metrics` and `step` means at ×1, ×3 and ×5, and a `baseline` object. The "before" metrics values come from `metrics_full_scan()`; the "before" step means were measured at commit `4e5d5c1` (also recorded as `baseline`). At ×5, after ≤ 0.8 × before for `step` and ≤ 0.25 × before for `metrics`. |
 
@@ -124,11 +125,11 @@ The robustness items f1, f2 and g7 are in scope too: restart after a wasm trap, 
 `pnpm -C web build:wasm && pnpm -C web dev` (any port except 4243).
 ### Steps
 1. With `?demand=5`, open diagnostics. The tick ms and frame cost are lower than before (compare with `docs/performance.md`).
-2. Pause and watch the browser's CPU: it is near idle. Hover and pan still respond.
+2. Pause: hover, pan and zoom still respond; the frames keep coming at their frozen rate (e2 is a recorded deviation).
 3. Compare A and B for a minute: memory in the browser's task manager is steady.
 4. In the console, run `window.__livingcity.debugTrap()`. The banner appears; "Restart simulation" brings the city back.
 ### Pass criteria
 - [ ] The measured numbers improved and are documented.
-- [ ] Paused is near idle.
+- [ ] Compare reuses each side's buffers (no growth in the browser's memory).
 - [ ] Restart works.
 - [ ] All suites are green and the golden hashes hold.

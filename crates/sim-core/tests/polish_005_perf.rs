@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use sim_core::cities::{river_city_scaled, three_bridges};
 use sim_core::frame::metrics_to_extended_array;
-use sim_core::{Command, CommandKind, Timeline, World};
+use sim_core::{Command, CommandKind, LinkId, NetworkBuilder, Timeline, World};
 
 const GIB: usize = 1024 * 1024 * 1024;
 
@@ -18,6 +18,39 @@ fn same_metrics(w: &World, label: &str) {
     for (i, (x, y)) in a.iter().zip(&b).enumerate() {
         assert_eq!(x.to_bits(), y.to_bits(), "{label}: metric {i} ({x} vs {y}) at tick {}", w.tick());
     }
+}
+
+/// The city-001 ring (same construction as `city_001_relief.rs`): it deadlocks at tick ≈ 346; gridlock
+/// relief then reroutes and finally removes vehicles.
+fn ring() -> World {
+    let mut b = NetworkBuilder::new();
+    let side = 75.0;
+    let n = [b.node(0.0, 0.0), b.node(side, 0.0), b.node(side, side), b.node(0.0, side)];
+    let ring: Vec<LinkId> = (0..4).map(|i| b.link(n[i], n[(i + 1) % 4], 10.0, 1)).collect();
+    let zpos = [(-150.0, 0.0), (side + 150.0, 0.0), (side + 150.0, side), (-150.0, side)];
+    let conn: Vec<LinkId> = (0..4)
+        .map(|i| {
+            let z = b.zone(zpos[i].0, zpos[i].1);
+            b.link(z, n[i], 10.0, 1)
+        })
+        .collect();
+    let spos = [(0.0, -150.0), (side, -150.0), (side, side + 150.0), (0.0, side + 150.0)];
+    let exit: Vec<LinkId> = (0..4)
+        .map(|i| {
+            let s = b.node(spos[i].0, spos[i].1);
+            b.link(n[i], s, 10.0, 1)
+        })
+        .collect();
+    let mut w = World::new(b.build().unwrap());
+    for _ in 0..40 {
+        for i in 0..4 {
+            let mut r = vec![conn[i]];
+            r.extend((0..4).map(|j| ring[(i + j) % 4]));
+            r.push(exit[i]);
+            w.spawn_with_route(r).unwrap();
+        }
+    }
+    w
 }
 
 fn river_timeline(scale: f64) -> (Timeline, Vec<sim_core::LinkId>) {
@@ -128,6 +161,14 @@ fn incremental_metrics_equal_full_scan() {
         same_metrics(&w, &format!("three_bridges closed step {k}"));
     }
     assert!(saw_stranded && saw_unreachable, "the closed case is exercised");
+    // the gridlock ring: every tick through the deadlock, the reroutes, the removals and the drain
+    let mut w = ring();
+    same_metrics(&w, "ring at spawn");
+    for _ in 0..3000 {
+        w.step();
+        same_metrics(&w, "ring");
+    }
+    assert!(w.metrics_full_scan().removed_gridlock >= 1, "gridlock removals happened");
     // … and through a timeline: seeks and a branch while stranded / no-route vehicles exist
     let c = three_bridges(17, 23);
     let mut tl = Timeline::new(World::from_scenario(c.scenario).unwrap(), GIB);

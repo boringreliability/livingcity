@@ -24,13 +24,16 @@ test('trap_offers_restart', async ({ page }) => {
   await page.keyboard.press('Space');
   await page.waitForTimeout(500);
   await expect(alert).toBeVisible();
+  const deadTick = await tick(page);
   // restart: a living city again
   const before = workers;
   await restart.click();
   await expect(alert).toHaveCount(0, { timeout: 60_000 });
   expect(workers, 'a new worker was created').toBeGreaterThan(before);
   await expect.poll(() => tick(page), { timeout: 60_000 }).toBeGreaterThan(1800);
+  // a new world: it started again from the warm-up (not the halted one's tick)
   const t0 = await tick(page);
+  expect(t0, 'the restarted city is a new one').toBeLessThan(deadTick + 1800);
   await expect.poll(() => tick(page), { timeout: 20_000 }).toBeGreaterThan(t0);
   expect(errors).toEqual([]);
 });

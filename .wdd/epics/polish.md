@@ -119,7 +119,7 @@ Profile first, then optimize what the measurements show. Every before/after is m
 
 **Required outcomes**
 - **`metrics()`:** at scale 5 its per-frame cost drops to ≤ 25 % of the measured 0.348 ms mean. This comes from incremental counters or one combined pass. The values stay bit-identical to the old `metrics()`; a test runs both side by side through a run with closures, gridlock and seeks.
-- **Paused frames:** while paused (and not seeking or inspecting), the host does not encode or post frames continuously. After a settling frame it posts only when something changed (e2). The UI stays responsive, and hover and pan still render, because rendering does not need new frames.
+- **Paused frames:** while paused (and not seeking or inspecting), the host does not encode or post frames continuously. After a settling frame it posts only when something changed (e2). The UI stays responsive, and hover and pan still render, because rendering does not need new frames. **Deviation (polish-005):** the frozen host tests `review2` G4 and `review3` G4b pin paused frames at the iteration rate, so this is not done; recorded for the epic gate.
 - **Frame buffers:** they are reused in the steady state, single view and compare, with no per-frame allocation once warm (e3).
 - **Branch:** it clones only the snapshots it keeps (e4). Branch cost at 48 MiB is re-measured.
 - **The `step` superlinearity:** it is profiled and its cause is documented. It is fixed if the fix is local and preserves determinism; the `state_hash` of a fixed seed and command log must be unchanged across the change.
