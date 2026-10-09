@@ -19,7 +19,7 @@ This ward implements contract **P2** of epic `polish`. Goals:
 - While comparing, no panel covers a road.
 - District labels are never half-cut at the edge of a split-view half.
 
-Backlog ids (`.wdd/memory/polish-backlog.md`): b1, b2, b3, b6, b7, a5 (narrow widths), g4.
+Backlog ids (`.wdd/memory/polish-backlog.md`): b1, b2, b3, b7, a5 (narrow widths), g4. b6 (comparison panel width) is cosmetic and left to the integration ward's accounting.
 
 ## Inputs
 **Code**
@@ -68,7 +68,7 @@ No width had horizontal scroll.
 - The legend is visible and expanded at the default size: `look.spec.ts` `legend_explains_symbols`, at the default 1280×800 viewport.
 
 **Definitions**
-- *"Untouched since the last fit"*: no pointer drag, wheel, keyboard pan or zoom, and no Follow centring since the last `fitInsets`. Selecting a road or a vehicle (without Follow) does not count as touching the camera.
+- *"Untouched since the last fit"*: no pointer drag, no wheel zoom, and no Follow centring since the last `fitInsets`. The app has no keyboard pan. Selecting a road or a vehicle (without Follow) does not count as touching the camera.
 - *"Covers a road"*: a sampled point on a link, at t ∈ {0.05, 0.15, …, 0.95}, on its own canvas lies inside the bounding box of a visible panel or side label.
 - *"Panels"*: every visible `section.panel` and `.side-label`.
 - *"Visible label"*: computed `visibility` is not `hidden`, `display` is not `none`, `opacity` is above 0, and the rect has a non-zero area.
@@ -76,12 +76,12 @@ No width had horizontal scroll.
 ## Tests
 | # | Test Name | Verifies |
 |---|-----------|----------|
-| 1 | `panels_never_overlap` (e2e) | The five viewports × six states listed under Outputs have no pairwise overlap among visible panels and side labels, and `scrollWidth ≤ innerWidth`. The failure message names the size, the state and the pair. |
-| 2 | `compare_panels_cover_no_road` (e2e) | At 1280×800 and 1024×768 in compare, test three cases: no selection, a road selected on A, and a road selected on B (picked on B's canvas). In each case no sampled point of any link on A's canvas (`linkScreenPoint`) or B's canvas (`linkScreenPointB`) lies inside a visible panel or side label. |
-| 3 | `resize_refits_an_untouched_view` (e2e) | Single view and compare, never moved by the user. Resize 1280×800 → 1024×768 → 900×700 → 1280×800. After each step, every link's midpoint lies inside its own canvas rectangle, and the network's screen bounding box spans at least 60 % of the canvas width or height (it was refitted, not just still visible). |
+| 1 | `panels_never_overlap` (e2e) | The five viewports × six states listed under Outputs have no pairwise overlap among visible panels and side labels, and `scrollWidth ≤ innerWidth`. Each state's expected regions are visible (single: controls, timeline, metrics, legend; plus "Selected road", "Diagnostics", "Scenarios", "Comparison" and both side labels where they apply). Every visible panel lies inside the viewport. The legend toggle is visible. Panels are measured after their size has settled. |
+| 2 | `compare_panels_cover_no_road` (e2e) | At 1280×800 and 1024×768 in compare, test three cases: no selection, a road selected on A, and a road selected on B (picked on B's canvas). In each case no sampled point of any link on A's canvas (`linkScreenPoint`) or B's canvas (`linkScreenPointB`) lies inside a visible panel or side label. Both halves must actually be sampled. |
+| 3 | `resize_refits_an_untouched_view` (e2e) | Single view and compare, never moved by the user, with a road selected (a selection is not a camera move). Resize 1280×800 → 1024×768 → 900×700 → 1280×800. After each step, the camera equals a fresh fit at that size (centre within 1 m, zoom within 0.1 %). Single view is compared against a fresh page load at that size, and compare against leaving and re-entering compare. |
 | 4 | `resize_keeps_a_user_camera` (e2e) | After a wheel zoom and a drag pan in single view, resize 1280×800 → 1024×768. `snapshot().camera` keeps `cx` and `cy` within 1 m and `zoom` within 1e-6. The same holds in compare after a pan there. |
-| 5 | `labels_never_half_cut` (e2e) | In single view at 768×800 and in compare at 1280×800 and 1024×768, every visible label in `.labels` (A) and `.labels-b` (B) lies entirely inside its layer's rectangle. At least 5 labels are visible per half in compare at 1280×800, so labels are hidden only where they would be cut, not all of them. |
-| 6 | `compare_frame_and_supported_widths` (e2e + static) | While comparing, the scenario panel has no `viewing-b` class and no dashed border style. After leaving compare it reflects the viewed scenario again (`viewing-b` when viewing B). README states a minimum supported width of 768 px. |
+| 5 | `labels_never_half_cut` (e2e) | In single view at 768×800, after resizing to 1280×800, in compare at 1280×800, after resizing compare to 1024×768, and after a pan in compare. Every visible label in `.labels` (A) and `.labels-b` (B) lies entirely inside its layer's rectangle, and every hidden label (`visibility: hidden` keeps its box) would have been cut: a label that fits is never hidden. |
+| 6 | `compare_frame_and_supported_widths` (e2e + static) | B's pattern lives on the heading (`.scenario-label`: dashed border and striped background). Viewing B, it is shown. While comparing, the panel has no `viewing-b` class and the heading is neither dashed nor striped. After leaving compare it shows B's pattern again. README states a minimum supported width of 768 px. |
 
 ## Must NOT
 - Change `COMPARE_FIT_INSETS` or `FIT_INSETS`, or edit frozen tests.

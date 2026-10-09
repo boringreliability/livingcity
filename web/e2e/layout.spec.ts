@@ -71,8 +71,41 @@ async function selectRoad(page: Page, side: 'A' | 'B'): Promise<number> {
   await page.mouse.click(found!.at[0], found!.at[1]);
   await expect.poll(async () => (await snap(page)).selectedLink).toBe(found!.link);
   await page.mouse.move(2, 2);
-  await sleep(200);
+  await settled(page);
   return found!.link;
+}
+
+/** Wait until every panel's size is stable (e.g. the road panel grows when its details arrive). */
+async function settled(page: Page) {
+  const sizes = () =>
+    page.evaluate(() => [...document.querySelectorAll('section.panel')].map((e) => `${Math.round(e.getBoundingClientRect().width)}x${Math.round(e.getBoundingClientRect().height)}`).join(','));
+  let prev = '';
+  for (let i = 0; i < 20; i++) {
+    await sleep(250);
+    const now = await sizes();
+    if (now === prev) return;
+    prev = now;
+  }
+}
+
+/** The named regions are visible, and every visible panel and side label lies inside the viewport. */
+async function expectPanels(page: Page, names: string[], label: string) {
+  for (const n of names) await expect(page.getByRole('region', { name: n }), `${label}: ${n} visible`).toBeVisible();
+  const out = await page.evaluate(() => {
+    const vis = (e: Element) => {
+      const st = getComputedStyle(e);
+      const r = e.getBoundingClientRect();
+      return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0 && r.width > 0 && r.height > 0;
+    };
+    return [...document.querySelectorAll('section.panel, .side-label')]
+      .filter(vis)
+      .filter((e) => {
+        const r = e.getBoundingClientRect();
+        return r.left < -0.5 || r.top < -0.5 || r.right > window.innerWidth + 0.5 || r.bottom > window.innerHeight + 0.5;
+      })
+      .map((e) => e.getAttribute('aria-label') ?? e.textContent?.trim() ?? '');
+  });
+  expect(out, `${label}: panels outside the viewport`).toEqual([]);
 }
 
 /** Pairwise overlaps among visible panels and side labels, plus horizontal scroll. */
@@ -112,51 +145,28 @@ async function coveredRoads(page: Page): Promise<string[]> {
       .map((e) => ({ name: e.getAttribute('aria-label') ?? e.textContent?.trim() ?? '', b: e.getBoundingClientRect() }));
     const n = h.snapshot().linkCounts.length;
     const out = new Set<string>();
+    const samples = { A: 0, B: 0 };
     for (let l = 0; l < n; l++)
       for (let k = 0; k < 10; k++) {
         const t = 0.05 + k * 0.1;
         for (const [side, p] of [['A', h.linkScreenPoint(l, t)], ['B', h.linkScreenPointB(l, t)]] as const) {
           if (!p) continue;
+          samples[side]++;
           for (const x of boxes) if (p[0] >= x.b.left && p[0] <= x.b.right && p[1] >= x.b.top && p[1] <= x.b.bottom) out.add(`${side} link ${l} under ${x.name}`);
         }
       }
+    // both halves were actually sampled
+    if (samples.A < n * 5) out.add(`too few A samples: ${samples.A}`);
+    if (samples.B < n * 5) out.add(`too few B samples: ${samples.B}`);
     return [...out].slice(0, 12);
   });
 }
 
-/** Every link midpoint inside its own canvas, and the network's screen box spans ≥ 60 % of the canvas width or height. */
-async function fitted(page: Page, label: string) {
-  const r = await page.evaluate(() => {
-    const h = window.__livingcity!;
-    const n = h.snapshot().linkCounts.length;
-    const res: { side: string; outside: number; spanW: number; spanH: number }[] = [];
-    for (const [side, sel, get] of [
-      ['A', 'canvas.city:not(.city-b)', (l: number, t: number) => h.linkScreenPoint(l, t)],
-      ['B', 'canvas.city-b', (l: number, t: number) => h.linkScreenPointB(l, t)],
-    ] as const) {
-      const c = document.querySelector(sel);
-      if (!c) continue;
-      const b = c.getBoundingClientRect();
-      let outside = 0;
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (let l = 0; l < n; l++) {
-        const m = get(l, 0.5);
-        if (!m || m[0] < b.left || m[0] > b.right || m[1] < b.top || m[1] > b.bottom) outside++;
-        for (const t of [0, 1]) {
-          const p = get(l, t);
-          if (!p) continue;
-          x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
-        }
-      }
-      res.push({ side, outside, spanW: (x1 - x0) / b.width, spanH: (y1 - y0) / b.height });
-    }
-    return res;
-  });
-  expect(r.length, `${label}: canvases`).toBeGreaterThan(0);
-  for (const s of r) {
-    expect(s.outside, `${label}: ${s.side} link midpoints outside the canvas`).toBe(0);
-    expect(Math.max(s.spanW, s.spanH), `${label}: ${s.side} network spans ≥ 60 % (refit)`).toBeGreaterThanOrEqual(0.6);
-  }
+/** Camera equality with a fresh fit (centre within 1 m, zoom within 0.1 %). */
+function sameCamera(got: { cx: number; cy: number; zoom: number }, fresh: { cx: number; cy: number; zoom: number }, label: string) {
+  expect(Math.abs(got.cx - fresh.cx), `${label}: cx = fresh fit`).toBeLessThanOrEqual(1);
+  expect(Math.abs(got.cy - fresh.cy), `${label}: cy = fresh fit`).toBeLessThanOrEqual(1);
+  expect(Math.abs(got.zoom / fresh.zoom - 1), `${label}: zoom = fresh fit`).toBeLessThanOrEqual(1e-3);
 }
 
 async function resizeTo(page: Page, size: { width: number; height: number }) {
@@ -171,24 +181,34 @@ test('panels_never_overlap', async ({ page }) => {
     await page.setViewportSize(size);
     await ready(page);
     const at = `${size.width}×${size.height}`;
-    const check = async (state: string) => expect(await layoutProblems(page), `${at} ${state}`).toEqual([]);
-    await check('single');
+    const base = ['Simulation controls', 'Replay timeline'];
+    const single = [...base, 'Simulation metrics', 'Legend'];
+    const check = async (state: string, names: string[]) => {
+      await settled(page);
+      expect(await layoutProblems(page), `${at} ${state}`).toEqual([]);
+      await expectPanels(page, names, `${at} ${state}`);
+    };
+    await check('single', single);
+    // the legend stays reachable (its toggle on screen), collapsed or not
+    const legendToggle = page.getByRole('region', { name: 'Legend' }).getByRole('button');
+    await expect(legendToggle).toBeVisible();
     await pause(page);
     await selectRoad(page, 'A');
-    await check('road selected');
+    await check('road selected', [...single, 'Selected road']);
     await page.keyboard.press('Escape');
     await page.keyboard.press('d');
-    await expect(page.getByRole('region', { name: 'Diagnostics' })).toBeVisible();
-    await check('diagnostics open');
+    await check('diagnostics open', [...single, 'Diagnostics']);
     await page.keyboard.press('d');
     await branch(page);
     await selectRoad(page, 'A');
-    await check('branch + road selected');
+    await check('branch + road selected', [...single, 'Selected road', 'Scenarios']);
     await page.keyboard.press('Escape');
     await enterCompare(page);
-    await check('compare');
+    await expect(page.getByRole('region', { name: 'Comparison' })).toBeVisible();
+    await check('compare', [...base, 'Scenarios', 'Comparison']);
+    await expect(page.locator('.side-label')).toHaveCount(2);
     await selectRoad(page, 'B');
-    await check('compare + road selected');
+    await check('compare + road selected', [...base, 'Scenarios', 'Comparison', 'Selected road']);
   }
 });
 
@@ -212,23 +232,40 @@ test('compare_panels_cover_no_road', async ({ page }) => {
 
 // 3
 test('resize_refits_an_untouched_view', async ({ page }) => {
-  test.setTimeout(240_000);
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await ready(page);
+  test.setTimeout(400_000);
   const steps = [
     { width: 1024, height: 768 },
     { width: 900, height: 700 },
     { width: 1280, height: 800 },
   ];
+  // single view: a resized, untouched view equals a fresh load at that size
+  const fresh: Record<string, { cx: number; cy: number; zoom: number }> = {};
+  for (const s of steps) {
+    await page.setViewportSize(s);
+    await ready(page);
+    fresh[`${s.width}x${s.height}`] = (await snap(page)).camera;
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await ready(page);
+  await pause(page);
+  await selectRoad(page, 'A'); // selecting is not a camera move
   for (const s of steps) {
     await resizeTo(page, s);
-    await fitted(page, `single ${s.width}×${s.height}`);
+    sameCamera((await snap(page)).camera, fresh[`${s.width}x${s.height}`]!, `single ${s.width}×${s.height}`);
   }
+  // compare: a resized, untouched compare view equals a fresh compare entry at that size
+  await page.keyboard.press('Escape');
   await branch(page);
   await enterCompare(page);
+  await selectRoad(page, 'A');
   for (const s of steps) {
     await resizeTo(page, s);
-    await fitted(page, `compare ${s.width}×${s.height}`);
+    const got = (await snap(page)).camera;
+    // a fresh fit at this size: leave and re-enter compare (entering compare always fits)
+    await page.getByRole('button', { name: 'Compare side by side' }).click();
+    await expect.poll(async () => (await snap(page)).compare).toBe(false);
+    await enterCompare(page);
+    sameCamera(got, (await snap(page)).camera, `compare ${s.width}×${s.height}`);
   }
 });
 
@@ -281,43 +318,52 @@ test('resize_keeps_a_user_camera', async ({ page }) => {
 // 5
 test('labels_never_half_cut', async ({ page }) => {
   test.setTimeout(300_000);
-  const cut = async (label: string, minVisiblePerLayer: number) => {
+  /** Visible labels lie fully inside their layer; hidden ones (visibility: hidden keeps their box) would have been cut. */
+  const check = async (label: string) => {
+    await sleep(400);
     const r = await page.evaluate(() => {
-      const vis = (e: Element) => {
-        const st = getComputedStyle(e);
-        const r = e.getBoundingClientRect();
-        return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0 && r.width > 0 && r.height > 0;
-      };
       return [...document.querySelectorAll('.labels')].map((layer) => {
         const b = layer.getBoundingClientRect();
-        const shown = [...layer.querySelectorAll('.zone')].filter(vis);
-        const cutOff = shown
-          .filter((z) => {
-            const r = z.getBoundingClientRect();
-            return r.left < b.left - 0.5 || r.right > b.right + 0.5 || r.top < b.top - 0.5 || r.bottom > b.bottom + 0.5;
-          })
-          .map((z) => z.textContent?.trim() ?? '');
-        return { layer: layer.className, shown: shown.length, cutOff };
+        const inside = (z: Element) => {
+          const r = z.getBoundingClientRect();
+          return r.left >= b.left - 0.5 && r.right <= b.right + 0.5 && r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5;
+        };
+        const zones = [...layer.querySelectorAll('.zone')].filter((z) => getComputedStyle(z).display !== 'none' && z.getBoundingClientRect().width > 0);
+        const shown = (z: Element) => getComputedStyle(z).visibility !== 'hidden' && Number(getComputedStyle(z).opacity) > 0;
+        return {
+          layer: layer.className,
+          total: zones.length,
+          cut: zones.filter((z) => shown(z) && !inside(z)).map((z) => z.textContent?.trim() ?? ''),
+          hiddenButFits: zones.filter((z) => !shown(z) && inside(z)).map((z) => z.textContent?.trim() ?? ''),
+        };
       });
     });
+    expect(r.length, `${label}: label layers`).toBeGreaterThan(0);
     for (const l of r) {
-      expect(l.cutOff, `${label}: ${l.layer} labels cut at the edge`).toEqual([]);
-      expect(l.shown, `${label}: ${l.layer} visible labels`).toBeGreaterThanOrEqual(minVisiblePerLayer);
+      expect(l.total, `${label}: ${l.layer} has its labels`).toBeGreaterThan(10);
+      expect(l.cut, `${label}: ${l.layer} labels cut at the edge`).toEqual([]);
+      expect(l.hiddenButFits, `${label}: ${l.layer} labels hidden although they fit`).toEqual([]);
     }
   };
   await page.setViewportSize({ width: 768, height: 800 });
   await ready(page);
-  await cut('single 768×800', 1);
-  for (const [size, min] of [
-    [{ width: 1280, height: 800 }, 5],
-    [{ width: 1024, height: 768 }, 1],
-  ] as const) {
-    await page.setViewportSize(size);
-    await ready(page);
-    await branch(page);
-    await enterCompare(page);
-    await cut(`compare ${size.width}×${size.height}`, min);
-  }
+  await check('single 768×800');
+  await resizeTo(page, { width: 1280, height: 800 });
+  await check('single resized to 1280×800');
+  await pause(page);
+  await branch(page);
+  await enterCompare(page);
+  await check('compare 1280×800');
+  await resizeTo(page, { width: 1024, height: 768 });
+  await check('compare resized to 1024×768');
+  // after a pan, labels move across the edges: still never cut, never hidden needlessly
+  const box = (await page.locator('canvas.city').first().boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 10, { steps: 8 });
+  await page.mouse.up();
+  await page.mouse.move(2, 2);
+  await check('compare after a pan');
 });
 
 // 6
@@ -325,13 +371,23 @@ test('compare_frame_and_supported_widths', async ({ page }) => {
   await ready(page);
   await branch(page);
   const panel = page.getByRole('region', { name: 'Scenarios' });
+  const frame = () =>
+    panel.locator('.scenario-label').evaluate((el) => {
+      const st = getComputedStyle(el);
+      return { dashed: st.borderTopStyle === 'dashed', striped: st.backgroundImage !== 'none' };
+    });
+  // viewing B: B's pattern (dashed and striped), on the heading
   await expect(panel).toHaveClass(/viewing-b/);
+  expect(await frame()).toEqual({ dashed: true, striped: true });
+  // comparing: neutral
   await enterCompare(page);
   await expect(panel).not.toHaveClass(/viewing-b/);
-  expect(await panel.evaluate((el) => getComputedStyle(el).borderTopStyle)).not.toBe('dashed');
+  expect(await frame()).toEqual({ dashed: false, striped: false });
+  // back to viewing B: B's pattern again
   await page.getByRole('button', { name: 'Compare side by side' }).click();
   await expect.poll(async () => (await snap(page)).compare).toBe(false);
   await expect(panel).toHaveClass(/viewing-b/);
+  expect(await frame()).toEqual({ dashed: true, striped: true });
   // README: the supported window widths
   const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
   expect(readme).toMatch(/\b768\s?px\b/);
