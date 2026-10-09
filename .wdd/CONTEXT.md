@@ -1,39 +1,19 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-09: timeline-004 complete (Red approved by user after r3, Gold 3). Next: timeline-005 (integration ward, then the epic gate).
+2026-10-09: timeline-005 complete (Red r2, Gold r2). **Epic timeline built; waiting at the human epic gate.**
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
-- **Epic core: complete, human-approved 2026-10-07.**
-  - Rust `crates/sim-core`: network, world (queues, discharge, demand, routing, closures, commands, `state_hash`), `cities::three_bridges`, `frame`.
-  - `crates/sim-wasm`: thin `Sim` adapter.
-  - `web/`: worker host + `SimClock`, WebGL2 renderer, React UI, Playwright e2e.
-  - Tests: Rust 85, Vitest 45, Playwright 17. Review logs are in `.wdd/reviews/`.
-- **Epic city: complete, human-approved 2026-10-08.** Specs: `.wdd/epics/city.md` (contract additions C1–C5) and `.wdd/wards/city/ward-00{1..5}.md`.
-  - Wards 001–005 (details: `.wdd/wards/city/`, snapshot `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`):
-    - per-link sat flow and gridlock relief;
-    - River City (3 bridges, 22 zones, calibrated);
-    - inspect and follow;
-    - the miniature look (symmetric `FIT_INSETS`);
-    - a 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, and the perf report in `docs/performance.md`.
-    - Core `review1` "fix G4" was superseded by city.e2e test 15 (user decision).
-  - Tests now: Rust 134 (release), Vitest 80, Playwright 46 + 1 skipped (+3 @perf).
-- **Epic timeline: active.** Spec `.wdd/epics/timeline.md` (T1–T5, measured basis).
+- **Epic core: complete, approved 2026-10-07.** sim-core (network, world, routing, demand, closures, commands, `state_hash`, frame), thin `sim-wasm`, worker host + `SimClock`, WebGL2 renderer, React UI.
+- **Epic city: complete, approved 2026-10-08** (`.wdd/epics/city.md`, C1–C5): per-link sat flow + gridlock relief, River City (3 bridges, 22 zones, calibrated), inspect/follow, miniature look, 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, `docs/performance.md`. Core G4 superseded by city.e2e test 15 (user). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`.
+- **Epic timeline: built, awaiting the epic gate.** Spec `.wdd/epics/timeline.md` (T1–T5). Docs: `README.md`, `docs/{architecture,traffic-model,demo,performance}.md`.
   - **timeline-001 complete**: `Timeline` with snapshots (353 KB every 120 ticks, budget eviction); seek = restore + replay; edits below the head cut the future; `Arc` network/demand.
   - **timeline-002 complete**: `Timeline::branch` and `World::window_metrics` (cohort; incomplete). Gold fuzz found no divergence.
   - **timeline-003 complete**: wasm `Sim` wraps a `Timeline` (seek/branch/info/window_metrics/forget_frames/free); host scenarios A/B; `TimelineBar`, `ScenarioPanel` and an inline replace confirmation; A is never edited in its past (the UI branches instead).
-  - **timeline-004 complete**:
-    - host `compare` runs lockstep (strict A/B frame pairs, shared window from the branch tick, comparison messages ≤ 2/s);
-    - split view: two canvases with one camera (B's context exists only while comparing), `ComparisonPanel` (Δ by sign plus ▲/▼, incomplete always shown);
-    - interventions, the view switch and vehicle picks are off while comparing.
-    - Lockstep costs ×1.7–1.9 per tick; render unchanged.
-    - Known issues:
-      - no refit on resize;
-      - the road panel can cover B's top-right corner (the inset is pinned by a frozen test);
-      - B's frame buffer is never reused;
-      - "Viewing B" stays in the panel while comparing;
-      - district labels are clipped at the halves' edges.
+  - **timeline-004 complete**: lockstep compare (strict A/B pairs, shared window from the branch tick), split view with one camera, `ComparisonPanel` (incomplete always shown); interventions/view switch/vehicle picks off while comparing.
+  - **timeline-005 complete**: `e2e/acceptance.spec.ts` (brief flow, pointer + keyboard-only), `tests/integration.test.ts` (protocol wiring, import-based orphan scan, docs/README/deviation checks, § Timeline numbers ⊂ `timeline.json`), `e2e/perf_timeline.spec.ts`. Pointer-clicked buttons blur (Space/B stay shortcuts). Tests: Rust 173 (release), Vitest 109, e2e 75 + 1 skipped (~13 min).
+  - Timeline known issues: no refit on resize; road panel can cover B's top-right corner; B's frame buffer not reused; main-bridge button shows A's state while comparing; Esc does not close "Replace the branch?"; Space/B ignored after a pointer pick in the Speed select; district labels clipped at the halves' edges.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -72,6 +52,7 @@
 |--------|-------|------|
 | Browser app (75 Hz) | ~13 ms rAF interval, ~7 % main-thread busy; JS 244 kB (77 kB gzip); wasm 119 kB (47 kB) | core-005 |
 | Browser, River City (docs/performance.md) | tick mean 0.06 ms (~1.7k) / 0.25 ms (~5.7k); render 120 FPS Metal, 20 FPS SwiftShader | city-005 |
+| Timeline (SwiftShader, timeline.json) | seek 86.9 ms median (frame-bound); branch 38.3 ms; A 44.3 + B 37.0 MiB; lockstep ×1.84 per tick | timeline-005 |
 | Step, 20×20 grid, 25–32k vehicles (release) | 0.195 ms median, 0.36 ms p95 | core-003 |
 
 ## Known Limitations
@@ -90,4 +71,5 @@
 - Browser `performance.now()` is coarse (0.1 ms). After a wasm trap the host halts, and recovery needs a new worker.
 
 ## What Comes Next
-- Epic `timeline` (snapshots, replay, branch, compare; Restore must invalidate the RouterCache), then `polish` (the MINORs above, a11y, onboarding).
+- Human epic gate for `timeline` (present demo, commands, review log, deviations, known issues; wait for "godkendt").
+- Then epic `polish`: the MINORs above (city + timeline), a11y, onboarding.

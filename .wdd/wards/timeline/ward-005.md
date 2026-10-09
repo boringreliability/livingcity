@@ -3,12 +3,12 @@ ward: 5
 revision: null
 name: "The full brief workflow in the browser, measured"
 epic: "timeline"
-status: "gold"
+status: "complete"
 dependencies: ["timeline-004"]
 layer: "fullstack"
 estimated_tests: 9
 created: "2026-10-09"
-completed: null
+completed: "2026-10-09"
 ---
 # Ward timeline-005: The full brief workflow in the browser, measured (integration ward)
 

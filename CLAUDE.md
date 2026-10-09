@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Living City** is an interactive city traffic simulation: Rust compiled to WebAssembly runs the simulation in a Web Worker, and a TypeScript/React UI sits on top of a GPU canvas renderer (WebGL2 or WebGPU). The demo it is built around: *close a bridge → watch traffic adapt → rewind → branch → compare the two scenarios side by side.*
 
 - `livingcity.md` is the full product brief. It is the authoritative spec for scope, simulation model, replay, visuals, metrics, performance targets, verification and deliverables, so read it before planning work.
-- `.wdd/` holds the Ward-Driven Development state. Its `CONTEXT.md` is the source of truth for what has been built (as of 2026-10-08: epic `core` approved, epic `city` built and awaiting its epic gate; next is `timeline`).
+- `.wdd/` holds the Ward-Driven Development state. Its `CONTEXT.md` is the source of truth for what has been built (as of 2026-10-09: epics `core` and `city` approved; epic `timeline` built and awaiting its epic gate; next is `polish`). User-facing docs: `README.md` and `docs/`.
 
 ### Layout
 - `crates/sim-core`: the authoritative simulation in pure Rust.

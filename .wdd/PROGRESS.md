@@ -1,7 +1,7 @@
 # Progress — livingcity
 
 ## Summary
-14 of 14 Wards complete · 305 estimated tests · 0 blocked
+15 of 15 Wards complete · 314 estimated tests · 0 blocked
 
 ## Ward Status
 | Ward | Name | Tests | Status | Date |
@@ -20,6 +20,7 @@
 | timeline-002 | Branch and window metrics in sim-core | 19 | ✅ Complete | 2026-10-08 |
 | timeline-003 | Timeline in the worker and UI | 20 | ✅ Complete | 2026-10-08 |
 | timeline-004 | Two scenarios side by side | 18 | ✅ Complete | 2026-10-09 |
+| timeline-005 | The full brief workflow in the browser, measured | 9 | ✅ Complete | 2026-10-09 |
 
 ## Test Summary
-- Estimated total: 305
+- Estimated total: 314

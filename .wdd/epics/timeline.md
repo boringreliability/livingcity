@@ -22,7 +22,7 @@ Out of scope (brief): more than two scenarios, a general branching editor, persi
 | timeline-002 | Branch and window metrics in sim-core (independent scenario B, identical demand, incomplete trips) | complete |
 | timeline-003 | Timeline in the worker and UI (seek / scrub, replay window and memory budget shown, branch on a past intervention) | complete |
 | timeline-004 | Two scenarios side by side (lockstep A/B, split view, linked cameras, comparison metrics) | complete |
-| timeline-005 | The full brief workflow in the browser, measured (integration ward) | planned |
+| timeline-005 | The full brief workflow in the browser, measured (integration ward) | complete |
 
 ## Measured basis (2026-10-08)
 Measured natively in release on River City at seed 2026/7, with a scratch probe that leaves the repo untouched. All numbers are measured.
