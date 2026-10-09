@@ -11,6 +11,19 @@ pub const FLAG_QUEUED: u32 = 1 << 0;
 pub const FLAG_ON_CLOSED_LINK: u32 = 1 << 1;
 pub const FLAG_STRANDED: u32 = 1 << 2;
 pub const FLAG_LANE_SHIFT: u32 = 8;
+/// `write_next_links` entry for a vehicle on its final link or stranded.
+pub const NO_NEXT_LINK: u16 = u16::MAX;
+
+/// Clears `out` and appends, per vehicle record (same order as `write_vehicle_records`), the next
+/// link of its route, or `NO_NEXT_LINK` on its final link or when stranded. The renderer curves
+/// cars through junctions towards it (ward polish-003). Reads the world only.
+pub fn write_next_links(world: &World, out: &mut Vec<u16>) {
+    out.clear();
+    world.for_each_on_network_next(|next| {
+        // (a network with ≥ 65535 links would draw turns onto those links straight: no next link)
+        out.push(next.and_then(|l| u16::try_from(l.0).ok()).unwrap_or(NO_NEXT_LINK));
+    });
+}
 
 /// Clears `out` and appends one record per on-network vehicle (links
 /// ascending → lanes ascending → front first). Returns the record count.

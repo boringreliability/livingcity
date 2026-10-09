@@ -10,6 +10,8 @@
  *           bit2 stranded (no route on), bits 8..15 lane index
  * There are no screen or world x/y coordinates: the renderer maps
  * (link, s, lane) onto the network geometry from `ReadyMessage.network`.
+ * `FrameMessage.nextLinks` (one u16 per record, same order) gives each vehicle's
+ * next link, or NO_NEXT_LINK; the renderer curves cars through junctions with it.
  * No JSON per frame: only typed arrays and plain numbers.
  */
 
@@ -21,6 +23,8 @@ export const FLAG_QUEUED = 1 << 0;
 export const FLAG_ON_CLOSED_LINK = 1 << 1;
 export const FLAG_STRANDED = 1 << 2;
 export const FLAG_LANE_SHIFT = 8;
+/** `nextLinks` entry: no next link (final link, or stranded); mirrors `sim_core::frame::NO_NEXT_LINK`. */
+export const NO_NEXT_LINK = 0xffff;
 
 /** Built-in cities the worker can build. */
 export type CityName = 'river_city' | 'three_bridges';
@@ -173,6 +177,8 @@ export interface FrameMessage {
   simTimeS: number;
   count: number;
   vehicles: ArrayBuffer;
+  /** Per record: the vehicle's next link, or NO_NEXT_LINK (ward polish-003). */
+  nextLinks: Uint16Array;
   linkCounts: Uint16Array;
   linkQueued: Uint16Array;
   closed: Uint32Array;

@@ -1,7 +1,8 @@
 import { VEHICLE_RECORD_BYTES, type TrackedVehicle } from '../sim/protocol';
 import type { Camera } from './camera';
 import type { CityDecor } from './cities';
-import { LANE_WIDTH_M, vehiclePosition, type RoadGeometry } from './geometry';
+import { LANE_WIDTH_M, type RoadGeometry } from './geometry';
+import { BLEND_M, ExtrapolationClock, NO_NEXT, extrapolate, inBlend, vehicleDrawPosition, type DrawPose } from './motion';
 import { LINK_TEX_WIDTH, LINK_TEXEL_GLSL, linkRows, linkTexel } from './linkTable';
 
 /*
@@ -24,6 +25,11 @@ const CONGESTION_FULL_AT = 0.5;
 /** Closed roads: hatch stops this far short of each junction (CSS px), barriers at these fractions. */
 const HATCH_JUNCTION_INSET_PX = 6;
 const BARRIER_AT = [0.12, 0.88] as const;
+/** The closure sign at a closed link's midpoint (CSS px): a white ring between dark rings, hatch inside. */
+const GLYPH_INNER_PX = 4;
+const GLYPH_OUTER_PX = 8;
+/** Dash period of a hovered road's centre stroke (CSS px; 60 % drawn). */
+const HOVER_DASH_PX = 10;
 /** Bridge decks keep at least this on-screen width (CSS px), with a dark railing edge of RAILING_PX. */
 const DECK_MIN_PX = 12;
 const RAILING_PX = 1.5;
@@ -144,6 +150,8 @@ void main() {
   }
   // halo (pass 1): white for the selected road, light grey for the hovered one — lightness, not hue
   if (abs(v_across) > 1.0) base = v_state.g > 0.5 ? vec3(1.0) : vec3(0.72);
+  // hovered (not selected): a dashed light stroke along the centre — a shape congestion never makes
+  else if (u_pass == 1 && v_state.g <= 0.5 && abs(v_across) < 0.45 && fract(v_along * u_pxPerM / ${HOVER_DASH_PX.toFixed(1)}) < 0.6) base = vec3(0.92);
   o = vec4(base, 1.0);
 }`;
 
@@ -158,10 +166,13 @@ uniform vec2 u_scale;
 uniform float u_pxPerM;
 out vec2 v_px;
 flat out float v_halfLen;
+flat out float v_glyph;
 void main() {
   vec2 n = vec2(-a_dir.y, a_dir.x);
-  float halfLen = max(a_halfM * u_pxPerM, 4.5) + 4.0;
-  vec2 px = vec2(a_corner.x * 3.0, a_corner.y * halfLen);
+  // a_halfM < 0: the closure sign at the link's midpoint (a ring, drawn at every zoom; ward polish-003)
+  v_glyph = a_halfM < 0.0 ? 1.0 : 0.0;
+  float halfLen = a_halfM < 0.0 ? ${GLYPH_OUTER_PX.toFixed(1)} : max(a_halfM * u_pxPerM, 4.5) + 4.0;
+  vec2 px = a_halfM < 0.0 ? a_corner * ${GLYPH_OUTER_PX.toFixed(1)} : vec2(a_corner.x * 3.0, a_corner.y * halfLen);
   vec2 p = a_center + (a_dir * px.x + n * px.y) / u_pxPerM;
   gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
   v_px = px;
@@ -172,8 +183,17 @@ const BAR_FS = `#version 300 es
 precision highp float;
 in vec2 v_px;
 flat in float v_halfLen;
+flat in float v_glyph;
 out vec4 o;
 void main() {
+  if (v_glyph > 0.5) {
+    // a white ring between dark rings; the hatch stays visible inside it
+    float r = length(v_px);
+    if (r < ${GLYPH_INNER_PX.toFixed(1)} || r > ${GLYPH_OUTER_PX.toFixed(1)}) discard;
+    bool dark = r < ${GLYPH_INNER_PX.toFixed(1)} + 1.0 || r > ${GLYPH_OUTER_PX.toFixed(1)} - 1.0;
+    o = vec4(dark ? vec3(0.04) : vec3(0.97), 1.0);
+    return;
+  }
   bool edge = abs(v_px.x) > 2.0 || abs(v_px.y) > v_halfLen - 1.0;
   o = vec4(edge ? vec3(0.04) : vec3(0.97), 1.0);
 }`;
@@ -216,6 +236,7 @@ layout(location = 1) in uint a_link;
 layout(location = 2) in float a_s;
 layout(location = 3) in float a_v;
 layout(location = 4) in uint a_flags;
+layout(location = 5) in uint a_next; // next link or 65535 (FrameMessage.nextLinks)
 uniform vec2 u_center;
 uniform vec2 u_scale;
 uniform float u_pxPerM;
@@ -226,17 +247,49 @@ out vec2 v_local;
 flat out uint v_flags;
 flat out float v_band; // brake band length as a share of the vehicle (at least ~1.25 px)
 ${LINK_TEXEL_GLSL}
+// motion.ts's vehicleDrawPosition, exactly: the lane point, and through a junction a quadratic curve
+vec2 lanePoint(int l, float s, float lane) {
+  vec4 e = texelFetch(u_links, linkTexel(l, 0), 0);
+  vec4 g = texelFetch(u_links, linkTexel(l, 1), 0);
+  float len = texelFetch(u_links, linkTexel(l, 2), 0).x;
+  return mix(e.xy, e.zw, clamp(s / len, 0.0, 1.0)) + g.xy * (((g.w - 1.0) * 0.5 - lane) * ${LANE_WIDTH_M.toFixed(1)});
+}
+vec2 linkDir(int l) {
+  vec4 e = texelFetch(u_links, linkTexel(l, 0), 0);
+  vec2 d = e.zw - e.xy;
+  float m = length(d);
+  return m > 0.0 ? d / m : vec2(1.0, 0.0);
+}
 void main() {
   int l = int(a_link);
-  vec4 ends = texelFetch(u_links, linkTexel(l, 0), 0);  // x0, y0, x1, y1
   vec4 geo = texelFetch(u_links, linkTexel(l, 1), 0);   // nx, ny, width, lanes
   float len = texelFetch(u_links, linkTexel(l, 2), 0).x;
   float s = min(a_s + a_v * u_dtSim, len);
-  vec2 n = geo.xy;
-  vec2 dir = vec2(-n.y, n.x);
   float lane = float((a_flags >> 8u) & 255u);
-  float lat = ((geo.w - 1.0) * 0.5 - lane) * ${LANE_WIDTH_M.toFixed(1)};
-  vec2 p = mix(ends.xy, ends.zw, clamp(s / len, 0.0, 1.0)) + n * lat;
+  vec2 dir = linkDir(l);
+  vec2 p = lanePoint(l, s, lane);
+  float blend = min(${BLEND_M.toFixed(1)}, len * 0.5);
+  if (a_next != 65535u && s > len - blend) {
+    int nx = int(a_next);
+    float nLanes = texelFetch(u_links, linkTexel(nx, 1), 0).w;
+    vec2 p0 = lanePoint(l, len - blend, lane);
+    vec2 p2 = lanePoint(nx, 0.0, min(lane, nLanes - 1.0));
+    vec2 e = linkDir(nx);
+    vec2 r = p2 - p0;
+    float chord = length(r);
+    vec2 c = p2 - e * chord * 0.5;
+    float den = dir.x * e.y - dir.y * e.x;
+    if (abs(den) > 1e-9) {
+      float t = (r.x * e.y - r.y * e.x) / den;
+      float u2 = (r.x * dir.y - r.y * dir.x) / den;
+      if (t > 0.0 && u2 < 0.0 && t <= chord && -u2 <= chord) c = p0 + t * dir;
+    }
+    float u = clamp((s - (len - blend)) / blend, 0.0, 1.0);
+    p = (1.0 - u) * (1.0 - u) * p0 + 2.0 * u * (1.0 - u) * c + u * u * p2;
+    vec2 tg = 2.0 * (1.0 - u) * (c - p0) + 2.0 * u * (p2 - c);
+    dir = length(tg) < 1e-9 ? e : normalize(tg);
+  }
+  vec2 n = vec2(dir.y, -dir.x); // right-hand normal of the heading
   bool queued = (a_flags & 1u) != 0u;
   // queued: short and square; moving: long and slim — in metres when zoomed in, in CSS px when zoomed out
   vec2 size = queued ? vec2(3.6, 2.3) : vec2(4.4, 1.8);
@@ -409,10 +462,9 @@ export class CityRenderer {
   private stateTex: WebGLTexture;
   private stateBytes = new Uint8Array(0);
   private geometry: RoadGeometry | null = null;
-  private frameAtMs = 0;
-  private frameTick: number | null = null;
-  private frameRunning = false;
-  private frameMultiplier: number | null = null;
+  /** How far the picture runs ahead of the last frame (ward polish-003). */
+  private readonly clock = new ExtrapolationClock();
+  private nextBuf: WebGLBuffer;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
@@ -456,7 +508,11 @@ export class CityRenderer {
     gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 8);
     gl.enableVertexAttribArray(4);
     gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, stride, 12);
-    for (const loc of [1, 2, 3, 4]) gl.vertexAttribDivisor(loc, 1);
+    this.nextBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nextBuf);
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribIPointer(5, 1, gl.UNSIGNED_SHORT, 0, 0);
+    for (const loc of [1, 2, 3, 4, 5]) gl.vertexAttribDivisor(loc, 1);
     gl.bindVertexArray(null);
 
     this.routeProg = compile(gl, ROUTE_VS, ROUTE_FS);
@@ -604,25 +660,20 @@ export class CityRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, LINK_TEX_WIDTH, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.stateBytes);
   }
 
-  /** Upload one frame's records (the AoS buffer as is). The caller may then return the buffer. */
-  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number, running = true, multiplier?: number): void {
+  /**
+   * Upload one frame's records (the AoS buffer as is) and their next links. The caller may then
+   * return the buffer. Extrapolation restarts on a new tick and on resume (ExtrapolationClock).
+   */
+  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number, running = true, multiplier?: number, nextLinks?: Uint16Array): void {
+    void multiplier; // a speed change re-bases the clock at the next draw (continuous, no backward step)
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vehBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(words.buffer, words.byteOffset, count * VEHICLE_RECORD_BYTES), gl.STREAM_DRAW);
+    const next = nextLinks && nextLinks.length >= count ? nextLinks.subarray(0, count) : new Uint16Array(count).fill(NO_NEXT);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nextBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, next, gl.STREAM_DRAW);
     this.vehCount = count;
-    // Extrapolation restarts only when the simulation advanced: frames repeat while the tick
-    // is unchanged (they come every 16 ms), and resetting then would make motion lurch.
-    // Also restart on resume: while paused the tick stands still, so the anchor would be stale
-    // and the first frames after Play would extrapolate over the whole pause.
-    // and on a speed change, which would otherwise rescale the extrapolation already under way.
-    const resumed = running && !this.frameRunning;
-    const rescaled = multiplier !== undefined && multiplier !== this.frameMultiplier;
-    this.frameRunning = running;
-    this.frameMultiplier = multiplier ?? this.frameMultiplier;
-    if (tick === undefined || tick !== this.frameTick || resumed || rescaled) {
-      this.frameAtMs = receivedAtMs;
-      this.frameTick = tick ?? null;
-    }
+    this.clock.frame(receivedAtMs, tick, running);
   }
 
   /** `linkCounts`: vehicles per link; congestion is drawn by occupancy (vehicles ÷ capacity). */
@@ -701,19 +752,42 @@ export class CityRenderer {
 
   /** Sim seconds the drawn picture is ahead of the last frame (0 while paused). */
   extrapolationS(nowMs: number, simSecondsPerMs: number): number {
-    return Math.min(2, Math.max(0, (nowMs - this.frameAtMs) * simSecondsPerMs));
+    return this.clock.at(nowMs, simSecondsPerMs);
+  }
+
+  /** Where a record (link, s, v, lane, next) is drawn at `nowMs`: the vertex shader's rule, on the CPU. */
+  drawPose(link: number, s: number, v: number, lane: number, next: number, nowMs: number, simSecondsPerMs: number): DrawPose | null {
+    const links = this.geometry?.links;
+    if (!links || !links[link]) return null;
+    const e = extrapolate(links, link, s, v, this.extrapolationS(nowMs, simSecondsPerMs), next);
+    return vehicleDrawPosition(links, link, e.s, lane, next);
+  }
+
+  /** The tracked vehicle as drawn at `nowMs` (link, s after extrapolation, lane, next and its predicted lane, world m). */
+  trackedDraw(nowMs: number, simSecondsPerMs: number): { link: number; s: number; length: number; lane: number; next: number; nextLane: number; world: [number, number] } | null {
+    const t = this.tracked;
+    const links = this.geometry?.links;
+    const l = t && t.link >= 0 ? links?.[t.link] : undefined;
+    if (!t || !l || !links) return null;
+    const next = t.state === 'stranded' ? NO_NEXT : (t.route[1] ?? NO_NEXT);
+    const nl = next !== NO_NEXT ? links[next] : undefined;
+    const e = extrapolate(links, t.link, t.s, t.v, this.extrapolationS(nowMs, simSecondsPerMs), nl ? next : NO_NEXT);
+    const pose = vehicleDrawPosition(links, t.link, e.s, t.lane, nl ? next : NO_NEXT);
+    return { link: t.link, s: e.s, length: l.length, lane: t.lane, next: nl ? next : NO_NEXT, nextLane: nl ? Math.min(t.lane, nl.lanes - 1) : t.lane, world: [pose.x, pose.y] };
   }
 
   /**
-   * Where the tracked vehicle is drawn at `nowMs` (world m): its frame position extrapolated
+   * Where the tracked vehicle is drawn at `nowMs` (world m): its frame position extrapolated and placed
    * like every vehicle in the vertex shader, so Follow and the ring agree with the picture.
    */
   trackedWorldPosition(nowMs: number, simSecondsPerMs: number): [number, number] | null {
-    const t = this.tracked;
-    const l = t && t.link >= 0 ? this.geometry?.links[t.link] : undefined;
-    if (!t || !l) return null;
-    const dtSim = this.extrapolationS(nowMs, simSecondsPerMs);
-    return vehiclePosition(l, Math.min(t.s + t.v * dtSim, l.length), t.lane);
+    return this.trackedDraw(nowMs, simSecondsPerMs)?.world ?? null;
+  }
+
+  /** Whether (link, s, next) is on a junction curve (for the test hook). */
+  inBlend(link: number, s: number, next: number): boolean {
+    const links = this.geometry?.links;
+    return !!links && inBlend(links, link, s, next);
   }
 
   private uploadState(): void {
@@ -772,6 +846,10 @@ export class CityRenderer {
         for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]] as const) {
           v.push(cx, cy, dx / len, dy / len, a, b, l.width / 2);
         }
+      }
+      // the closure sign at the midpoint, visible at every zoom (half width −1 marks it for the shader)
+      for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]] as const) {
+        v.push(l.x0 + dx * 0.5, l.y0 + dy * 0.5, dx / len, dy / len, a, b, -1);
       }
     }
     const vao = gl.createVertexArray()!;

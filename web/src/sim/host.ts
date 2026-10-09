@@ -14,6 +14,7 @@ import {
   type CityName,
   type LinkDetail,
   COMPARISON_INTERVAL_MS,
+  NO_NEXT_LINK,
   REPLAY_BUDGET_BYTES,
   type TimelineStatus,
   type TrackedGone,
@@ -33,6 +34,8 @@ export interface SimLike {
   frame_words(): number;
   link_counts(): Uint16Array;
   link_queued(): Uint16Array;
+  /** Per record of the last encoded frame: next link or 0xFFFF (ward polish-003; optional for fakes). */
+  next_links?(): Uint16Array;
   metrics(): Float64Array;
   metric_names(): string[];
   closed_links(): Uint32Array;
@@ -516,6 +519,8 @@ export function createSimHost(deps: HostDeps): SimHost {
       simTimeS: tick * DT,
       count,
       vehicles,
+      // a fresh copy per frame (structured-cloned, 2 bytes per vehicle); fakes without it draw straight
+      nextLinks: s.next_links?.() ?? new Uint16Array(count).fill(NO_NEXT_LINK),
       linkCounts: s.link_counts(),
       linkQueued: s.link_queued(),
       closed: s.closed_links(),

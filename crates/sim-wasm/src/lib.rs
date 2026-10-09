@@ -7,7 +7,8 @@ use wasm_bindgen::prelude::*;
 
 use sim_core::cities::{river_city, river_city_scaled, three_bridges, City, Landmarks, Zone, ZoneKind};
 use sim_core::frame::{
-    metrics_to_extended_array, write_link_stats, write_vehicle_records, NetworkExport, EXTENDED_METRIC_NAMES,
+    metrics_to_extended_array, write_link_stats, write_next_links, write_vehicle_records, NetworkExport,
+    EXTENDED_METRIC_NAMES,
 };
 use sim_core::params::{DT, QUEUED_SPEED};
 use sim_core::{Command, CommandKind, LinkId, Timeline, TripOutcome, VehicleState, World};
@@ -23,6 +24,8 @@ pub struct Sim {
     /// The scenario: its position world, snapshots and command log (sim-core T1/T2).
     timeline: Timeline,
     frame: Vec<u32>,
+    /// Per record of `frame`: the vehicle's next link or `NO_NEXT_LINK` (ward polish-003).
+    next_links: Vec<u16>,
     export: NetworkExport,
     link_counts: Vec<u16>,
     link_queued: Vec<u16>,
@@ -41,6 +44,7 @@ impl Sim {
         Sim {
             timeline: Timeline::new(world, REPLAY_BUDGET_BYTES),
             frame: Vec::new(),
+            next_links: Vec::new(),
             export,
             link_counts: Vec::new(),
             link_queued: Vec::new(),
@@ -123,6 +127,7 @@ impl Sim {
             export: NetworkExport::new(timeline.world().network()),
             timeline,
             frame: Vec::new(),
+            next_links: Vec::new(),
             link_counts: Vec::new(),
             link_queued: Vec::new(),
             landmarks: self.landmarks,
@@ -174,6 +179,7 @@ impl Sim {
     pub fn encode_frame(&mut self) -> u32 {
         write_link_stats(self.timeline.world(), &mut self.link_counts, &mut self.link_queued);
         let count = write_vehicle_records(self.timeline.world(), &mut self.frame);
+        write_next_links(self.timeline.world(), &mut self.next_links);
         // Record → trip table of this frame (same order as the records), reusing the oldest table.
         let mut trips = if self.frame_trips.len() == RETAINED_FRAMES {
             self.frame_trips.pop_front().map(|(_, v)| v).unwrap_or_default()
@@ -281,6 +287,11 @@ impl Sim {
 
     pub fn link_counts(&self) -> Vec<u16> {
         self.link_counts.clone()
+    }
+
+    /// Per record of the last encoded frame: the next link, or 65535 (none). A copy (2 bytes per vehicle).
+    pub fn next_links(&self) -> Vec<u16> {
+        self.next_links.clone()
     }
 
     pub fn link_queued(&self) -> Vec<u16> {

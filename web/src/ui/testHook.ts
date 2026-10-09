@@ -71,8 +71,32 @@ interface LivingCityHook {
   linkScreenCenter(link: number): [number, number] | null;
   /** Page coordinates of the point at fraction t along a link's drawn centreline (also off-screen); null for an unknown link. */
   linkScreenPoint(link: number, t: number): [number, number] | null;
-  /** Page coordinates of record `record` of the latest frame (unextrapolated), or null. */
+  /** Page coordinates where record `record` of the latest frame is drawn now (curve and extrapolation), or null. */
   vehicleScreenCenter(record: number): [number, number] | null;
+  /** A record as drawn now (ward polish-003): its CPU draw position, and where the straight rule would put it. */
+  vehicleDraw(record: number): {
+    link: number;
+    s: number;
+    lane: number;
+    next: number;
+    inBlend: boolean;
+    world: [number, number];
+    page: [number, number];
+    straightPage: [number, number];
+  } | null;
+  /** The tracked vehicle as drawn now: link, s after extrapolation, lane, next and its predicted lane. */
+  trackedDraw(): {
+    link: number;
+    s: number;
+    length: number;
+    lane: number;
+    next: number;
+    nextLane: number;
+    world: [number, number];
+    page: [number, number];
+  } | null;
+  /** The pure draw rule (motion.ts vehicleDrawPosition) in world metres. */
+  drawAt(link: number, s: number, lane: number, next: number): [number, number];
   /** Page coordinates where the tracked vehicle is drawn now (as Follow uses), or null. */
   trackedScreenCenter(): [number, number] | null;
   /** What a click at page point (x, y) would select, without selecting. */

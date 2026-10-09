@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Camera } from './render/camera';
 import { cityDecor, type CityDecor, type CityLabel } from './render/cities';
 import { buildRoadGeometry, vehiclePosition, type RoadGeometry } from './render/geometry';
+import { NO_NEXT, inBlend, vehicleDrawPosition } from './render/motion';
 import { pickLink, pickVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
 import { COMPARE_FIT_INSETS, FIT_INSETS } from './render/layout';
 import { CityRenderer, linkCapacity } from './render/renderer';
@@ -95,7 +96,7 @@ export function App() {
   const hoveredRef = useRef<number | null>(null);
   const renderFrames = useRef(0);
   /** A copy of the latest frame's records (the transferred buffer goes back to the worker). */
-  const recordsRef = useRef<{ tick: number; vehicles: DecodedVehicles } | null>(null);
+  const recordsRef = useRef<{ tick: number; vehicles: DecodedVehicles; next: Uint16Array } | null>(null);
   const trackedRef = useRef<TrackedVehicle | null>(null);
   /** Sequence number of the last vehicle request (pick or clear). Frames echo the last one the
    * worker handled; tracking from frames older than our last request is stale and ignored. */
@@ -116,7 +117,7 @@ export function App() {
   const decorRef = useRef<CityDecor | null>(null);
   /** B's latest frame view, and a copy of its records (replayed into a renderer created later). */
   const bFrameRef = useRef<FrameView | null>(null);
-  const bRecordsRef = useRef<{ words: Uint32Array; count: number; tick: number; running: boolean; multiplier: number } | null>(null);
+  const bRecordsRef = useRef<{ words: Uint32Array; next: Uint16Array; count: number; tick: number; running: boolean; multiplier: number } | null>(null);
   /** An A frame waiting for its B partner (pairs are applied and drawn together). */
   const pendingPairA = useRef<FrameMessage | null>(null);
   /** The comparison layout is applied (canvases laid out, camera refitted): the hook's `compare`. */
@@ -279,8 +280,8 @@ export function App() {
     /** B's half of a pair: its renderer (if already created) and its view. */
     const applyFrameB = (f: FrameMessage) => {
       const words = new Uint32Array(f.vehicles);
-      bRecordsRef.current = { words: words.slice(0, f.count * 4), count: f.count, tick: f.tick, running: f.clock.running, multiplier: f.clock.multiplier };
-      rendererB.current?.setFrame(words, f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier);
+      bRecordsRef.current = { words: words.slice(0, f.count * 4), next: f.nextLinks, count: f.count, tick: f.tick, running: f.clock.running, multiplier: f.clock.multiplier };
+      rendererB.current?.setFrame(words, f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier, f.nextLinks);
       c.returnBuffer(f.vehicles);
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
@@ -294,7 +295,7 @@ export function App() {
         metrics,
         clock: f.clock,
         perf: f.perf,
-        frameBytes: f.vehicles.byteLength,
+        frameBytes: f.vehicles.byteLength + f.nextLinks.byteLength,
         scenario: f.scenario,
         timeline: f.timeline,
       };
@@ -329,9 +330,9 @@ export function App() {
       applyFrame(f);
     });
     function applyFrame(f: FrameMessage) {
-      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier);
+      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier, f.nextLinks);
       // keep a copy for picking before the buffer goes back to the worker
-      recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count) };
+      recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count), next: f.nextLinks };
       if (f.trackedSeq !== undefined && f.trackedSeq < inspectSeqRef.current) {
         // built before the worker saw our latest pick/clear: its tracking data is stale
       } else if (f.tracked && 'gone' in f.tracked) {
@@ -355,7 +356,7 @@ export function App() {
         setFollowing(false);
       }
       setLinkDetail(f.linkDetail ?? null);
-      const frameBytes = f.vehicles.byteLength;
+      const frameBytes = f.vehicles.byteLength + f.nextLinks.byteLength; // records + next links
       c.returnBuffer(f.vehicles); // uploaded: give the buffer back to the worker's pool
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
@@ -412,7 +413,7 @@ export function App() {
       }
       rendererB.current.setNetwork(g, d);
       const b = bRecordsRef.current;
-      if (b) rendererB.current.setFrame(b.words, b.count, performance.now(), b.tick, b.running, b.multiplier);
+      if (b) rendererB.current.setFrame(b.words, b.count, performance.now(), b.tick, b.running, b.multiplier, b.next);
     } else {
       const rb = rendererB.current;
       rendererB.current = null;
@@ -490,8 +491,10 @@ export function App() {
       const f = frameRef.current;
       // Extrapolate at the requested speed; only when the engine is behind, at the achieved rate.
       // (The achieved rate is a 1-s window: right after Play it is still ~0, which made motion lurch.)
+      // never faster than the requested speed: "behind" means slower, and right after Play the 1-s achieved
+      // window still holds the previous speed's ticks (the clock keeps an overshoot until the next tick)
       const simPerMs =
-        f && f.clock.running ? (f.clock.behind ? f.clock.achievedTicksPerS * DT : f.clock.multiplier) / 1000 : 0;
+        f && f.clock.running ? Math.min(f.clock.behind ? f.clock.achievedTicksPerS * DT : f.clock.multiplier, f.clock.multiplier) / 1000 : 0;
       simPerMsRef.current = simPerMs;
       if (followingRef.current) {
         const at = renderer.current?.trackedWorldPosition(now, simPerMs);
@@ -608,7 +611,7 @@ export function App() {
       const r = recordsRef.current;
       const g = geometry.current;
       if (!r || !g || camera.zoom < VEHICLE_PICK_MIN_ZOOM || compareViewRef.current) return null;
-      return pickVehicle(r.vehicles, g.links, camera, x, y, 8, renderer.current?.extrapolationS(performance.now(), simPerMsRef.current) ?? 0);
+      return pickVehicle(r.vehicles, g.links, camera, x, y, 8, renderer.current?.extrapolationS(performance.now(), simPerMsRef.current) ?? 0, r.next);
     },
     [camera],
   );
@@ -831,10 +834,47 @@ export function App() {
         return [r.left + sx, r.top + sy];
       },
       vehicleScreenCenter: (record: number) => {
+        // where the record is drawn now (the junction curve and the extrapolation included)
         const r = recordsRef.current;
-        const l = r && record >= 0 && record < r.vehicles.count ? geometry.current?.links[r.vehicles.link(record)] : undefined;
-        if (!r || !l) return null;
-        return toPage(...vehiclePosition(l, r.vehicles.s(record), r.vehicles.lane(record)));
+        if (!r || record < 0 || record >= r.vehicles.count) return null;
+        const v = r.vehicles;
+        const p = renderer.current?.drawPose(v.link(record), v.s(record), v.v(record), v.lane(record), r.next[record] ?? NO_NEXT, performance.now(), simPerMsRef.current);
+        return p ? toPage(p.x, p.y) : null;
+      },
+      vehicleDraw: (record: number) => {
+        const r = recordsRef.current;
+        const g = geometry.current;
+        const canvas = canvasRef.current;
+        if (!r || !g || !canvas || record < 0 || record >= r.vehicles.count) return null;
+        const v = r.vehicles;
+        const [link, lane, next] = [v.link(record), v.lane(record), r.next[record] ?? NO_NEXT];
+        const now = performance.now();
+        const dt = renderer.current?.extrapolationS(now, simPerMsRef.current) ?? 0;
+        const l = g.links[link];
+        if (!l) return null;
+        const s = Math.min(v.s(record) + v.v(record) * dt, l.length);
+        const pose = vehicleDrawPosition(g.links, link, s, lane, next);
+        const straight = vehiclePosition(l, s, lane);
+        const rect = canvas.getBoundingClientRect();
+        const page = (x: number, y: number): [number, number] => {
+          const [sx, sy] = camera.worldToScreen(x, y);
+          return [rect.left + sx, rect.top + sy];
+        };
+        return { link, s, lane, next, inBlend: inBlend(g.links, link, s, next), world: [pose.x, pose.y] as [number, number], page: page(pose.x, pose.y), straightPage: page(...straight) };
+      },
+      trackedDraw: () => {
+        const d = renderer.current?.trackedDraw(performance.now(), simPerMsRef.current);
+        const canvas = canvasRef.current;
+        if (!d || !canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        const [sx, sy] = camera.worldToScreen(d.world[0], d.world[1]);
+        return { ...d, page: [rect.left + sx, rect.top + sy] as [number, number] };
+      },
+      drawAt: (link: number, s: number, lane: number, next: number) => {
+        const g = geometry.current;
+        if (!g || !g.links[link]) return [NaN, NaN] as [number, number];
+        const p = vehicleDrawPosition(g.links, link, s, lane, next);
+        return [p.x, p.y] as [number, number];
       },
       trackedScreenCenter: () => {
         const at = renderer.current?.trackedWorldPosition(performance.now(), simPerMsRef.current);

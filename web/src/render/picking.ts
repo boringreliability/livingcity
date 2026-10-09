@@ -1,6 +1,7 @@
 import type { DecodedVehicles } from '../sim/frame';
 import type { Camera } from './camera';
 import { vehiclePosition, type LinkGeom } from './geometry';
+import { NO_NEXT, vehicleDrawPosition } from './motion';
 
 /** Vehicles are pickable only from this zoom (CSS px per metre); below it clicks select roads. */
 export const VEHICLE_PICK_MIN_ZOOM = 1.0;
@@ -42,7 +43,7 @@ export function pickLink(
  * The frame record whose centre is nearest to screen point (sx, sy), within `tolerancePx`;
  * ties → lower record. `links` is indexed by link id. `dtSim` extrapolates like the renderer
  * (s + v·dtSim, capped at the link end) so a click hits a car where it is drawn; 0 = the
- * frame's own positions.
+ * frame's own positions. With `nextLinks` (per record) the junction curve is used, as drawn.
  */
 export function pickVehicle(
   vehicles: DecodedVehicles,
@@ -52,13 +53,17 @@ export function pickVehicle(
   sy: number,
   tolerancePx = 8,
   dtSim = 0,
+  nextLinks?: Uint16Array,
 ): number | null {
   let best: number | null = null;
   let bestPx = Infinity;
   for (let i = 0; i < vehicles.count; i++) {
     const l = links[vehicles.link(i)];
     if (!l) continue;
-    const [wx, wy] = vehiclePosition(l, Math.min(vehicles.s(i) + vehicles.v(i) * dtSim, l.length), vehicles.lane(i));
+    const s = Math.min(vehicles.s(i) + vehicles.v(i) * dtSim, l.length);
+    const [wx, wy] = nextLinks
+      ? (({ x, y }) => [x, y])(vehicleDrawPosition(links, vehicles.link(i), s, vehicles.lane(i), nextLinks[i] ?? NO_NEXT))
+      : vehiclePosition(l, s, vehicles.lane(i));
     const [px, py] = camera.worldToScreen(wx, wy);
     const d = Math.hypot(px - sx, py - sy);
     if (d <= tolerancePx && d < bestPx) {

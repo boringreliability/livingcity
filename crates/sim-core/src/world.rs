@@ -1517,6 +1517,15 @@ impl World {
         }
     }
 
+    /// The next link of every on-network vehicle's route, in frame record order (links → lanes →
+    /// front first); `None` on its final link or when stranded (no valid way on). For rendering.
+    pub fn for_each_on_network_next(&self, mut f: impl FnMut(Option<LinkId>)) {
+        for &slot in self.lanes.iter().flatten().flatten() {
+            let v = self.veh(slot);
+            f(if v.stranded { None } else { v.route.get(v.route_pos + 1).copied() });
+        }
+    }
+
     /// Trip ids of every on-network vehicle, in frame record order (links → lanes → front first).
     pub fn for_each_on_network_trip(&self, mut f: impl FnMut(u64)) {
         for &slot in self.lanes.iter().flatten().flatten() {

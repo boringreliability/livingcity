@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Calm motion and clear markers in the renderer"
 epic: "polish"
-status: "approved"
+status: "gold"
 dependencies: ["polish-002"]
 layer: "fullstack"
 estimated_tests: 10
