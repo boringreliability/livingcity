@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "Profile and optimize the measured per-frame bottlenecks"
 epic: "polish"
-status: "red"
+status: "approved"
 dependencies: ["polish-004"]
 layer: "fullstack"
 estimated_tests: 10
