@@ -30,7 +30,7 @@ fn river_city_busy() -> World {
     w
 }
 
-fn check(w: &World, label: &str) {
+fn check(w: &World, label: &str, expect_stranded: bool) {
     let hash = w.state_hash();
     let mut records = Vec::new();
     let count = write_vehicle_records(w, &mut records) as usize;
@@ -43,8 +43,12 @@ fn check(w: &World, label: &str) {
     w.for_each_on_network_trip(|t| trips.push(t));
     assert_eq!(trips.len(), count);
     let mut none = 0usize;
+    let mut stranded = 0usize;
     for (i, &trip) in trips.iter().enumerate() {
         let v = w.vehicle_by_trip(trip).expect("record vehicle is live");
+        if v.stranded {
+            stranded += 1;
+        }
         assert_eq!(records[4 * i], v.route[v.route_pos].0, "{label}: record {i} is on its route's current link");
         // a stranded vehicle has no valid way on: nothing to curve towards
         let expected = if v.stranded {
@@ -57,16 +61,20 @@ fn check(w: &World, label: &str) {
             none += 1;
         }
     }
-    // non-vacuous: both kinds occur in a busy city
-    assert!(none >= 1, "{label}: some vehicles are on their final link ({none}/{count})");
-    assert!(none * 2 <= count, "{label}: at least half have a next link ({none}/{count})");
+    // non-vacuous: both kinds occur; among vehicles that are not stranded, most have a next link
+    assert!(none >= 1, "{label}: some vehicles have no next link ({none}/{count})");
+    let moving = count - stranded;
+    assert!(moving > 0 && (none - stranded) * 2 <= moving, "{label}: at least half of the non-stranded have a next link ({}/{moving} without)", none - stranded);
+    if expect_stranded {
+        assert!(stranded >= 1, "{label}: stranded vehicles occur");
+    }
     // reading only
     assert_eq!(w.state_hash(), hash, "{label}: encoding changed the world");
 }
 
 #[test]
 fn next_links_follow_routes() {
-    check(&river_city_busy(), "river_city");
-    check(&three_bridges_closed(), "three_bridges closed");
+    check(&river_city_busy(), "river_city", false);
+    check(&three_bridges_closed(), "three_bridges closed", true);
     assert_eq!(NO_NEXT_LINK, u16::MAX);
 }

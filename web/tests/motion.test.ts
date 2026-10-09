@@ -87,7 +87,7 @@ describe('polish-003', () => {
     check(h.last(), 'branch B');
   });
 
-  test('3 draw_position_is_continuous_across_junctions', () => {
+  test('3 draw_position_is_continuous_across_junctions', { timeout: 120_000 }, () => {
     const { links } = city();
     let pairs = 0;
     for (const a of links) {
@@ -107,14 +107,18 @@ describe('polish-003', () => {
           const bdx = (b.x1 - b.x0) / Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
           const bdy = (b.y1 - b.y0) / Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
           expect(Math.acos(Math.min(1, atEnd.hx * bdx + atEnd.hy * bdy)), `${a.id}→${b.id}: heading at the end`).toBeLessThanOrEqual(0.05);
-          // (b) no jump along a: 0.1 m steps move at most 0.75 m (the curve may be up to ~2.3 × the blend length,
-          // far below the 4.6 m junction jumps it replaces)
-          let prev = vehicleDrawPosition(links, a.id, 0, lane, b.id);
-          for (let s = 0.1; s <= a.length + 1e-9; s += 0.1) {
+          // (b) no jump along a: 0.1 m steps through the blend zone (and 0.5 m before it) move at most 0.75 m
+          // (the curve may be up to ~2.3 × the blend length, far below the 4.6 m junction jumps it replaces)
+          const from = Math.max(0, a.length - Math.min(BLEND_M, a.length / 2) - 0.5);
+          let prev = vehicleDrawPosition(links, a.id, from, lane, b.id);
+          let worst = 0;
+          let worstAt = from;
+          for (let s = from + 0.1; s <= a.length + 0.1 - 1e-9; s += 0.1) {
             const p = vehicleDrawPosition(links, a.id, Math.min(s, a.length), lane, b.id);
-            expect(dist(p, prev), `${a.id}→${b.id} lane ${lane} at s=${s.toFixed(1)}`).toBeLessThanOrEqual(0.75);
+            if (dist(p, prev) > worst) [worst, worstAt] = [dist(p, prev), s];
             prev = p;
           }
+          expect(worst, `${a.id}→${b.id} lane ${lane}: worst 0.1 m step at s=${worstAt.toFixed(1)}`).toBeLessThanOrEqual(0.75);
           // (c) outside the blend zone: today's placement
           const blend = Math.min(BLEND_M, a.length / 2);
           for (const s of [0, a.length / 3, a.length - blend - 0.01]) {

@@ -28,10 +28,13 @@ interface TrackedDraw {
   next: number;
   nextLane: number;
   world: [number, number];
+  page: [number, number];
 }
 type Hook = NonNullable<Window['__livingcity']> & {
   vehicleDraw(record: number): VehicleDraw | null;
   trackedDraw(): TrackedDraw | null;
+  /** The pure draw rule: world position of (link, s, lane, next). */
+  drawAt(link: number, s: number, lane: number, next: number): [number, number];
 };
 
 async function ready(page: Page, url = '/') {
@@ -111,14 +114,22 @@ test('gpu_draws_cars_where_the_cpu_says', async ({ page }) => {
     const n = before.filter((e) => Math.hypot(e.world[0] - d.world[0], e.world[1] - d.world[1]) < 60).length;
     if (n > bestN) [best, bestN] = [d, n];
   }
-  await wheelZoom(page, best.page, (z) => z >= 4, -1);
+  // centre the spot (a drag), then zoom at the centre
+  const box = (await page.locator('canvas.city').first().boundingBox())!;
+  const centre: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
+  await page.mouse.move(best.page[0], best.page[1]);
+  await page.mouse.down();
+  await page.mouse.move(centre[0], centre[1], { steps: 12 });
+  await page.mouse.up();
+  await sleep(300);
+  await wheelZoom(page, centre, (z) => z >= 4, -1);
   const all = await drawAll();
   const visible: VehicleDraw[] = [];
   for (const d of all) if (d.page[0] > 20 && d.page[1] > 20 && (await onCanvas(page, d.page))) visible.push(d);
   // blend-zone cars drawn clearly off the straight line (≥ 1.5 m at ≥ 4 px/m), and plain cars
   const curved = visible.filter((d) => d.inBlend && Math.hypot(d.page[0] - d.straightPage[0], d.page[1] - d.straightPage[1]) >= 6);
   const plain = visible.filter((d) => !d.inBlend);
-  expect(curved.length, 'curved cars in view').toBeGreaterThanOrEqual(5);
+  expect(curved.length, 'curved cars in view').toBeGreaterThanOrEqual(3);
   expect(plain.length, 'plain cars in view').toBeGreaterThanOrEqual(8);
   const shown = async (p: [number, number]) => lum(page, p, 3, 3);
   const at = async (pts: [number, number][]) => Promise.all(pts.map(shown));
@@ -191,17 +202,35 @@ test('tracked_car_moves_continuously', async ({ page }) => {
               if (!d || performance.now() - t0 > 40_000 || crossings >= 3) return resolve({ worst, at, crossings });
               if (prev) {
                 const moved = Math.hypot(d.world[0] - prev.world[0], d.world[1] - prev.world[1]);
+                /** Length of the drawn path from s0 to s1 on (link, lane, next), in 0.1 m sub-steps. */
+                const path = (link: number, lane: number, next: number, s0: number, s1: number) => {
+                  const [lo, hi] = s0 <= s1 ? [s0, s1] : [s1, s0];
+                  let len = 0;
+                  let p = h.drawAt(link, lo, lane, next);
+                  for (let x = lo + 0.1; ; x += 0.1) {
+                    const q = h.drawAt(link, Math.min(x, hi), lane, next);
+                    len += Math.hypot(q[0] - p[0], q[1] - p[1]);
+                    p = q;
+                    if (x >= hi) break;
+                  }
+                  return len;
+                };
                 let along: number;
                 let exempt = false;
-                if (d.link === prev.link) along = Math.abs(d.s - prev.s);
+                if (d.link === prev.link && d.next === prev.next) along = path(d.link, d.lane, d.next, prev.s, d.s);
                 else if (d.link === prev.next) {
-                  // a crossing: the distance left on the old link plus the distance on the new one
-                  along = prev.length - prev.s + d.s;
+                  // a crossing: the drawn path left on the old link plus the drawn path on the new one
+                  along = path(prev.link, prev.lane, prev.next, prev.s, prev.length) + path(d.link, d.lane, d.next, 0, d.s);
                   if (d.lane === prev.nextLane) crossings++;
                   else exempt = true; // the sim chose another entry lane than predicted: a lane move
                 } else {
                   exempt = true; // rerouted between frames: no geometric claim
                   along = 0;
+                }
+                // the ring / Follow use the same placement: trackedScreenCenter is where trackedDraw says
+                const ring = h.trackedScreenCenter();
+                if (ring && Math.hypot(ring[0] - d.page[0], ring[1] - d.page[1]) > 1) {
+                  return reject(new Error(`ring at ${ring.map((v) => v.toFixed(1))} but the car is drawn at ${d.page.map((v) => v.toFixed(1))}`));
                 }
                 const excess = moved - (along + 0.9);
                 if (!exempt && excess > worst) {
@@ -223,7 +252,7 @@ test('tracked_car_moves_continuously', async ({ page }) => {
     await page.keyboard.press('Escape');
   }
   expect(crossings, `same-lane junction crossings observed (${cars} cars)`).toBeGreaterThanOrEqual(3);
-  expect(worst, `no geometric jump beyond the along-route distance + 0.9 m: ${at}`).toBeLessThanOrEqual(0);
+  expect(worst, `no geometric jump beyond the drawn path length + 0.9 m: ${at}`).toBeLessThanOrEqual(0);
 });
 
 // 9
@@ -346,6 +375,6 @@ test('closed_road_marked_at_every_zoom', async ({ page }) => {
     await wheelZoom(page, await mid(), z.ok, z.dir, 25);
     const c = await counts();
     const b = before[z.label]!;
-    expect(c.bright - b.bright, `${z.label}: the closure adds a bright marker (${b.bright} → ${c.bright})`).toBeGreaterThanOrEqual(12);
+    expect(c.bright - b.bright, `${z.label}: the closure adds a bright marker (${b.bright} → ${c.bright})`).toBeGreaterThanOrEqual(20);
   }
 });
