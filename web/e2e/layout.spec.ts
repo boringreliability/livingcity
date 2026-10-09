@@ -90,7 +90,11 @@ async function settled(page: Page) {
 
 /** The named regions are visible, and every visible panel and side label lies inside the viewport. */
 async function expectPanels(page: Page, names: string[], label: string) {
-  for (const n of names) await expect(page.getByRole('region', { name: n }), `${label}: ${n} visible`).toBeVisible();
+  for (const n of names) {
+    const region = page.getByRole('region', { name: n });
+    await expect(region, `${label}: ${n} visible`).toBeVisible();
+    expect(Number(await region.evaluate((e) => getComputedStyle(e).opacity)), `${label}: ${n} opaque`).toBeGreaterThan(0);
+  }
   const out = await page.evaluate(() => {
     const vis = (e: Element) => {
       const st = getComputedStyle(e);
@@ -328,10 +332,13 @@ test('labels_never_half_cut', async ({ page }) => {
           const r = z.getBoundingClientRect();
           return r.left >= b.left - 0.5 && r.right <= b.right + 0.5 && r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5;
         };
-        const zones = [...layer.querySelectorAll('.zone')].filter((z) => getComputedStyle(z).display !== 'none' && z.getBoundingClientRect().width > 0);
+        const all = [...layer.querySelectorAll('.zone')];
+        // hidden means visibility: hidden (the box stays); display: none or a zero box would escape the checks below
+        const zones = all.filter((z) => getComputedStyle(z).display !== 'none' && z.getBoundingClientRect().width > 0);
         const shown = (z: Element) => getComputedStyle(z).visibility !== 'hidden' && Number(getComputedStyle(z).opacity) > 0;
         return {
           layer: layer.className,
+          all: all.length,
           total: zones.length,
           cut: zones.filter((z) => shown(z) && !inside(z)).map((z) => z.textContent?.trim() ?? ''),
           hiddenButFits: zones.filter((z) => !shown(z) && inside(z)).map((z) => z.textContent?.trim() ?? ''),
@@ -340,7 +347,8 @@ test('labels_never_half_cut', async ({ page }) => {
     });
     expect(r.length, `${label}: label layers`).toBeGreaterThan(0);
     for (const l of r) {
-      expect(l.total, `${label}: ${l.layer} has its labels`).toBeGreaterThan(10);
+      expect(l.all, `${label}: ${l.layer} has its labels`).toBeGreaterThan(10);
+      expect(l.total, `${label}: ${l.layer} labels laid out (none display: none or zero-size)`).toBe(l.all);
       expect(l.cut, `${label}: ${l.layer} labels cut at the edge`).toEqual([]);
       expect(l.hiddenButFits, `${label}: ${l.layer} labels hidden although they fit`).toEqual([]);
     }
