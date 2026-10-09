@@ -110,6 +110,61 @@ test('stress badge widens nothing into the scenario panel (1280×800 and 900×80
   }
 });
 
+for (const size of SIZES) {
+  test(`error banner overlaps nothing and does not stick (Gold r2 M1, ${size.width}×${size.height})`, async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.setViewportSize(size);
+    await ready(page);
+    await pause(page);
+    await stepBack(page);
+    const branchAt = (await snap(page)).timeline.positionTick;
+    await page.keyboard.press('b');
+    await expect.poll(async () => (await snap(page)).scenario).toBe('B');
+    // A before the branch tick → the host refuses compare
+    await page.getByRole('button', { name: 'A: original' }).click();
+    await expect.poll(async () => (await snap(page)).scenario).toBe('A');
+    while ((await snap(page)).timeline.positionTick >= branchAt) await stepBack(page);
+    await page.getByRole('button', { name: 'Compare side by side' }).click();
+    const alert = page.getByRole('alert');
+    await expect(alert).toContainText(/compare refused/i);
+    await page.waitForTimeout(300);
+    expect(await overlaps(page), 'with the error banner').toEqual([]);
+    // the next accepted action clears the stale refusal
+    await page.getByRole('button', { name: /^B: branch from/ }).click();
+    await expect(alert).toHaveCount(0);
+    // and a banner can be dismissed
+    await page.getByRole('button', { name: 'A: original' }).click();
+    await expect.poll(async () => (await snap(page)).scenario).toBe('A');
+    await page.getByRole('button', { name: 'Compare side by side' }).click();
+    await expect(alert).toContainText(/compare refused/i);
+    await alert.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(alert).toHaveCount(0);
+  });
+}
+
+test('panels keep their element (and focus) when the window crosses 960 px (Gold r2 m2)', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await ready(page);
+  await pause(page);
+  await stepBack(page);
+  await page.keyboard.press('b');
+  await expect.poll(async () => (await snap(page)).scenario).toBe('B');
+  await page.getByRole('button', { name: 'A: original' }).click();
+  await stepBack(page);
+  await page.keyboard.press('b');
+  await expect(page.getByRole('region', { name: 'Confirm replacing the branch' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).focus();
+  await page.evaluate(() => ((window as unknown as { __cancel: Element | null }).__cancel = document.activeElement));
+  for (const width of [900, 1024, 768]) {
+    await page.setViewportSize({ width, height: 768 });
+    await page.waitForTimeout(300);
+    const same = await page.evaluate(() => document.activeElement === (window as unknown as { __cancel: Element | null }).__cancel && document.activeElement?.isConnected);
+    expect(same, `${width}: focus stays on the same Cancel button`).toBe(true);
+    expect(await overlaps(page), `${width}: panels`).toEqual([]);
+  }
+});
+
 test('timeline bar stays usable at 900 and 768 px (Gold r1 m6)', async ({ page }) => {
   test.setTimeout(180_000);
   for (const size of [SIZES[2]!, SIZES[3]!]) {

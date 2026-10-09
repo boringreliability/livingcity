@@ -45,40 +45,70 @@ canvas.city {
   font-size: 13px;
 }
 
-/* Left column (ward polish-002): the control panel, then (narrow windows) the scenario and confirm
-   panels, then diagnostics, stacked so they never overlap whatever their height. */
-.left-stack {
+/* Top band (ward polish-002): one grid. Left column (326 px): controls, then diagnostics. Centre
+   column (between the left column and the 240 px right column): scenarios, confirm, error. Panels
+   stack, so none overlaps another whatever its height; narrow windows use one column. */
+.top-band {
   position: absolute;
   top: 16px;
   left: 16px;
-  width: 326px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
-}
-
-/* Centre column (wide windows): the scenario and confirm panels, between the left column (326 px)
-   and the right column (240 px). */
-.center-stack {
-  position: absolute;
-  top: 16px;
-  left: 358px;
   right: 272px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 326px minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 8px;
+  align-items: start;
   pointer-events: none;
 }
 
-.left-stack > .panel,
-.center-stack > .panel {
+.top-band > .panel {
   position: static;
   transform: none;
   pointer-events: auto;
   box-sizing: border-box;
   max-width: 100%;
+}
+
+.top-band > .controls {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.top-band > .scenarios {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: center;
+}
+
+.top-band > .confirm {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: center;
+}
+
+.top-band > .error {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: center;
+}
+
+.top-band > .diagnostics {
+  grid-column: 1;
+  grid-row: 2 / span 3;
+}
+
+@media (max-width: 959px) {
+  .top-band {
+    right: auto;
+    width: 326px;
+    grid-template-columns: 326px;
+  }
+
+  .top-band > .panel {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: stretch;
+  }
 }
 
 /* fixed width: a long status (behind, stress) wraps instead of widening into the centre column */
@@ -371,11 +401,11 @@ button.bridge.closed {
 }
 
 .error {
-  top: 64px;
-  left: 50%;
-  transform: translateX(-50%);
   max-width: 420px;
   color: #ffd27a;
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
 /* Narrow windows: the right column moves below the control panel instead of covering it. */

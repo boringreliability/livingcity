@@ -76,9 +76,6 @@ interface Recording extends Omit<PerfRecording, 'wallMs' | 'timerResolutionMs'> 
   startMs: number;
 }
 
-/** Below this width the scenario/confirm panels stack in the left column (styles.css mirrors it). */
-const NARROW_QUERY = '(max-width: 959px)';
-
 /** Focus the timeline slider (where focus goes when the panel holding it closes). */
 const focusTimeline = () => document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
 
@@ -106,14 +103,6 @@ export function App() {
   const followingRef = useRef(false);
   /** The user moved the camera (pan, zoom, Follow) since the last fit: a resize then keeps the view. */
   const cameraTouched = useRef(false);
-  /** Narrow windows: the scenario and confirm panels join the left column (no room between the side columns). */
-  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(NARROW_QUERY);
-    const on = () => setNarrow(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
   /** Render-side measurement (C5): rAF intervals and draw CPU time over the last 300 frames. */
@@ -557,6 +546,7 @@ export function App() {
 
   const requestSeek = useCallback(
     (tick: number) => {
+      setError(null); // a new request: a refusal shown for an earlier one is stale
       forgetPosition();
       pendingSeekRef.current = tick;
       setPendingSeek(tick);
@@ -575,6 +565,7 @@ export function App() {
       const f = frameRef.current;
       const c = client.current;
       if (!f || !c || compareViewRef.current || f.timeline.compare === 1) return; // off while comparing
+      setError(null);
       const pos = currentPosition();
       if (f.scenario === 0 && pos < f.timeline.headTick) {
         if (f.timeline.branchTick >= 0) {
@@ -908,18 +899,21 @@ export function App() {
             branchTick={frame.timeline.branchTick}
             comparing={comparingNow}
             onCompare={(on) => {
+            setError(null);
               pendingSeekRef.current = null;
               setPendingSeek(null);
               forgetPosition();
               client.current?.compare(on);
             }}
             onView={(sc) => {
+            setError(null);
               pendingSeekRef.current = null;
               setPendingSeek(null);
               forgetPosition();
               client.current?.viewScenario(sc);
             }}
             onDiscard={() => {
+            setError(null);
               pendingSeekRef.current = null;
               setPendingSeek(null);
               forgetPosition();
@@ -989,7 +983,9 @@ export function App() {
           ))}
         </div>
       )}
-      <div className="left-stack">
+      {/* Top band (ward polish-002): one grid in a fixed DOM order; CSS alone places the panels in a
+          left and a centre column (or one column when narrow), so nothing remounts on a resize. */}
+      <div className="top-band">
       <ControlPanel
         running={running}
         speed={speed}
@@ -1005,7 +1001,17 @@ export function App() {
         onToggleDiagnostics={() => setDiagOpen((o) => !o)}
         demandScale={DEMAND}
       />
-      {narrow && scenarioPanels}
+      {scenarioPanels}
+      {error && (
+        <div role="alert" className="panel error">
+          <span>{error}</span>
+          {!noGl && (
+            <button type="button" onClick={() => setError(null)}>
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
       {diagOpen && (
         <DiagnosticsPanel
           comparing={comparingNow}
@@ -1054,12 +1060,6 @@ export function App() {
       {!comparingNow && <Legend />}
       {comparingNow && comparison && <ComparisonPanel comparison={comparison} />}
       {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} />}
-      <div className="center-stack">{!narrow && scenarioPanels}</div>
-      {error && (
-        <p role="alert" className="panel error">
-          {error}
-        </p>
-      )}
     </main>
   );
 }
