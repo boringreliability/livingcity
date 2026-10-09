@@ -46,7 +46,12 @@ fn check(w: &World, label: &str) {
     for (i, &trip) in trips.iter().enumerate() {
         let v = w.vehicle_by_trip(trip).expect("record vehicle is live");
         assert_eq!(records[4 * i], v.route[v.route_pos].0, "{label}: record {i} is on its route's current link");
-        let expected = v.route.get(v.route_pos + 1).map_or(NO_NEXT_LINK, |l| u16::try_from(l.0).expect("link id fits u16"));
+        // a stranded vehicle has no valid way on: nothing to curve towards
+        let expected = if v.stranded {
+            NO_NEXT_LINK
+        } else {
+            v.route.get(v.route_pos + 1).map_or(NO_NEXT_LINK, |l| u16::try_from(l.0).expect("link id fits u16"))
+        };
         assert_eq!(next[i], expected, "{label}: record {i} (trip {trip})");
         if next[i] == NO_NEXT_LINK {
             none += 1;

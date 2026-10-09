@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest';
 import { createSimHost, type SimLike } from '../src/sim/host';
 import { buildRoadGeometry, vehiclePosition, type LinkGeom } from '../src/render/geometry';
 import { BLEND_M, ExtrapolationClock, NO_NEXT, extrapolate, vehicleDrawPosition } from '../src/render/motion';
+// (extrapolate: never past the link end; the blend curve ends at the next link's start)
 import type { FrameMessage, FromWorker, ReadyMessage, ToWorker } from '../src/sim/protocol';
 import { Sim } from '../src/wasm/sim_wasm.js';
 import { loadWasm } from './helpers';
@@ -106,11 +107,12 @@ describe('polish-003', () => {
           const bdx = (b.x1 - b.x0) / Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
           const bdy = (b.y1 - b.y0) / Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
           expect(Math.acos(Math.min(1, atEnd.hx * bdx + atEnd.hy * bdy)), `${a.id}→${b.id}: heading at the end`).toBeLessThanOrEqual(0.05);
-          // (b) no jump along a (0.1 m steps)
+          // (b) no jump along a: 0.1 m steps move at most 0.75 m (the curve may be up to ~2.3 × the blend length,
+          // far below the 4.6 m junction jumps it replaces)
           let prev = vehicleDrawPosition(links, a.id, 0, lane, b.id);
           for (let s = 0.1; s <= a.length + 1e-9; s += 0.1) {
             const p = vehicleDrawPosition(links, a.id, Math.min(s, a.length), lane, b.id);
-            expect(dist(p, prev), `${a.id}→${b.id} lane ${lane} at s=${s.toFixed(1)}`).toBeLessThanOrEqual(0.25);
+            expect(dist(p, prev), `${a.id}→${b.id} lane ${lane} at s=${s.toFixed(1)}`).toBeLessThanOrEqual(0.75);
             prev = p;
           }
           // (c) outside the blend zone: today's placement
@@ -134,7 +136,10 @@ describe('polish-003', () => {
       }
   });
 
-  test('4 extrapolation_continues_onto_the_next_link', () => {
+  test('4 extrapolation_stops_at_the_end_on_the_curve', () => {
+    // The sim holds cars at stop lines and stops them instantly, so extrapolating past the end would
+    // snap cars back when the next frame arrives (Red r1 B1). Extrapolation stops at the link end; with a
+    // next link that end is the next link's start (the blend curve), so the next frame continues from there.
     const { links, ready } = city();
     const { linkFrom, linkTo } = ready.network;
     let checked = 0;
@@ -142,26 +147,18 @@ describe('polish-003', () => {
       const b = links.find((x) => linkFrom[x.id] === linkTo[a.id] && linkTo[x.id] !== linkFrom[a.id]);
       if (!b) continue;
       checked++;
-      const v = 10;
-      // 0.3 s before the end, extrapolated 1 s: 7 m past the end, on b
-      const r = extrapolate(links, a.id, a.length - 3, v, 1, b.id);
-      expect(r.link).toBe(b.id);
-      expect(r.s).toBeCloseTo(Math.min(7, b.length), 6);
-      // capped at b's length
-      expect(extrapolate(links, a.id, a.length - 1, v, 1e4, b.id).s).toBeLessThanOrEqual(b.length);
-      // continuous across the change: 0.1 m steps of extrapolated distance
-      let prev: { x: number; y: number } | null = null;
-      for (let d = 0; d <= 4; d += 0.01) {
-        const e = extrapolate(links, a.id, a.length - 2, 10, d / 10, b.id);
-        const lane = 0;
-        const p = vehicleDrawPosition(links, e.link, e.s, e.link === a.id ? lane : Math.min(lane, b.lanes - 1), e.link === a.id ? b.id : NO_NEXT);
-        if (prev) expect(dist(p, prev), `${a.id}→${b.id} at +${d.toFixed(2)} m`).toBeLessThanOrEqual(0.25);
-        prev = p;
+      for (const next of [b.id, NO_NEXT]) {
+        // within the link: s + v·dt
+        const r = extrapolate(links, a.id, a.length - 10, 10, 0.5, next);
+        expect(r).toEqual({ link: a.id, s: a.length - 5 });
+        // past the end: stays on a at its end
+        const e = extrapolate(links, a.id, a.length - 3, 10, 1, next);
+        expect(e).toEqual({ link: a.id, s: a.length });
       }
-      // without a next: stops at the end
-      const c = extrapolate(links, a.id, a.length - 3, v, 1, NO_NEXT);
-      expect(c.link).toBe(a.id);
-      expect(c.s).toBe(a.length);
+      // with a next link the stopped car is drawn at the next link's start (lane min(lane, b.lanes − 1))
+      const atEnd = vehicleDrawPosition(links, a.id, extrapolate(links, a.id, a.length - 3, 10, 1, b.id).s, 0, b.id);
+      const bStart = vehicleDrawPosition(links, b.id, 0, 0, NO_NEXT);
+      expect(dist(atEnd, bStart)).toBeLessThanOrEqual(1e-3);
       if (checked > 60) break;
     }
     expect(checked).toBeGreaterThan(60);
