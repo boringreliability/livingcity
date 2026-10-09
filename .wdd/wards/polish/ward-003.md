@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Calm motion and clear markers in the renderer"
 epic: "polish"
-status: "planned"
+status: "red"
 dependencies: ["polish-002"]
 layer: "fullstack"
 estimated_tests: 10
@@ -58,12 +58,12 @@ The fix keeps the sim/render boundary: the sim sends what rendering needs (each 
 - Pause and resume keep today's semantics.
 
 **Markers**
-- **Hover (c4)** reads by shape as well as lightness. The halo is drawn as an outline separated from the road by a dark gap of at least 1 px on both sides, so it cannot read as a wider, lighter (congested) road. Selection keeps its white halo and gets the same gap.
+- **Hover (c4)** reads by shape as well as lightness. A hovered road shows a **dashed bright stroke along its centre** (dash and gap of a few CSS px each) instead of the light-grey halo, so it can never read as a wider, lighter (congested) road. Congestion never produces a dash pattern. Selection keeps its white halo. (A gap-separated outline was rejected: on two-way pairs, the partner road 1 m away produces the same road–gap–light pattern.)
 - **Closures (c5)** are visible at every zoom down to `MIN_ZOOM`. When a link is too short on screen for the hatch, a barrier glyph of at least 6 × 6 CSS px (white with a dark outline) is drawn at its midpoint. This happens in addition to the existing barriers wherever those are drawn.
 
 **Test hook additions**
-- `vehicleDraw(record)` returns `{ link, s, lane, next, world: [x, y], page: [x, y] } | null`: the CPU draw position of a record of the current frame at the current extrapolation.
-- `trackedDraw()` returns `{ link, lane, world: [x, y] } | null`.
+- `vehicleDraw(record)` returns `{ link, s, lane, next, inBlend, world: [x, y], page: [x, y], straightPage: [x, y] } | null`. This is the CPU draw position of a record of the current frame at the current extrapolation. `straightPage` is where today's straight rule (`vehiclePosition`) would put it. Picking uses the new rule.
+- `trackedDraw()` returns `{ link, lane, v, world: [x, y] } | null`, with the link and lane as drawn after extrapolation.
 
 ## Specification
 - **Pinned (do not change):**
@@ -84,10 +84,10 @@ The fix keeps the sim/render boundary: the sim sends what rendering needs (each 
 | 4 | `extrapolation_continues_onto_the_next_link` (vitest, pure) | Overshooting the link end with a next: the result is on next at the overshoot (capped at next's length), and the draw position is continuous across the change (≤ 0.25 m for a 0.1 m step). Without a next: capped at the end. |
 | 5 | `speed_change_never_moves_cars_back` (vitest, pure `ExtrapolationClock`) | Frames arrive, then the multiplier changes from 20 to 5, from 5 to 60, and to 1. The extrapolated sim time is continuous at each change (no jump greater than one frame's advance at the new rate) and never decreases between frames of the same tick. Pause makes it 0. After resume it restarts from 0 at the first frame. |
 | 6 | `stall_cannot_overshoot` (vitest, pure) | Frames come every 50 ms with an advance of 0.5 sim s per frame. When a gap of 2 s follows (a stall), the extrapolated sim time never exceeds 0.75 sim s (1.5 × the expected advance). The same holds after a speed change. |
-| 7 | `gpu_draws_cars_where_the_cpu_says` (e2e) | Paused at zoom ≥ 4 px/m, at least 8 vehicles inside a blend zone are each checked with `vehicleDraw` on a canvas point. The drawn picture there (vehicles shown) differs from the same point with `setDebug({ hideVehicles: true })` by a luminance of at least 30. The same holds for 8 vehicles outside blend zones. So the shader places cars by the same rule. |
-| 8 | `tracked_car_moves_continuously` (e2e) | At 1× speed and zoom 2.24 px/m, a tracked car is sampled every animation frame with `trackedDraw` for 60 s of wall time, or until it has crossed 3 junctions with an unchanged predicted lane. Between consecutive samples the world displacement never exceeds `v_max × Δt_sim + 0.9 m` (2 px), including at those junctions. The run must contain at least 3 such crossings. |
-| 9 | `hover_differs_from_congestion_by_shape` (e2e) | A congested link (occupancy ≥ 0.8) and an uncongested one are each hovered in turn, with vehicles hidden. A luminance profile across the road shows, on both sides, a gap of at least 1 px darker than the road core before the halo. The same congested link unhovered shows no such gap pattern. |
-| 10 | `closed_road_marked_at_every_zoom` (e2e) | The main bridge is closed. At zooms 0.05 (`MIN_ZOOM`), 0.07 and 0.2 px/m, a 14 × 14 px window at the closed link's screen midpoint contains at least 12 pixels with luminance ≥ 220 and at least 12 with luminance ≤ 40 (the white barrier with its dark outline). The same window at the same zoom before the closure does not meet both counts. |
+| 7 | `gpu_draws_cars_where_the_cpu_says` (e2e) | `?demand=2`, paused, zoom ≥ 4 px/m at the Main Bridge. At least 5 visible blend-zone vehicles (drawn ≥ 6 px off their straight point) and 8 plain vehicles are checked. At each one's `vehicleDraw.page`, the picture with vehicles shown differs from the picture with `setDebug({ hideVehicles: true })` by a mean luminance of at least 30. At least half of the curved vehicles' straight points show no such difference. So the shader uses the curve rule. |
+| 8 | `tracked_car_moves_continuously` (e2e) | At 5× speed and zoom ≥ 2.24 px/m, a moving car is tracked and `trackedDraw` is sampled every animation frame, for up to 60 s of wall time or 3 junction crossings in the same lane. Between consecutive samples the world displacement never exceeds `max(v_prev, v_now) × Δt_sim × 1.2 + 0.9 m` (0.9 m = 2 px at 2.24 px/m). This is checked at every step except a crossing where the sim chose another lane. The run must contain at least 3 same-lane crossings. |
+| 9 | `hover_differs_from_congestion_by_shape` (e2e) | `?demand=3`, paused, vehicles hidden, zoom ≥ 1.2 px/m. A visible congested link (occupancy ≥ 0.8) and an empty link are each hovered. The luminance along the link's centre (t 0.35–0.65) shows at least 3 dark→bright alternations (a dash pattern). The same congested link unhovered shows at most 1. |
+| 10 | `closed_road_marked_at_every_zoom` (e2e) | The main bridge is closed. At zooms 0.05 (`MIN_ZOOM`), 0.07 and 0.2 px/m, a 14 × 14 px window at the closed link's screen midpoint has at least 12 more pixels with luminance ≥ 220 than the same window at the same zoom before the closure (the white barrier glyph). It also contains at least 12 pixels with luminance ≤ 40 (dark outline or surround). |
 
 ## Must NOT
 - Change the vehicle record words or flags.
