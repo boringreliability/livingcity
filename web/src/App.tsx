@@ -76,6 +76,9 @@ interface Recording extends Omit<PerfRecording, 'wallMs' | 'timerResolutionMs'> 
   startMs: number;
 }
 
+/** Focus the timeline slider (where focus goes when the panel holding it closes). */
+const focusTimeline = () => document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
+
 const isInteractive = (t: EventTarget | null) =>
   t instanceof HTMLElement &&
   (t.isContentEditable || ['BUTTON', 'SELECT', 'INPUT', 'TEXTAREA'].includes(t.tagName));
@@ -616,9 +619,18 @@ export function App() {
         const next = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, i + (e.key === '-' ? -1 : 1)))]!;
         if (next !== speed) changeSpeed(next);
       } else if (e.key === 'Escape') {
-        // first the vehicle, then the road
-        if (trackedRef.current || goneRef.current) clearVehicle();
-        else select(null);
+        // innermost first: the confirmation (as Cancel), then the vehicle, then the road
+        const inPanel = (sel: string) => e.target instanceof Element && !!e.target.closest(sel);
+        if (confirmRef.current) {
+          setConfirmReplace(null);
+          focusTimeline();
+        } else if (trackedRef.current || goneRef.current) {
+          if (inPanel('section.vehicle')) focusTimeline(); // the panel holding focus goes away
+          clearVehicle();
+        } else {
+          if (inPanel('section.selection')) focusTimeline();
+          select(null);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -850,10 +862,11 @@ export function App() {
   const sel = selected !== null && g ? g.links[selected] : undefined;
   /** The frame of the side the road was picked on (B's only while comparing). */
   const selFrame = selectedSide === 'B' && bFrameRef.current ? bFrameRef.current : frame;
-  const focusSlider = () => document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
+  const focusSlider = focusTimeline;
 
   return (
     <main className={`app${comparingNow ? ' comparing' : ''}`}>
+      <h1 className="sr-only">Living City: traffic simulation</h1>
       <canvas ref={canvasRef} className="city" aria-label="City map" />
       {comparingNow && <canvas ref={canvasBRef} className="city city-b" aria-label="City map, branch B" />}
       {comparingNow && (
@@ -895,7 +908,7 @@ export function App() {
         onSpeed={changeSpeed}
         onToggleMainBridge={toggleMainBridge}
         disabled={noGl}
-        {...(comparingNow ? { bridgeDisabledReason: NO_INTERVENTIONS_WHILE_COMPARING } : {})}
+        {...(comparingNow ? { bridgeDisabledReason: NO_INTERVENTIONS_WHILE_COMPARING, bridgeStateHidden: true } : {})}
         diagnosticsOpen={diagOpen}
         onToggleDiagnostics={() => setDiagOpen((o) => !o)}
         demandScale={DEMAND}

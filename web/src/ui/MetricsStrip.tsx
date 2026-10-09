@@ -10,7 +10,7 @@ function minutes(seconds: number | undefined): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** Definition of `unserved` (= unreachable + gridlock removals), shown as the tooltip. */
+/** Definition of `unserved` = no_route + stranded + all removals (unreachable after the NoRoute retries, and gridlock). The tooltip text is pinned by city-005 test 17. */
 const UNSERVED_TOOLTIP =
   'Trips the city could not serve: no route at the origin, stranded without a route, or removed after 10 minutes in gridlock';
 

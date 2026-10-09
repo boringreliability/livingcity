@@ -15,7 +15,7 @@ const NOT_WHILE_COMPARING = 'Exit comparison to switch the viewed scenario';
 export function ScenarioPanel({ scenario, branchTick, comparing, onView, onDiscard, onCompare }: Props) {
   return (
     <section className={`panel scenarios viewing-${scenario === 0 ? 'a' : 'b'}`} aria-label="Scenarios">
-      <p className="scenario-label">{scenario === 0 ? 'Viewing A: original' : 'Viewing B: branch'}</p>
+      <p className="scenario-label">{comparing ? 'Comparing A and B' : scenario === 0 ? 'Viewing A: original' : 'Viewing B: branch'}</p>
       <div className="row">
         <button type="button" aria-pressed={scenario === 0} onClick={() => onView(0)} disabled={comparing} title={comparing ? NOT_WHILE_COMPARING : undefined}>
           A: original

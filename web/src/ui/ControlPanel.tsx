@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+
 import type { ClockStatus } from '../sim/protocol';
 import { DT } from '../sim/protocol';
 
@@ -16,6 +18,8 @@ interface Props {
   disabled?: boolean;
   /** When set, the main-bridge action alone is disabled with this text as the reason. */
   bridgeDisabledReason?: string;
+  /** While comparing the button acts on neither side: it shows no closed/open state of its own. */
+  bridgeStateHidden?: boolean;
   diagnosticsOpen: boolean;
   onToggleDiagnostics(): void;
   /** Demand scale from `?demand=` (1 = the normal city: no badge). */
@@ -25,13 +29,27 @@ interface Props {
 export function ControlPanel(p: Props) {
   const achieved = p.clock ? p.clock.achievedTicksPerS * DT : 0;
   const behind = !!p.clock?.behind;
+  const pointerPick = useRef(false);
+  const closedShown = p.mainBridgeClosed && !p.bridgeStateHidden;
   return (
     <section className="panel controls" aria-label="Simulation controls">
       <div className="row">
         <button type="button" className="primary" onClick={p.onToggleRunning} disabled={p.disabled}>
           {p.running ? 'Pause' : 'Play'}
         </button>
-        <select aria-label="Speed" value={p.speed} onChange={(e) => p.onSpeed(Number(e.target.value))} disabled={p.disabled}>
+        <select
+          aria-label="Speed"
+          value={p.speed}
+          onPointerDown={() => (pointerPick.current = true)}
+          onKeyDown={() => (pointerPick.current = false)}
+          onChange={(e) => {
+            p.onSpeed(Number(e.target.value));
+            // a pointer pick gives focus back (Space/B stay shortcuts); a keyboard change keeps it
+            if (pointerPick.current) e.currentTarget.blur();
+            pointerPick.current = false;
+          }}
+          disabled={p.disabled}
+        >
           {SPEEDS.map((s) => (
             <option key={s} value={s}>
               {s}×
@@ -63,16 +81,16 @@ export function ControlPanel(p: Props) {
       </div>
       <button
         type="button"
-        className={`bridge ${p.mainBridgeClosed ? 'closed' : ''}`}
+        className={`bridge ${closedShown ? 'closed' : ''}`}
         aria-label="Close the main bridge"
-        aria-pressed={p.mainBridgeClosed}
+        aria-pressed={p.bridgeStateHidden ? undefined : p.mainBridgeClosed}
         onClick={p.onToggleMainBridge}
         disabled={p.disabled || !!p.bridgeDisabledReason}
         title={p.bridgeDisabledReason}
       >
         <span aria-hidden="true" className="barrier-icon" />
-        {p.mainBridgeClosed ? 'Main bridge closed — reopen' : 'Close the main bridge'}
-        {p.mainBridgePending ? ' (pending)' : ''}
+        {closedShown ? 'Main bridge closed — reopen' : 'Close the main bridge'}
+        {p.mainBridgePending && !p.bridgeStateHidden ? ' (pending)' : ''}
       </button>
     </section>
   );

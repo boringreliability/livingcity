@@ -54,7 +54,7 @@ The simulation owns *where a vehicle is along the road* (link id, metres from th
 ### From the timeline contract (T3, ward timeline-003)
 - **Protocol.** `seek {tick}` and `command` apply to the *viewed* scenario instead of carrying a `scenario` field. `viewScenario` and `branch.then` are new; `then` applies the triggering intervention to B atomically.
 - **Seek runs synchronously.** It replays at most 119 ticks (a few milliseconds in wasm), so the bounded batches that T3 asks for, for long resimulation, are unnecessary.
-- **Memory.** Each scenario has its own 48 MiB budget, so up to 96 MiB in steady state. Replacing B briefly holds A plus two Bs, because the new B is built before the old one is freed. The bar shows the viewed scenario's memory and says "per scenario".
+- **Memory.** Each scenario has its own 48 MiB budget, so up to 96 MiB in steady state. When B is replaced, the host frees the old B first and only then builds the new one, so the peak stays at A plus one B. The bar shows the viewed scenario's memory and says "per scenario".
 - **`Sim.window_metrics`** is added to the wasm adapter in timeline-003; its consumer is the comparison panel.
 
 ### From the timeline contract (T4, ward timeline-004)
