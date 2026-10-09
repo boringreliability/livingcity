@@ -41,7 +41,7 @@ The app opens on River City after a 15-minute (sim time) warm-up, so traffic is 
 | Esc | clear the selection |
 | ← / → / Home / End | on the focused timeline: one sim minute back / forward, window start / live |
 
-[`docs/demo.md`](docs/demo.md) walks through the full demo in five minutes.
+A **demo guide** in the app (top right) walks through the demo on a first visit and ticks off each step as you do it; hide it with ×, and the **Guide** button shows it again. [`docs/demo.md`](docs/demo.md) walks through the same demo in five minutes.
 
 ## Tests
 

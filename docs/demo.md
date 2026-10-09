@@ -2,6 +2,8 @@
 
 This takes about five minutes. It assumes the app is running (`pnpm -C web build:wasm`, then `pnpm -C web dev`; see the README) and is open in a desktop browser at least 1,280 px wide.
 
+The app has the same walkthrough built in: the **demo guide** at the top right ticks off each step when you actually do it (hide it with ×, show it again with **Guide**).
+
 ## 1. A living city
 When the page opens, River City has already run for 15 sim minutes, and traffic flows over all three bridges.
 - The **Main Bridge** is the wide crossing in the middle.
@@ -18,13 +20,14 @@ Click **Close the main bridge** in the control panel, or press **B**.
 - The bridge gets an unmistakable marker: a hatch and white barriers at both ends.
 - Cars already on it drive off. Cars heading for it reroute at their next junction.
 
+### Watch the queues
 Let it run for 5–15 sim minutes (about 15–45 s of wall time at 20×) and watch:
 - queues building on the approaches to the **Old Bridge** and the **North Bridge**, with square cars stacking back up the streets (spillback);
 - **queued** in the metrics strip. It fluctuates while drivers reroute, and over those minutes it typically ends up well above where it was; the queues on the bridge approaches are the clearer signal.
 
 Click a road to see its lanes, vehicles, queued count and state in the *Selected road* panel. Click a car (zoomed in) to follow it and see its route.
 
-## 3. Rewind
+## 3. Pause and rewind
 Press **Space** to pause. The **timeline** at the bottom shows the replay window: the retained sim time and its memory against the budget.
 - Drag the handle or click on the track to scrub back to **before the closure**. You can also press **−1 min** a few times, or focus the track and press **←**.
 - The bridge is open again at that moment: you are looking at the past of the original scenario, *A*.
@@ -38,7 +41,7 @@ At that earlier moment, keep the Main Bridge open and close the **North Bridge**
 
 (Pressing **B** in A's past also creates a branch: then B closes the Main Bridge from that earlier moment instead.)
 
-Press **Space** and let B run past the time where you paused A. The *A: original* and *B: branch from …* buttons switch which scenario you view; each keeps its own position.
+Press **Space** and let B run past the time where you paused A (press **+** for 60×: B catches up sooner). The *A: original* and *B: branch from …* buttons switch which scenario you view; each keeps its own position.
 
 ## 5. Compare side by side
 Click **Compare side by side**.

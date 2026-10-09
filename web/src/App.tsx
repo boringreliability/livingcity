@@ -33,6 +33,8 @@ import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
 import { Legend } from './ui/Legend';
 import { ConfirmReplace, ScenarioPanel } from './ui/ScenarioPanel';
+import { DemoGuide } from './ui/DemoGuide';
+import { advanceGuide, guideHint, initialGuideProgress, type GuideProgress } from './ui/guideProgress';
 import { TimelineBar } from './ui/TimelineBar';
 import { VehiclePanel } from './ui/VehiclePanel';
 import type { LivingCitySnapshot, PerfRecording } from './ui/testHook';
@@ -77,6 +79,23 @@ interface Recording extends Omit<PerfRecording, 'wallMs' | 'timerResolutionMs'> 
   startMs: number;
 }
 
+/** Remembered per viewer: the demo guide was hidden (ward polish-004). */
+const GUIDE_HIDDEN_KEY = 'livingcity.guide.hidden';
+function readGuideHidden(): boolean {
+  try {
+    return window.localStorage.getItem(GUIDE_HIDDEN_KEY) === '1';
+  } catch {
+    return false; // storage unavailable: the guide shows on every visit
+  }
+}
+function writeGuideHidden(hidden: boolean): void {
+  try {
+    window.localStorage.setItem(GUIDE_HIDDEN_KEY, hidden ? '1' : '0');
+  } catch {
+    // ignore: it just isn't remembered
+  }
+}
+
 /** Focus the timeline slider (where focus goes when the panel holding it closes). */
 const focusTimeline = () => document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
 
@@ -104,6 +123,14 @@ export function App() {
   const followingRef = useRef(false);
   /** The user moved the camera (pan, zoom, Follow) since the last fit: a resize then keeps the view. */
   const cameraTouched = useRef(false);
+  /** Demo guide: hidden by the viewer, and the steps done so far (from frames only). */
+  const [guideHidden, setGuideHidden] = useState(readGuideHidden);
+  const guideRef = useRef<GuideProgress>(initialGuideProgress());
+  const [guide, setGuide] = useState<GuideProgress>(guideRef.current);
+  const hideGuide = useCallback((hidden: boolean) => {
+    setGuideHidden(hidden);
+    writeGuideHidden(hidden);
+  }, []);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
   /** Render-side measurement (C5): rAF intervals and draw CPU time over the last 300 frames. */
@@ -330,6 +357,11 @@ export function App() {
       applyFrame(f);
     });
     function applyFrame(f: FrameMessage) {
+      const g = advanceGuide(guideRef.current, f, readyRef.current?.landmarks.central_bridge ?? []);
+      if (g !== guideRef.current) {
+        guideRef.current = g;
+        setGuide(g);
+      }
       renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier, f.nextLinks);
       // keep a copy for picking before the buffer goes back to the worker
       recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count), next: f.nextLinks };
@@ -649,7 +681,11 @@ export function App() {
       } else if (e.key === 'Escape') {
         // innermost first: the confirmation (as Cancel), then the vehicle, then the road
         const inPanel = (sel: string) => e.target instanceof Element && !!e.target.closest(sel);
-        if (confirmRef.current) {
+        if (inPanel('section.guide')) {
+          // Esc in the demo guide hides it; focus goes to the Guide button that shows it again
+          hideGuide(true);
+          document.querySelector<HTMLElement>('button.guide-toggle')?.focus();
+        } else if (confirmRef.current) {
           setConfirmReplace(null);
           focusTimeline();
         } else if (trackedRef.current || goneRef.current) {
@@ -663,7 +699,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [toggleRunning, toggleMainBridge, changeSpeed, select, clearVehicle, speed]);
+  }, [toggleRunning, toggleMainBridge, changeSpeed, select, clearVehicle, speed, hideGuide]);
 
   // A button clicked with the pointer gives its focus back, so the next Space/B is a shortcut, not a
   // second press of that button. Keyboard activation (detail 0) keeps focus for keyboard users.
@@ -1040,6 +1076,8 @@ export function App() {
         diagnosticsOpen={diagOpen}
         onToggleDiagnostics={() => setDiagOpen((o) => !o)}
         demandScale={DEMAND}
+        guideShown={!guideHidden}
+        onToggleGuide={() => hideGuide(!guideHidden)}
       />
       {scenarioPanels}
       {error && (
@@ -1070,6 +1108,7 @@ export function App() {
         </p>
       )}
       <div className="side">
+        {ready && frame && !guideHidden && !comparingNow && <DemoGuide done={guide.done} hint={guideHint(guide, speed)} onHide={() => hideGuide(true)} />}
         {sel && selFrame && ready && (
           <SelectionPanel
             link={sel}

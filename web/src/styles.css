@@ -704,3 +704,74 @@ button.bridge.closed {
     bottom: 138px;
   }
 }
+
+/* The demo guide (ward polish-004): the top of the right column, ≤ 100 px tall so it stays in the top
+   band above the city's roads. Done steps read ✓ (text), the current one is outlined. */
+.guide {
+  display: grid;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.guide-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guide-now {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guide-hide {
+  padding: 0 7px;
+  line-height: 1.4;
+}
+
+.guide-steps {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-steps li {
+  min-width: 26px;
+  padding: 1px 4px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-steps li.done {
+  border-style: solid;
+  color: var(--text, #e6e6e6);
+}
+
+.guide-steps li.now {
+  border: 2px solid var(--text, #e6e6e6);
+  color: var(--text, #e6e6e6);
+}
+
+.guide-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.bridge-row {
+  display: flex;
+  gap: 6px;
+}
+
+.bridge-row .bridge {
+  flex: 1;
+}

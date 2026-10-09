@@ -24,6 +24,9 @@ interface Props {
   onToggleDiagnostics(): void;
   /** Demand scale from `?demand=` (1 = the normal city: no badge). */
   demandScale: number;
+  /** The demo guide is shown (ward polish-004). */
+  guideShown: boolean;
+  onToggleGuide(): void;
 }
 
 export function ControlPanel(p: Props) {
@@ -79,6 +82,7 @@ export function ControlPanel(p: Props) {
       <div role="status" aria-live="polite" className="behind">
         {behind ? '⚠ Behind — the engine cannot keep up with this speed' : ''}
       </div>
+      <div className="row bridge-row">
       <button
         type="button"
         className={`bridge ${closedShown ? 'closed' : ''}`}
@@ -92,6 +96,10 @@ export function ControlPanel(p: Props) {
         {closedShown ? 'Main bridge closed — reopen' : 'Close the main bridge'}
         {p.mainBridgePending && !p.bridgeStateHidden ? ' (pending)' : ''}
       </button>
+      <button type="button" className="guide-toggle" aria-pressed={p.guideShown} onClick={p.onToggleGuide} title="Show or hide the demo guide">
+        Guide
+      </button>
+      </div>
     </section>
   );
 }
