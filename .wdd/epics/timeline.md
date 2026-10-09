@@ -1,7 +1,7 @@
 ---
 epic: "timeline"
 name: "Replay, branching and comparison"
-status: "active"
+status: "complete"
 created: "2026-10-06"
 ---
 # Epic: Replay, branching and comparison

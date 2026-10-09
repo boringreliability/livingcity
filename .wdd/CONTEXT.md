@@ -1,13 +1,13 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-09: timeline-005 complete (Red r2, Gold r2). **Epic timeline built; waiting at the human epic gate.**
+2026-10-09: **epic timeline complete, approved by the user ("godkendt") at the epic gate.** Next: plan epic `polish`.
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
 - **Epic core: complete, approved 2026-10-07.** sim-core (network, world, routing, demand, closures, commands, `state_hash`, frame), thin `sim-wasm`, worker host + `SimClock`, WebGL2 renderer, React UI.
 - **Epic city: complete, approved 2026-10-08** (`.wdd/epics/city.md`, C1–C5): per-link sat flow + gridlock relief, River City (3 bridges, 22 zones, calibrated), inspect/follow, miniature look, 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, `docs/performance.md`. Core G4 superseded by city.e2e test 15 (user). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`.
-- **Epic timeline: built, awaiting the epic gate.** Spec `.wdd/epics/timeline.md` (T1–T5). Docs: `README.md`, `docs/{architecture,traffic-model,demo,performance}.md`.
+- **Epic timeline: complete, approved 2026-10-09.** Spec `.wdd/epics/timeline.md` (T1–T5). Docs: `README.md`, `docs/{architecture,traffic-model,demo,performance}.md`.
   - **timeline-001 complete**: `Timeline` with snapshots (353 KB every 120 ticks, budget eviction); seek = restore + replay; edits below the head cut the future; `Arc` network/demand.
   - **timeline-002 complete**: `Timeline::branch` and `World::window_metrics` (cohort; incomplete). Gold fuzz found no divergence.
   - **timeline-003 complete**: wasm `Sim` wraps a `Timeline` (seek/branch/info/window_metrics/forget_frames/free); host scenarios A/B; `TimelineBar`, `ScenarioPanel` and an inline replace confirmation; A is never edited in its past (the UI branches instead).
@@ -71,5 +71,5 @@
 - Browser `performance.now()` is coarse (0.1 ms). After a wasm trap the host halts, and recovery needs a new worker.
 
 ## What Comes Next
-- Human epic gate for `timeline` (present demo, commands, review log, deviations, known issues; wait for "godkendt").
+- Plan epic `polish` (spec + wards), then build it with the same gates.
 - Then epic `polish`: the MINORs above (city + timeline), a11y, onboarding.
