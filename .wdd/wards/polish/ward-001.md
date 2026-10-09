@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Keyboard, focus and honest labels"
 epic: "polish"
-status: "planned"
+status: "red"
 dependencies: ["timeline-005"]
 layer: "typescript"
 estimated_tests: 9
