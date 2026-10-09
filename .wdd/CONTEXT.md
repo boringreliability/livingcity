@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-09: epic timeline approved by the user. **Epic polish active:** polish-001 and polish-002 done; next polish-003 (renderer motion and markers).
+2026-10-09: epic timeline approved by the user. **Epic polish active:** polish-001…003 done; next polish-004 (first-run demonstration).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -11,6 +11,7 @@
 - **Epic polish: active.** Spec `.wdd/epics/polish.md` (P1–P6, measured per-frame basis); backlog ids a1–g5 in `.wdd/memory/polish-backlog.md`.
   - **polish-001 done**: Esc innermost-first (confirm → vehicle → road; focus to the slider only if the closing panel held it), Speed pointer pick blurs, "Comparing A and B", neutral bridge button while comparing, sr-only h1, axe audit (`e2e/a11y.spec.ts`). Tests: Vitest 111, e2e 82 + 1 skipped.
   - **polish-002 done** (Red r3, Gold r3): `.top-band` CSS grid (controls/scenarios/confirm/error/diagnostics; 2 columns ≥ 960 px, 1 below, fixed DOM order), refit on resize unless the user moved the camera (`cameraTouched`), legend above the metrics below 1260 px, road panel bottom-left while comparing ≥ 1000 px, cut labels hidden (batched), timeline on two rows below 960 px, error banner dismissible. Supported widths ≥ 768 px (README). Tests: e2e 99 + 1 skipped. Open minors g6–g11 (g7 = fatal errors can be cleared → with f2 in polish-005).
+  - **polish-003 done** (Red r3, Gold r1): frame `nextLinks` (u16 per record; `write_next_links`, stranded → none), `render/motion.ts` placement mirrored in `VEH_VS` (Bézier through junctions in a link's last 6 m; extrapolation never past the link end), `ExtrapolationClock` (re-bases on rate change, forgets the rate at each anchor, cap 1.5 × tick advance; rate ≤ requested multiplier), dashed hover stroke (+ frozen grey halo), closure ring sign at every zoom, hooks `vehicleDraw`/`trackedDraw`/`drawAt`. Frame 16 → 18 B/vehicle. **For the epic gate:** i1 (car stops at the curve end then jumps ~7 m at 1×), i2 (held cars stack in junctions at queues), i3/i5 deviations (hover halo kept; ring instead of 6×6 core). Tests: Rust 174, Vitest 116, e2e 103 + 1 skipped.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.

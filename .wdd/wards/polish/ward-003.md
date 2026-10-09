@@ -3,12 +3,12 @@ ward: 3
 revision: null
 name: "Calm motion and clear markers in the renderer"
 epic: "polish"
-status: "gold"
+status: "complete"
 dependencies: ["polish-002"]
 layer: "fullstack"
 estimated_tests: 10
 created: "2026-10-09"
-completed: null
+completed: "2026-10-09"
 ---
 # Ward polish-003: Calm motion and clear markers
 
