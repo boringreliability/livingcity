@@ -1076,8 +1076,9 @@ export function App() {
         diagnosticsOpen={diagOpen}
         onToggleDiagnostics={() => setDiagOpen((o) => !o)}
         demandScale={DEMAND}
-        guideShown={!guideHidden}
+        guideShown={!guideHidden && !comparingNow}
         onToggleGuide={() => hideGuide(!guideHidden)}
+        {...(comparingNow ? { guideDisabledReason: 'The demo guide steps aside while comparing' } : {})}
       />
       {scenarioPanels}
       {error && (

@@ -27,6 +27,8 @@ interface Props {
   /** The demo guide is shown (ward polish-004). */
   guideShown: boolean;
   onToggleGuide(): void;
+  /** When set, the Guide toggle is disabled with this reason (while comparing the guide steps aside). */
+  guideDisabledReason?: string;
 }
 
 export function ControlPanel(p: Props) {
@@ -62,7 +64,18 @@ export function ControlPanel(p: Props) {
         <span className="speed" data-testid="achieved-speed" title="Achieved simulation speed vs. the requested speed">
           {achieved.toFixed(1)}× of {p.speed}×
         </span>
-        {/* compact (an icon) so the panel stays inside the top inset band */}
+        {/* compact (icons) so the panel stays inside the top inset band */}
+        <button
+          type="button"
+          className="guide-toggle"
+          aria-label="Guide"
+          aria-pressed={p.guideShown}
+          onClick={p.onToggleGuide}
+          disabled={p.guideDisabledReason !== undefined}
+          title={p.guideDisabledReason ?? 'Show or hide the demo guide'}
+        >
+          <span aria-hidden="true">?</span>
+        </button>
         <button
           type="button"
           className="diag-toggle"
@@ -82,7 +95,6 @@ export function ControlPanel(p: Props) {
       <div role="status" aria-live="polite" className="behind">
         {behind ? '⚠ Behind — the engine cannot keep up with this speed' : ''}
       </div>
-      <div className="row bridge-row">
       <button
         type="button"
         className={`bridge ${closedShown ? 'closed' : ''}`}
@@ -96,10 +108,6 @@ export function ControlPanel(p: Props) {
         {closedShown ? 'Main bridge closed — reopen' : 'Close the main bridge'}
         {p.mainBridgePending && !p.bridgeStateHidden ? ' (pending)' : ''}
       </button>
-      <button type="button" className="guide-toggle" aria-pressed={p.guideShown} onClick={p.onToggleGuide} title="Show or hide the demo guide">
-        Guide
-      </button>
-      </div>
     </section>
   );
 }

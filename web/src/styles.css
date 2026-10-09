@@ -708,6 +708,7 @@ button.bridge.closed {
 /* The demo guide (ward polish-004): the top of the right column, ≤ 100 px tall so it stays in the top
    band above the city's roads. Done steps read ✓ (text), the current one is outlined. */
 .guide {
+  min-width: 0; /* a grid item: shrink to the column, never push the hide button off-screen */
   display: grid;
   gap: 4px;
   padding: 6px 10px;
@@ -722,6 +723,7 @@ button.bridge.closed {
 
 .guide-now {
   flex: 1;
+  min-width: 0;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -767,11 +769,13 @@ button.bridge.closed {
   color: var(--muted);
 }
 
-.bridge-row {
-  display: flex;
-  gap: 6px;
+.guide-toggle {
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1;
 }
 
-.bridge-row .bridge {
-  flex: 1;
+.guide-toggle[aria-pressed='true'] {
+  outline: 2px solid var(--text, #e6e6e6);
+  outline-offset: -2px;
 }

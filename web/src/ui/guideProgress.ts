@@ -53,5 +53,5 @@ export function advanceGuide(g: GuideProgress, f: GuideFrame, mainBridge: readon
 /** The speed hint: B is viewed below A's head and the speed is under 60×. */
 export function guideHint(g: GuideProgress, speed: number): string | null {
   if (!g.view || g.view.scenario !== 1 || g.aHead === null || g.view.position >= g.aHead || speed >= 60) return null;
-  return 'Tip: 60× brings B to A’s time sooner (+ or Speed)';
+  return 'Tip: 60× gets B to A’s time faster (+ or Speed)';
 }
