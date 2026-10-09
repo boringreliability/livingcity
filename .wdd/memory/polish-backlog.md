@@ -57,3 +57,10 @@ Items marked *pinned* are constrained by a frozen test.
   - River City's baseline is ~1.7k while the docs say ~2k;
   - `gold5.test.ts` is weak;
   - the frame's `tracked`/`linkDetail` typing.
+
+## (g) Found in polish wards
+- **g1:** Esc on confirm-replace moves focus to the slider even when focus was not in the panel; guard it with `inPanel('section.confirm')` (`App.tsx:624-626`). From polish-001-gold-1 m1.
+- **g2:** opening Speed with the pointer without changing it leaves focus on the select, so Space opens it (`ControlPanel.tsx:40-52`). From polish-001-gold-1 m2.
+- **g3:** toggling compare clears `mainPending`, so B's queued closure cue disappears until B ticks (`App.tsx:518-521`). From polish-001-gold-1 m3.
+- **g4:** the scenario panel keeps its dashed `viewing-b` frame while the heading says "Comparing A and B" (`ScenarioPanel.tsx:17`). From polish-001-gold-1 m4.
+- **g5:** `.sr-only` is minimal (no nowrap, margin, border or padding); the frozen h1 test needs area ≤ 1 px² (`styles.css:583`). From polish-001-gold-1 m5.

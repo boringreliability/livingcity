@@ -3,12 +3,12 @@ ward: 1
 revision: null
 name: "Keyboard, focus and honest labels"
 epic: "polish"
-status: "gold"
+status: "complete"
 dependencies: ["timeline-005"]
 layer: "typescript"
 estimated_tests: 9
 created: "2026-10-09"
-completed: null
+completed: "2026-10-09"
 ---
 # Ward polish-001: Keyboard, focus and honest labels
 

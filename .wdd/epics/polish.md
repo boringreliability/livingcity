@@ -18,7 +18,7 @@ It closes the open MINOR backlog from epics core, city and timeline. That backlo
 ## Wards
 | Ward | Name | Status |
 |------|------|--------|
-| polish-001 | Keyboard, focus and honest labels | planned |
+| polish-001 | Keyboard, focus and honest labels | complete |
 | polish-002 | Layout that fits: resize refit, split-view panels and narrow widths | planned |
 | polish-003 | Calm motion and clear markers in the renderer | planned |
 | polish-004 | First-run demonstration | planned |

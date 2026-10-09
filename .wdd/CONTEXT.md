@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-09: **epic timeline complete, approved by the user ("godkendt") at the epic gate.** Next: plan epic `polish`.
+2026-10-09: epic timeline approved by the user. **Epic polish active:** polish-001 done (Red r2, Gold r1); next polish-002 (layout).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -14,6 +14,8 @@
   - **timeline-004 complete**: lockstep compare (strict A/B pairs, shared window from the branch tick), split view with one camera, `ComparisonPanel` (incomplete always shown); interventions/view switch/vehicle picks off while comparing.
   - **timeline-005 complete**: `e2e/acceptance.spec.ts` (brief flow, pointer + keyboard-only), `tests/integration.test.ts` (protocol wiring, import-based orphan scan, docs/README/deviation checks, § Timeline numbers ⊂ `timeline.json`), `e2e/perf_timeline.spec.ts`. Pointer-clicked buttons blur (Space/B stay shortcuts). Tests: Rust 173 (release), Vitest 109, e2e 75 + 1 skipped (~13 min).
   - Timeline known issues: no refit on resize; road panel can cover B's top-right corner; B's frame buffer not reused; main-bridge button shows A's state while comparing; Esc does not close "Replace the branch?"; Space/B ignored after a pointer pick in the Speed select; district labels clipped at the halves' edges.
+- **Epic polish: active.** Spec `.wdd/epics/polish.md` (P1–P6, measured per-frame basis); backlog ids a1–g5 in `.wdd/memory/polish-backlog.md`.
+  - **polish-001 done**: Esc innermost-first (confirm → vehicle → road; focus to the slider only if the closing panel held it), Speed pointer pick blurs, "Comparing A and B", neutral bridge button while comparing, sr-only h1, axe audit (`e2e/a11y.spec.ts`). Tests: Vitest 111, e2e 82 + 1 skipped.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
