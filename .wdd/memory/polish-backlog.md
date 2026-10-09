@@ -64,3 +64,9 @@ Items marked *pinned* are constrained by a frozen test.
 - **g3:** toggling compare clears `mainPending`, so B's queued closure cue disappears until B ticks (`App.tsx:518-521`). From polish-001-gold-1 m3.
 - **g4:** the scenario panel keeps its dashed `viewing-b` frame while the heading says "Comparing A and B" (`ScenarioPanel.tsx:17`). From polish-001-gold-1 m4.
 - **g5:** `.sr-only` is minimal (no nowrap, margin, border or padding); the frozen h1 test needs area ≤ 1 px² (`styles.css:583`). From polish-001-gold-1 m5.
+- **g6:** `gold_polish002.spec.ts:49` selects `section.panel` only, so the error banner (`div.panel.error`) is never measured. The layout itself is correct (Gold r3 probe). From polish-002-gold-3 #1.
+- **g7:** fatal errors ("simulation halted", worker error, init failed) are cleared by the next action and can be dismissed, which can leave a frozen city with no explanation. Fix with a separate fatal state, neither dismissible nor cleared. **Goes with f2 in polish-005.** From polish-002-gold-3 #2.
+- **g8:** `.error { max-width: 420px }` has no effect inside `.top-band`, so the banner is 628 px wide at 1280 (`styles.css:404`). From polish-002-gold-3 #3.
+- **g9:** the timeline track is short between 960 and ~1100 px (111–175 px). From polish-002-gold-2 m3.
+- **g10:** the speed readout wraps onto 3 lines with the `?demand=6` badge; at 768 there is a 0 px gap between Diagnostics and the legend in the worst case. From polish-002-gold-2 m4/m5.
+- **g11:** in compare at 1280×720 the road panel covers A's bottom-left roads (outside the pinned sizes); in compare at ≤ 900 the scenario panel covers the top of A; the `compare-view` class is unused. From polish-002-gold-1 m3/m4/m7.

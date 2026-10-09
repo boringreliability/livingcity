@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-09: epic timeline approved by the user. **Epic polish active:** polish-001 done (Red r2, Gold r1); next polish-002 (layout).
+2026-10-09: epic timeline approved by the user. **Epic polish active:** polish-001 and polish-002 done; next polish-003 (renderer motion and markers).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -10,6 +10,7 @@
 - **Epic timeline: complete, approved 2026-10-09** (`.wdd/epics/timeline.md`, T1–T5): snapshots every 120 ticks within 48 MiB per scenario, seek = restore + replay, branch B from A's past (A never edited), lockstep compare with linked cameras and cohort metrics incl. incomplete, acceptance e2e, docs (`README.md`, `docs/`). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-09-timeline-004-final.md` and the ward files.
 - **Epic polish: active.** Spec `.wdd/epics/polish.md` (P1–P6, measured per-frame basis); backlog ids a1–g5 in `.wdd/memory/polish-backlog.md`.
   - **polish-001 done**: Esc innermost-first (confirm → vehicle → road; focus to the slider only if the closing panel held it), Speed pointer pick blurs, "Comparing A and B", neutral bridge button while comparing, sr-only h1, axe audit (`e2e/a11y.spec.ts`). Tests: Vitest 111, e2e 82 + 1 skipped.
+  - **polish-002 done** (Red r3, Gold r3): `.top-band` CSS grid (controls/scenarios/confirm/error/diagnostics; 2 columns ≥ 960 px, 1 below, fixed DOM order), refit on resize unless the user moved the camera (`cameraTouched`), legend above the metrics below 1260 px, road panel bottom-left while comparing ≥ 1000 px, cut labels hidden (batched), timeline on two rows below 960 px, error banner dismissible. Supported widths ≥ 768 px (README). Tests: e2e 99 + 1 skipped. Open minors g6–g11 (g7 = fatal errors can be cleared → with f2 in polish-005).
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
