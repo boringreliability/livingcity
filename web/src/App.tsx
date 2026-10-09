@@ -76,6 +76,9 @@ interface Recording extends Omit<PerfRecording, 'wallMs' | 'timerResolutionMs'> 
   startMs: number;
 }
 
+/** Below this width the scenario/confirm panels stack in the left column (styles.css mirrors it). */
+const NARROW_QUERY = '(max-width: 959px)';
+
 /** Focus the timeline slider (where focus goes when the panel holding it closes). */
 const focusTimeline = () => document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
 
@@ -103,6 +106,14 @@ export function App() {
   const followingRef = useRef(false);
   /** The user moved the camera (pan, zoom, Follow) since the last fit: a resize then keeps the view. */
   const cameraTouched = useRef(false);
+  /** Narrow windows: the scenario and confirm panels join the left column (no room between the side columns). */
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_QUERY);
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
   /** Sim seconds per wall ms of the last drawn picture (0 while paused). */
   const simPerMsRef = useRef(0);
   /** Render-side measurement (C5): rAF intervals and draw CPU time over the last 300 frames. */
@@ -172,11 +183,16 @@ export function App() {
     const [sx, sy] = camera.worldToScreen(l.x, l.y);
     el.style.left = `${sx}px`;
     el.style.top = `${sy}px`;
-    // a label that would be cut at its layer's edge (a split-view half, the window) is hidden, never half-drawn
-    const layer = el.parentElement?.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    const cut = !!layer && (r.left < layer.left - 0.5 || r.right > layer.right + 0.5 || r.top < layer.top - 0.5 || r.bottom > layer.bottom + 0.5);
-    el.style.visibility = cut ? 'hidden' : '';
+  };
+  /** A label that would be cut at its layer's edge (a split-view half, the window) is hidden, never
+   *  half-drawn. All reads first, then all writes: one layout for the batch, not one per label. */
+  const hideCutLabels = (els: HTMLElement[]) => {
+    const cut = els.map((el) => {
+      const layer = el.parentElement?.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      return !!layer && (r.left < layer.left - 0.5 || r.right > layer.right + 0.5 || r.top < layer.top - 0.5 || r.bottom > layer.bottom + 0.5);
+    });
+    els.forEach((el, i) => (el.style.visibility = cut[i] ? 'hidden' : ''));
   };
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
@@ -507,11 +523,16 @@ export function App() {
       const moved =
         cam.labels !== labelsRef.current || cam.cx !== camera.cx || cam.cy !== camera.cy || cam.zoom !== camera.zoom || cam.w !== camera.width || cam.h !== camera.height;
       if (moved) Object.assign(cam, { labels: labelsRef.current, cx: camera.cx, cy: camera.cy, zoom: camera.zoom, w: camera.width, h: camera.height, gen: cam.gen + 1 });
+      const placed: HTMLElement[] = [];
       labelsRef.current.forEach((l, i) => {
         for (const el of [labelEls.current[i], labelElsB.current[i]]) {
-          if (el && labelPlaced.current.get(el) !== cam.gen) placeLabel(el, l);
+          if (el && labelPlaced.current.get(el) !== cam.gen) {
+            placeLabel(el, l);
+            placed.push(el);
+          }
         }
       });
+      if (placed.length) hideCutLabels(placed);
       renderFrames.current++;
       raf = requestAnimationFrame(loop);
     };
@@ -879,6 +900,55 @@ export function App() {
   const selFrame = selectedSide === 'B' && bFrameRef.current ? bFrameRef.current : frame;
   const focusSlider = focusTimeline;
 
+  const scenarioPanels = (
+    <>
+        {frame && frame.timeline.branchTick >= 0 && (
+          <ScenarioPanel
+            scenario={viewedRef.current}
+            branchTick={frame.timeline.branchTick}
+            comparing={comparingNow}
+            onCompare={(on) => {
+              pendingSeekRef.current = null;
+              setPendingSeek(null);
+              forgetPosition();
+              client.current?.compare(on);
+            }}
+            onView={(sc) => {
+              pendingSeekRef.current = null;
+              setPendingSeek(null);
+              forgetPosition();
+              client.current?.viewScenario(sc);
+            }}
+            onDiscard={() => {
+              pendingSeekRef.current = null;
+              setPendingSeek(null);
+              forgetPosition();
+              client.current?.discardBranch();
+              // keep keyboard users in place: the discard button disappears
+              document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
+            }}
+          />
+        )}
+        {confirmReplace && (
+          <ConfirmReplace
+            onReplace={() => {
+              const c = confirmRef.current;
+              if (!c) return;
+              setConfirmReplace(null);
+              setMainPending(null);
+              client.current?.branch(c.at, c.then); // the position the user intervened at
+              c.onBranched?.();
+              focusSlider();
+            }}
+            onCancel={() => {
+              setConfirmReplace(null);
+              focusSlider();
+            }}
+          />
+        )}
+    </>
+  );
+
   return (
     <main className={`app${comparingNow ? ' comparing' : ''}`}>
       <h1 className="sr-only">Living City: traffic simulation</h1>
@@ -895,7 +965,10 @@ export function App() {
           <span key={`${i}:${l.text}`} ref={(el) => {
             labelEls.current[i] = el;
             // the callback re-runs on every render; only a newly mounted element needs placing
-            if (el && !labelPlaced.current.has(el)) placeLabel(el, l);
+            if (el && !labelPlaced.current.has(el)) {
+              placeLabel(el, l);
+              hideCutLabels([el]);
+            }
           }} className={`zone ${l.kind}`}>
             <span className="zone-icon">{l.icon}</span> {l.text}
           </span>
@@ -906,13 +979,17 @@ export function App() {
           {labels.map((l, i) => (
             <span key={`b${i}:${l.text}`} ref={(el) => {
               labelElsB.current[i] = el;
-              if (el && !labelPlaced.current.has(el)) placeLabel(el, l);
+              if (el && !labelPlaced.current.has(el)) {
+              placeLabel(el, l);
+              hideCutLabels([el]);
+            }
             }} className={`zone ${l.kind}`}>
               <span className="zone-icon">{l.icon}</span> {l.text}
             </span>
           ))}
         </div>
       )}
+      <div className="left-stack">
       <ControlPanel
         running={running}
         speed={speed}
@@ -928,6 +1005,7 @@ export function App() {
         onToggleDiagnostics={() => setDiagOpen((o) => !o)}
         demandScale={DEMAND}
       />
+      {narrow && scenarioPanels}
       {diagOpen && (
         <DiagnosticsPanel
           comparing={comparingNow}
@@ -939,6 +1017,7 @@ export function App() {
           clock={frame?.clock ?? null}
         />
       )}
+      </div>
       {!ready && !noGl && !error && (
         <p role="status" className="panel starting">
           Starting the city…
@@ -975,50 +1054,7 @@ export function App() {
       {!comparingNow && <Legend />}
       {comparingNow && comparison && <ComparisonPanel comparison={comparison} />}
       {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} />}
-      {frame && frame.timeline.branchTick >= 0 && (
-        <ScenarioPanel
-          scenario={viewedRef.current}
-          branchTick={frame.timeline.branchTick}
-          comparing={comparingNow}
-          onCompare={(on) => {
-            pendingSeekRef.current = null;
-            setPendingSeek(null);
-            forgetPosition();
-            client.current?.compare(on);
-          }}
-          onView={(sc) => {
-            pendingSeekRef.current = null;
-            setPendingSeek(null);
-            forgetPosition();
-            client.current?.viewScenario(sc);
-          }}
-          onDiscard={() => {
-            pendingSeekRef.current = null;
-            setPendingSeek(null);
-            forgetPosition();
-            client.current?.discardBranch();
-            // keep keyboard users in place: the discard button disappears
-            document.querySelector<HTMLElement>('[role="slider"][aria-label="Timeline"]')?.focus();
-          }}
-        />
-      )}
-      {confirmReplace && (
-        <ConfirmReplace
-          onReplace={() => {
-            const c = confirmRef.current;
-            if (!c) return;
-            setConfirmReplace(null);
-            setMainPending(null);
-            client.current?.branch(c.at, c.then); // the position the user intervened at
-            c.onBranched?.();
-            focusSlider();
-          }}
-          onCancel={() => {
-            setConfirmReplace(null);
-            focusSlider();
-          }}
-        />
-      )}
+      <div className="center-stack">{!narrow && scenarioPanels}</div>
       {error && (
         <p role="alert" className="panel error">
           {error}

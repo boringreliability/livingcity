@@ -45,12 +45,47 @@ canvas.city {
   font-size: 13px;
 }
 
-.controls {
+/* Left column (ward polish-002): the control panel, then (narrow windows) the scenario and confirm
+   panels, then diagnostics, stacked so they never overlap whatever their height. */
+.left-stack {
+  position: absolute;
   top: 16px;
   left: 16px;
+  width: 326px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+/* Centre column (wide windows): the scenario and confirm panels, between the left column (326 px)
+   and the right column (240 px). */
+.center-stack {
+  position: absolute;
+  top: 16px;
+  left: 358px;
+  right: 272px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.left-stack > .panel,
+.center-stack > .panel {
+  position: static;
+  transform: none;
+  pointer-events: auto;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+/* fixed width: a long status (behind, stress) wraps instead of widening into the centre column */
+.controls {
   display: grid;
   gap: 8px;
-  min-width: 260px;
+  width: 100%;
 }
 
 .diag-toggle {
@@ -75,9 +110,7 @@ canvas.city {
 
 /* Below the control panel, top left; opened on demand (D), so it may cover part of the map. */
 .diagnostics {
-  top: 132px;
-  left: 16px;
-  width: 300px;
+  width: 100%;
   font-size: 12px;
 }
 
@@ -376,7 +409,13 @@ button.bridge.closed {
 .timeline-buttons button {
   padding: 2px 7px;
   font-size: 11.5px;
+  white-space: nowrap;
 }
+
+.timeline-buttons .short {
+  display: none;
+}
+
 
 .timeline-label {
   white-space: nowrap;
@@ -450,15 +489,9 @@ button.bridge.closed {
   color: var(--muted);
 }
 
-/* Scenarios (once B exists): in the top band, centred between the control panel (left, 326 px) and
-   the right column (240 px), wrapping into rows when narrow, so it never overlaps either (ward
-   polish-002). The viewed one is named in text inside a pattern frame. */
+/* Scenarios (once B exists): in the centre column, wrapping into rows when narrow (the left column
+   below 960 px). The viewed one is named in text inside a pattern frame. */
 .scenarios {
-  top: 16px;
-  left: 358px;
-  right: 272px;
-  width: fit-content;
-  margin: 0 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -491,10 +524,7 @@ button.bridge.closed {
 }
 
 .confirm {
-  top: 140px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 360px;
+  width: 360px;
   display: grid;
   gap: 6px;
 }
@@ -591,23 +621,6 @@ button.bridge.closed {
   clip: rect(0 0 0 0);
 }
 
-/* Narrow windows (ward polish-002): the band between the side panels is too narrow, so the scenario
-   panel goes below the control panel and the diagnostics panel below it. */
-@media (max-width: 959px) {
-  .scenarios {
-    top: 132px;
-    left: 16px;
-    right: auto;
-    margin: 0;
-    max-width: 326px;
-    box-sizing: border-box;
-  }
-
-  .app:has(.scenarios) .diagnostics {
-    top: 260px;
-  }
-}
-
 /* The legend and the metrics share the bottom band only when both fit (≥ 1260 px): narrower, the legend
    sits just above the metrics, still inside the bottom inset band. */
 @media (max-width: 1259px) {
@@ -624,5 +637,40 @@ button.bridge.closed {
     right: auto;
     left: 16px;
     bottom: 74px;
+  }
+}
+
+/* (last: it overrides the base rules of the panels above the bar) */
+/* Narrow windows (ward polish-002): short button glyphs, the track on its own full-width row, and
+   the panels above the bar moved up by the extra row. */
+@media (max-width: 959px) {
+  .timeline {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .timeline-track {
+    order: 10;
+    flex: 1 0 100%;
+  }
+
+  .timeline-buttons .long,
+  .timeline-memory-note {
+    display: none;
+  }
+
+  .timeline-buttons .short {
+    display: inline;
+  }
+
+  .metrics,
+  .comparison,
+  .side-label {
+    bottom: 76px;
+  }
+
+  .legend {
+    bottom: 138px;
   }
 }

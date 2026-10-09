@@ -94,14 +94,18 @@ export function TimelineBar({ timeline, position, onSeek }: Props) {
   return (
     <section className="panel timeline" aria-label="Replay timeline">
       <div className="timeline-buttons">
-        <button type="button" onClick={() => seek(lo)}>
-          Jump to start
+        {/* narrow windows show the short glyphs; the name stays the long text (aria-label) */}
+        <button type="button" aria-label="Jump to start" onClick={() => seek(lo)}>
+          <span className="long">Jump to start</span>
+          <span className="short" aria-hidden="true">⏮</span>
         </button>
-        <button type="button" onClick={() => seek(position - STEP_TICKS)}>
-          −1 min
+        <button type="button" aria-label="−1 min" onClick={() => seek(position - STEP_TICKS)}>
+          <span className="long">−1 min</span>
+          <span className="short" aria-hidden="true">−1</span>
         </button>
-        <button type="button" onClick={() => seek(position + STEP_TICKS)}>
-          +1 min
+        <button type="button" aria-label="+1 min" onClick={() => seek(position + STEP_TICKS)}>
+          <span className="long">+1 min</span>
+          <span className="short" aria-hidden="true">+1</span>
         </button>
         <button type="button" onClick={() => seek(hi)}>
           Live
@@ -147,7 +151,7 @@ export function TimelineBar({ timeline, position, onSeek }: Props) {
         head {simClock(hi)}
       </span>
       <span className="timeline-memory" title="Snapshot memory of the viewed scenario; each scenario has its own budget">
-        {mib} / {budget} MiB replay memory (per scenario)
+        {mib} / {budget} MiB replay memory<span className="timeline-memory-note"> (per scenario)</span>
       </span>
     </section>
   );
