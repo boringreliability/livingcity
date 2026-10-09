@@ -507,6 +507,13 @@ impl World {
     }
 
     pub fn metrics(&self) -> Metrics {
+        self.metrics_full_scan()
+    }
+
+    /// `metrics()` computed by scanning every lane, buffer and slot: the reference the incremental
+    /// counters are tested against (ward polish-005).
+    #[doc(hidden)]
+    pub fn metrics_full_scan(&self) -> Metrics {
         let c = self.counts();
         let queued = self
             .lanes

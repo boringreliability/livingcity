@@ -1,0 +1,8 @@
+{
+  "note": "code before polish-005 (sim-core as at commit 4e5d5c1); native release; River City seed 2026/7, after 1 sim h, mean of 2000 ticks",
+  "loadAvg": "{ 16.60 12.45 14.84 } / { 16.15 12.42 14.81 }",
+    "x1": {"stepMs": 0.0213, "metricsMs": 0.0096, "active": 1761, "onNetwork": 1761},
+    "x3": {"stepMs": 0.1523, "metricsMs": 0.1644, "active": 41332, "onNetwork": 6125},
+    "x5": {"stepMs": 0.3306, "metricsMs": 0.3824, "active": 89550, "onNetwork": 6973},
+  "branchMs": 15.287
+}
