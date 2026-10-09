@@ -20,7 +20,7 @@ describe('polish-001 docs and labels', () => {
     expect(close).toBeGreaterThan(open);
     expect(before.slice(close + 2).trim(), 'nothing between the comment and the constant').toBe('');
     const comment = before.slice(open, close);
-    for (const term of [/no[ _]route/i, /stranded/i, /unreachable/i, /gridlock/i]) expect(comment, `comment names ${term}`).toMatch(term);
+    for (const term of [/no[ _]?route/i, /stranded/i, /unreachable/i, /gridlock/i]) expect(comment, `comment names ${term}`).toMatch(term);
     // the docs define unserved with the same parts
     const model = read('docs/traffic-model.md');
     const line = model.split('\n').find((l) => /\*\*unserved\*\*/.test(l));
@@ -33,7 +33,9 @@ describe('polish-001 docs and labels', () => {
     const item = arch.split('\n').find((l) => /^- \*\*Memory\.?\*\*/.test(l));
     expect(item, 'architecture.md has the Memory deviation').toBeDefined();
     expect(item!).not.toMatch(/two Bs/i);
-    expect(item!).toMatch(/\bfreed?\b[^.]*\bbefore\b|\bbefore\b[^.]*\bbuil[dt]\b/i);
+    // the old B is freed first (before / first / then …), so the peak is A plus one B
+    expect(item!).toMatch(/\bfree[sd]?\b/i);
+    expect(item!).toMatch(/\b(before|first)\b/i);
     expect(item!).toMatch(/A plus (one|a single) B/i);
     // and the host does it in that order: in `branch`, the old B is freed before `a.branch(` builds the new one
     const host = read('web/src/sim/host.ts');

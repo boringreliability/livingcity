@@ -109,7 +109,9 @@ async function focusables(page: Page): Promise<string[]> {
       .filter((el) => {
         const r = el.getBoundingClientRect();
         const st = getComputedStyle(el);
-        return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && !(el as HTMLButtonElement).disabled && el.tabIndex >= 0;
+        const native = el.matches('button, select, input, textarea, a[href]');
+        // a native control is expected in the tab order even if someone set tabindex=-1 on it
+        return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && !(el as HTMLButtonElement).disabled && (native || el.tabIndex >= 0);
       })
       .map((el) => {
         el.dataset['a11yId'] ??= `f${n++}-${(el.getAttribute('aria-label') ?? el.textContent ?? el.tagName).trim().slice(0, 30)}`;
@@ -158,12 +160,12 @@ async function tabTour(page: Page, label: string) {
   expect(back, `${label}: Shift+Tab walks back`).toEqual([...forward].reverse());
 }
 
-/** document.activeElement is connected, visible, and the body or a control. */
+/** Focus moved to a sensible place: a connected, visible control (never dropped to the body). */
 async function focusIsSane(page: Page, label: string) {
   const r = await page.evaluate(() => {
     const el = document.activeElement as HTMLElement | null;
     if (!el) return { ok: false, why: 'no activeElement' };
-    if (el === document.body) return { ok: true, why: 'body' };
+    if (el === document.body) return { ok: false, why: 'the body (focus was dropped)' };
     const box = el.getBoundingClientRect();
     const control = el.matches('button, select, input, a[href], [role="slider"], [tabindex]');
     return { ok: el.isConnected && box.width > 0 && box.height > 0 && control, why: `${el.tagName} ${el.textContent?.slice(0, 30)}` };
@@ -228,6 +230,7 @@ test('esc_closes_innermost_first', async ({ page }) => {
   expect((await snap(page)).closed).toEqual(bClosed);
   await page.getByRole('button', { name: 'A: original' }).click();
   await expect.poll(async () => (await snap(page)).scenario).toBe('A');
+  await slider(page).focus(); // Esc also works while the slider has focus
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await snap(page)).selectedLink).toBeNull();
   // vehicle before road
@@ -255,7 +258,7 @@ test('speed_select_pointer_pick_keeps_shortcuts', async ({ page }) => {
   await page.keyboard.press('Space');
   await expect.poll(async () => (await snap(page)).running).toBe(false);
   await expect(speed).toHaveValue('60');
-  // keyboard: Tab to the select, change with an arrow key → focus stays
+  // keyboard: Tab to the select, change it by typing (arrow keys only open the popup on macOS) → focus stays
   await blur(page);
   let on = false;
   for (let i = 0; i < 40 && !on; i++) {
@@ -263,8 +266,8 @@ test('speed_select_pointer_pick_keeps_shortcuts', async ({ page }) => {
     on = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Speed');
   }
   expect(on).toBe(true);
-  await page.keyboard.press('ArrowUp');
-  await expect(speed).not.toHaveValue('60');
+  await page.keyboard.press('2');
+  await expect(speed).toHaveValue('20');
   await sleep(200);
   expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Speed');
 });
@@ -365,11 +368,18 @@ test('compare_heading_and_bridge_button_are_honest', async ({ page }) => {
 // 6
 test('page_has_one_h1', async ({ page }) => {
   await withBranch(page);
-  const h1 = async () => page.evaluate(() => [...document.querySelectorAll('h1')].map((h) => h.textContent?.trim() ?? ''));
+  const h1 = async () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('h1')].map((h) => {
+        const r = h.getBoundingClientRect();
+        return { text: h.textContent?.trim() ?? '', area: r.width * r.height };
+      }),
+    );
   const check = async (label: string) => {
     const hs = await h1();
     expect(hs.length, `${label}: one h1`).toBe(1);
-    expect(hs[0]!.length, `${label}: h1 text`).toBeGreaterThan(3);
+    expect(hs[0]!.text.length, `${label}: h1 text`).toBeGreaterThan(3);
+    expect(hs[0]!.area, `${label}: h1 visually hidden`).toBeLessThanOrEqual(1);
   };
   await check('branch');
   await page.getByRole('button', { name: 'A: original' }).click();
