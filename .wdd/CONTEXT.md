@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-09: epic timeline approved by the user. **Epic polish active:** polish-001…003 done; next polish-004 (first-run demonstration).
+2026-10-10: **Epic polish active:** polish-001…004 done; next polish-005 (profile and optimize the measured per-frame bottlenecks).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -11,7 +11,8 @@
 - **Epic polish: active.** Spec `.wdd/epics/polish.md` (P1–P6, measured per-frame basis); backlog ids a1–g5 in `.wdd/memory/polish-backlog.md`.
   - **polish-001 done**: Esc innermost-first, Speed pointer pick blurs, honest compare labels, sr-only h1, axe audit (`e2e/a11y.spec.ts`).
   - **polish-002 done**: `.top-band` grid (2 columns ≥ 960 px, 1 below, fixed DOM order), refit on resize unless the user moved the camera, no panel overlaps at ≥ 768 px, cut labels hidden, error banner dismissible (`e2e/layout.spec.ts`, `gold_polish002.spec.ts`).
-  - **polish-003 done** (Red r3, Gold r1): frame `nextLinks` (u16 per record; `write_next_links`, stranded → none), `render/motion.ts` placement mirrored in `VEH_VS` (Bézier through junctions in a link's last 6 m; extrapolation never past the link end), `ExtrapolationClock` (re-bases on rate change, forgets the rate at each anchor, cap 1.5 × tick advance; rate ≤ requested multiplier), dashed hover stroke (+ frozen grey halo), closure ring sign at every zoom, hooks `vehicleDraw`/`trackedDraw`/`drawAt`. Frame 16 → 18 B/vehicle. **For the epic gate:** i1 (car stops at the curve end then jumps ~7 m at 1×), i2 (held cars stack in junctions at queues), i3/i5 deviations (hover halo kept; ring instead of 6×6 core). Tests: Rust 174, Vitest 116, e2e 103 + 1 skipped.
+  - **polish-003 done**: frame `nextLinks` (u16/record), `render/motion.ts` junction curve mirrored in `VEH_VS`, `ExtrapolationClock`, dashed hover, closure ring sign. **Epic gate items:** i1 (stop at curve end, then ~7 m jump at 1×), i2 (held cars stack in junctions), i3/i5 deviations.
+  - **polish-004 done** (Red r3, Gold r2): demo guide (`ui/DemoGuide.tsx`, `ui/guideProgress.ts`) at the top of the right column; steps ticked from frames by sim ticks only, sticky; "?" (Guide) toggle in the first control row; Esc hides it; remembered in `localStorage`. Machine load spikes (load avg ~150 from other processes) cause spurious e2e timeouts: log `uptime`, re-run alone. Tests: Vitest 118, e2e 114 + 1 skipped.
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.

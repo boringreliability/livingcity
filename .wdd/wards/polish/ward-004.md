@@ -3,12 +3,12 @@ ward: 4
 revision: null
 name: "First-run demonstration"
 epic: "polish"
-status: "gold"
+status: "complete"
 dependencies: ["polish-003"]
 layer: "typescript"
 estimated_tests: 9
 created: "2026-10-09"
-completed: null
+completed: "2026-10-10"
 ---
 # Ward polish-004: First-run demonstration
 
