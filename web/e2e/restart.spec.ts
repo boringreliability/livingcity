@@ -7,6 +7,8 @@ test('trap_offers_restart', async ({ page }) => {
   test.setTimeout(180_000);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  let workers = 0;
+  page.on('worker', () => workers++);
   await page.goto('/');
   await expect.poll(() => tick(page), { timeout: 60_000 }).toBeGreaterThan(1800);
   // a trap inside the worker's wasm
@@ -23,8 +25,10 @@ test('trap_offers_restart', async ({ page }) => {
   await page.waitForTimeout(500);
   await expect(alert).toBeVisible();
   // restart: a living city again
+  const before = workers;
   await restart.click();
   await expect(alert).toHaveCount(0, { timeout: 60_000 });
+  expect(workers, 'a new worker was created').toBeGreaterThan(before);
   await expect.poll(() => tick(page), { timeout: 60_000 }).toBeGreaterThan(1800);
   const t0 = await tick(page);
   await expect.poll(() => tick(page), { timeout: 20_000 }).toBeGreaterThan(t0);

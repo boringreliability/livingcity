@@ -41,7 +41,33 @@ fn golden_hashes_hold() {
         assert_eq!(tl.world().state_hash(), tl_hash, "×{scale} timeline");
         assert_eq!(b.world().state_hash(), b_hash, "×{scale} branch");
     }
+    // ticks right after the ×5 closure: the hashed periodic/priority queues differ here if the order changes
+    let (mut tl, bridge) = river_timeline(5.0);
+    tl.step_n(3000);
+    tl.seek(2000).unwrap();
+    for l in bridge {
+        tl.schedule(Command { tick: 2000, kind: CommandKind::CloseLink(l) }).unwrap();
+    }
+    for (t, h) in [(2001u64, 0xf8197275a218e7a2u64), (2005, 0x172ff966411cef43), (2010, 0xdf43aa73ba51410f), (2017, 0xda68962cd9f01abf)] {
+        while tl.position_tick() < t {
+            tl.step();
+        }
+        assert_eq!(tl.world().state_hash(), h, "×5 right after the closure, tick {t}");
+    }
+    // three_bridges closed through a timeline with a seek and a branch (stranded vehicles, retries)
     let c = three_bridges(17, 23);
+    let mut tl = Timeline::new(World::from_scenario(c.scenario.clone()).unwrap(), GIB);
+    for b in [c.landmarks.north_bridge, c.landmarks.central_bridge, c.landmarks.south_bridge] {
+        for l in b {
+            tl.schedule(Command { tick: 1190, kind: CommandKind::CloseLink(l) }).unwrap();
+        }
+    }
+    tl.step_n(2400);
+    tl.seek(1500).unwrap();
+    tl.step_n(300);
+    let b = tl.branch(1700, GIB).unwrap();
+    assert_eq!(tl.world().state_hash(), 0x6165bcebbe44f6d5, "three_bridges timeline");
+    assert_eq!(b.world().state_hash(), 0x2cbc8cf112cb2e04, "three_bridges branch");
     let mut w = World::from_scenario(c.scenario).unwrap();
     for b in [c.landmarks.north_bridge, c.landmarks.central_bridge, c.landmarks.south_bridge] {
         for l in b {
@@ -102,6 +128,25 @@ fn incremental_metrics_equal_full_scan() {
         same_metrics(&w, &format!("three_bridges closed step {k}"));
     }
     assert!(saw_stranded && saw_unreachable, "the closed case is exercised");
+    // … and through a timeline: seeks and a branch while stranded / no-route vehicles exist
+    let c = three_bridges(17, 23);
+    let mut tl = Timeline::new(World::from_scenario(c.scenario).unwrap(), GIB);
+    for br in [c.landmarks.north_bridge, c.landmarks.central_bridge, c.landmarks.south_bridge] {
+        for l in br {
+            tl.schedule(Command { tick: 1190, kind: CommandKind::CloseLink(l) }).unwrap();
+        }
+    }
+    tl.step_n(2400);
+    for target in [1300u64, 2100, 1900] {
+        tl.seek(target).unwrap();
+        same_metrics(tl.world(), &format!("three_bridges after seek {target}"));
+        tl.step_n(61);
+        same_metrics(tl.world(), &format!("three_bridges after seek {target} + 61"));
+    }
+    let mut b = tl.branch(tl.position_tick(), GIB).unwrap();
+    same_metrics(b.world(), "three_bridges branch");
+    b.step_n(120);
+    same_metrics(b.world(), "three_bridges branch + 120");
 }
 
 // 3
@@ -132,14 +177,35 @@ fn metrics_is_cheap() {
 fn schedules_visit_only_due_slots() {
     let (mut tl, _) = river_timeline(5.0);
     tl.step_n(7200);
-    let live = tl.world().metrics_full_scan().active as f64;
     for _ in 0..240 {
+        let live = tl.world().metrics_full_scan().active as f64;
         tl.step();
         let (periodic, retries) = tl.world().last_step_visits();
         assert!((periodic as f64) <= 1.2 * live / 240.0 + 10.0, "periodic visited {periodic} slots of {live} live");
         // retries: only due slots (none are without a route in this open city)
         assert_eq!(retries, 0, "retry step visited {retries} slots with no retry due");
     }
+    // three_bridges with every bridge closed: retries are due; each vehicle without a route retries once per 60 ticks
+    let c = three_bridges(17, 23);
+    let mut w = World::from_scenario(c.scenario).unwrap();
+    for br in [c.landmarks.north_bridge, c.landmarks.central_bridge, c.landmarks.south_bridge] {
+        for l in br {
+            w.schedule(Command { tick: 1190, kind: CommandKind::CloseLink(l) }).unwrap();
+        }
+    }
+    for _ in 0..1500 {
+        w.step();
+    }
+    let mut total = 0usize;
+    let mut without_route_max = 0u64;
+    for _ in 0..60 {
+        let m = w.metrics_full_scan();
+        without_route_max = without_route_max.max(m.no_route + m.stranded);
+        w.step();
+        total += w.last_step_visits().1;
+    }
+    assert!(total > 0, "retries happened");
+    assert!(total as u64 <= without_route_max + 10, "60 ticks visited {total} retry slots for ≤ {without_route_max} vehicles without a route");
 }
 
 // 5
