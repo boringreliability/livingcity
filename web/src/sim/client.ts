@@ -4,14 +4,18 @@ import type { CityName, ComparisonMessage, FrameMessage, FromWorker, ReadyMessag
 export interface SimClient {
   onReady(cb: (msg: ReadyMessage) => void): void;
   onFrame(cb: (msg: FrameMessage) => void): void;
-  onError(cb: (message: string) => void): void;
+  /** `fatal`: the simulation stopped; only a new client (restart) helps. */
+  onError(cb: (message: string, fatal: boolean) => void): void;
   onComparison(cb: (msg: ComparisonMessage) => void): void;
   setRunning(running: boolean): void;
   setSpeed(multiplier: number): void;
   closeLink(link: number): void;
   openLink(link: number): void;
   /** Give a consumed vehicle buffer back to the worker's pool. */
-  returnBuffer(buffer: ArrayBuffer): void;
+  /** `scenario`: the side of the frame it came from (each side has its own pool in the worker). */
+  returnBuffer(buffer: ArrayBuffer, scenario?: 0 | 1): void;
+  /** Test hook: make the worker's next iteration trap inside wasm. */
+  debugTrap(): void;
   /** Track the vehicle at `record` of the frame encoded at `frameTick`. */
   /** `seq` is echoed back in frames (`trackedSeq`). */
   inspectVehicle(frameTick: number, record: number, seq?: number): void;
@@ -36,17 +40,18 @@ export function createSimClient(
   const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   const ready: ((m: ReadyMessage) => void)[] = [];
   const frame: ((m: FrameMessage) => void)[] = [];
-  const errors: ((m: string) => void)[] = [];
+  const errors: ((m: string, fatal: boolean) => void)[] = [];
   const comparisons: ((m: ComparisonMessage) => void)[] = [];
   const send = (msg: ToWorker, transfer: Transferable[] = []) => worker.postMessage(msg, transfer);
 
-  worker.onerror = (e: ErrorEvent) => errors.forEach((cb) => cb(`worker error: ${e.message}`));
+  worker.onerror = (e: ErrorEvent) => errors.forEach((cb) => cb(`worker error: ${e.message}`, true));
+  worker.onmessageerror = () => errors.forEach((cb) => cb('worker message could not be read', true));
   worker.onmessage = (e: MessageEvent<FromWorker>) => {
     const msg = e.data;
     if (msg.type === 'ready') ready.forEach((cb) => cb(msg));
     else if (msg.type === 'frame') frame.forEach((cb) => cb(msg));
     else if (msg.type === 'comparison') comparisons.forEach((cb) => cb(msg));
-    else errors.forEach((cb) => cb(msg.message));
+    else errors.forEach((cb) => cb(msg.message, msg.fatal === true));
   };
   send({
     type: 'init',
@@ -66,7 +71,8 @@ export function createSimClient(
     setSpeed: (multiplier) => send({ type: 'setSpeed', multiplier }),
     closeLink: (link) => send({ type: 'command', kind: 'close', link }),
     openLink: (link) => send({ type: 'command', kind: 'open', link }),
-    returnBuffer: (buffer) => send({ type: 'returnBuffer', buffer }, [buffer]),
+    returnBuffer: (buffer, scenario) => send({ type: 'returnBuffer', buffer, scenario }, [buffer]),
+    debugTrap: () => send({ type: 'debugTrap' }),
     inspectVehicle: (frameTick, record, seq) =>
       send({ type: 'inspectVehicle', frameTick, record, ...(seq === undefined ? {} : { seq }) }),
     clearInspectedVehicle: (seq) => send({ type: 'inspectVehicle', clear: true, ...(seq === undefined ? {} : { seq }) }),

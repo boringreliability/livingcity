@@ -95,6 +95,8 @@ interface LivingCityHook {
     world: [number, number];
     page: [number, number];
   } | null;
+  /** Test hook (ward polish-005): make the simulation trap inside wasm. */
+  debugTrap(): void;
   /** The pure draw rule (motion.ts vehicleDrawPosition) in world metres. */
   drawAt(link: number, s: number, lane: number, next: number): [number, number];
   /** Page coordinates where the tracked vehicle is drawn now (as Follow uses), or null. */

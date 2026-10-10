@@ -40,6 +40,20 @@ export class SimClock {
     this.creditedUntil = now();
   }
 
+  /** A new world (`init`): everything as a new clock (ward polish-005, backlog f1). */
+  reset(): void {
+    this.running = false;
+    this.multiplier = 1;
+    this.creditedUntil = this.now();
+    this.backlog = 0;
+    this.executedTicks = 0;
+    this.msPerTick = undefined;
+    this.lastCapEvent = Number.NEGATIVE_INFINITY;
+    this.graceStart = Number.NEGATIVE_INFINITY;
+    this.suppressCapEvents = false;
+    this.reports.length = 0;
+  }
+
   setRunning(running: boolean): void {
     if (running === this.running) return; // no-op: no grace reset
     const t = this.now();

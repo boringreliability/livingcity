@@ -36,6 +36,8 @@ export interface SimLike {
   link_queued(): Uint16Array;
   /** Per record of the last encoded frame: next link or 0xFFFF (ward polish-003; optional for fakes). */
   next_links?(): Uint16Array;
+  /** Test hook: panics inside wasm (ward polish-005; optional for fakes). */
+  debug_trap?(): void;
   metrics(): Float64Array;
   metric_names(): string[];
   closed_links(): Uint32Array;
@@ -138,7 +140,7 @@ export function createSimHost(deps: HostDeps): SimHost {
   let comparing = false;
   let lastComparison = Number.NEGATIVE_INFINITY;
   /** Returned buffers; one is reused only if it fits the next frame exactly. */
-  let pool: ArrayBuffer[] = [];
+  const pools: [ArrayBuffer[], ArrayBuffer[]] = [[], []];
   // Per-tick ms over the newest 1,000 ticks, one sample per batch (perf clock). Browsers coarsen
   // performance.now() (often to 0.1 ms): `timerResolutionMs` says how far the numbers can be trusted.
   let tickWindow = new TickWindow();
@@ -152,6 +154,9 @@ export function createSimHost(deps: HostDeps): SimHost {
   let deferred: { kind: 'close' | 'open'; link: number }[] = [];
 
   const error = (message: string) => deps.post({ type: 'error', message }, []);
+  const fatal = (message: string) => deps.post({ type: 'error', message, fatal: true }, []);
+  /** Set by the `debugTrap` test hook: the next iteration traps inside wasm. */
+  let trapNext = false;
 
   const init = (demandSeed: number, behaviorSeed: number, city: CityName, warmupS: number, demandScale: number) => {
     // a new world: nothing is inspected any more, and no older warm-up or command is pending
@@ -168,7 +173,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       sim = deps.createSim(demandSeed, behaviorSeed, city, demandScale);
     } catch (e) {
       sim = undefined;
-      error(`init failed: ${e instanceof Error ? e.message : String(e)}`);
+      fatal(`init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     lastPost = Number.NEGATIVE_INFINITY;
@@ -177,6 +182,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     viewed = 0;
     branchTick = -1;
     comparing = false;
+    clock.reset(); // a new world: the whole clock afresh (f1)
     clock.resetExecuted(sim.tick());
     const ticks = Number.isFinite(warmupS) && warmupS > 0 ? Math.round(warmupS / DT) : 0;
     if (ticks > 0) warmup = { remaining: ticks, ran: 0 };
@@ -505,8 +511,9 @@ export function createSimHost(deps: HostDeps): SimHost {
     const count = s.encode_frame();
     const words = count * VEHICLE_RECORD_WORDS;
     const bytes = words * 4;
-    const reuse = pool.find((b) => b.byteLength === bytes);
-    pool = [];
+    // each side has its own pool: A's post does not throw away B's returned buffers (ward polish-005)
+    const reuse = pools[side].find((b) => b.byteLength === bytes);
+    pools[side] = [];
     const vehicles = reuse ?? new ArrayBuffer(bytes);
     new Uint32Array(vehicles).set(new Uint32Array(deps.memory().buffer, s.frame_ptr(), words));
     encodeMs = perfNow() - e0;
@@ -555,7 +562,10 @@ export function createSimHost(deps: HostDeps): SimHost {
             command(msg.kind, msg.link);
             break;
           case 'returnBuffer':
-            pool.push(msg.buffer);
+            pools[msg.scenario === 1 || msg.scenario === 0 ? msg.scenario : viewed].push(msg.buffer);
+            break;
+          case 'debugTrap':
+            trapNext = true;
             break;
           case 'inspectVehicle':
             if (comparing) break; // vehicles are not picked while comparing
@@ -591,6 +601,10 @@ export function createSimHost(deps: HostDeps): SimHost {
     iterate(): void {
       if (!sim) return;
       try {
+        if (trapNext) {
+          trapNext = false;
+          sim?.debug_trap?.();
+        }
         if (warmup) {
           warmStep(sim, warmup);
           return;
@@ -625,10 +639,10 @@ export function createSimHost(deps: HostDeps): SimHost {
           }
         }
       } catch (e) {
-        // A wasm panic leaves the instance in an unknown state: halt, report once.
+        // A wasm panic leaves the instance in an unknown state: halt, report once (fatal: only a restart helps).
         sim = undefined;
         halted = true;
-        error(`simulation halted: ${e instanceof Error ? e.message : String(e)}`);
+        fatal(`simulation halted: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   };

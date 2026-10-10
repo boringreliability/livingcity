@@ -67,11 +67,38 @@ The run: River City at 60×, after running until A's snapshots held 44.3 MiB of 
 - **Tick costs are below ten times the clock resolution** (0.1 ms in the worker, `tickBelowTimerResolution: true`). Per-tick percentiles are therefore not meaningful, and only the means are cited.
 - **Lockstep.** Both runs held the requested rate. The lockstep frame interval grows because two canvases are drawn in software, not because of the sim.
 
+## Profiling and optimization (polish-005)
+
+All numbers in this section come from `web/perf-results/frame-cost.json`. The probe `cargo run -p sim-core --release --example frame_cost_probe` measures natively in release on River City (seed `2026/7`). It warms the city for one sim hour, then reports the mean over a run of ticks. The "before" step times were measured on the code at commit `4e5d5c1`, recorded in the JSON as `baseline`. The "before" metrics times come from `metrics_full_scan()`, which is the old implementation. The machine's load average is recorded in the JSON.
+
+**Cause.** Every tick, the periodic-reroute and retry passes made a full scan of every slot, and `metrics()` scanned every slot as well (counts, stranded vehicles, the mean age). Under stress most slots hold trips waiting at their origin, so the cost followed the **active** trips, not the vehicles on the network.
+
+| Scale | `step` before → after (ms) | `metrics()` before → after (ms) | active / on network |
+|---|---|---|---|
+| `x1` | 0.0213 → 0.0151 | 0.0094 → 0.0037 | 1761 / 1761 |
+| `x3` | 0.1523 → 0.0579 | 0.1769 → 0.0083 | 41332 / 6125 |
+| `x5` | 0.3306 → 0.0762 | 0.3539 → 0.0088 | 89550 / 6973 |
+
+**The fix.**
+- **Metrics:** incremental counters (no-route trips, stranded vehicles, live count and the sum of creation ticks). The queued count is still a lane scan, which is cheap.
+- **Reroutes and retries:** the passes visit only the slots that are due, in the same ascending slot order. Both changes live in a derived slot index that is rebuilt on restore, like the router cache.
+- **Branching:** snapshots are shared (`Arc`), so a branch no longer copies them. A branch at a full window now takes 1.328 ms instead of 15.287 ms.
+
+**Guarantees.**
+- The results are unchanged: the golden `state_hash` values recorded from the old code still hold.
+- The active and on-network counts above are identical before and after.
+- `metrics()` equals the full scan bit for bit (`polish_005_perf.rs`).
+
+**Pinned by frozen tests (deviations).**
+- The host still posts frames while paused (`review2` G4, `review3` G4b).
+- The frame pool keeps its exact-size rule (`host.test.ts` F2, `review2` G8). Only the per-side pools in compare were added.
+
 ## How to reproduce
 
 ```bash
 pnpm -C web build:wasm
 pnpm -C web e2e:perf          # rewrites web/perf-results/{baseline-1x,baseline-20x,closure-burst,stress-5x,timeline}.json
+cargo run -p sim-core --release --example frame_cost_probe   # web/perf-results/frame-cost.json (native per-tick costs)
 ```
 
 Each JSON holds the scenario, the run conditions (browser, renderer, viewport, DPR, headless, launch args, hardware), every statistic above, the coverage (frames, ticks and render samples recorded, wall ms), and the targets with `met`. The harness has been run once for this report, and the Gold review re-runs it and compares.

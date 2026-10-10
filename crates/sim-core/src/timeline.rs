@@ -6,6 +6,7 @@
 //! result is bit-identical to an uninterrupted run. Nothing here reads a clock.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::command::{Command, CommandError};
 use crate::world::{CompletedTrip, GeneratedTrip, RemovalLog, World};
@@ -97,7 +98,8 @@ pub struct WindowInfo {
 pub struct Timeline {
     world: World,
     /// Ascending by tick.
-    snapshots: VecDeque<Snapshot>,
+    /// Shared (`Arc`): a branch keeps its parent's snapshots below the branch tick without copying them.
+    snapshots: VecDeque<Arc<Snapshot>>,
     snapshot_bytes: usize,
     budget_bytes: usize,
     head_tick: u64,
@@ -150,7 +152,7 @@ impl Timeline {
     }
 
     pub fn snapshot_ticks(&self) -> Vec<u64> {
-        self.snapshots.iter().map(Snapshot::tick).collect()
+        self.snapshots.iter().map(|s| s.tick()).collect()
     }
 
     /// Ticks the last `seek` stepped after restoring.
@@ -167,7 +169,7 @@ impl Timeline {
             // caught up: the position world's logs are the head logs again (determinism)
             self.head_logs = None;
         }
-        let newest = self.snapshots.back().map_or(0, Snapshot::tick);
+        let newest = self.snapshots.back().map_or(0, |s| s.tick());
         if tick.is_multiple_of(SNAPSHOT_INTERVAL_TICKS) && (self.snapshots.is_empty() || tick > newest) {
             self.push_snapshot();
         }
@@ -246,24 +248,30 @@ impl Timeline {
             head_logs: None,
             last_seek_replayed: 0,
         };
+        // shared, not copied (ward polish-005): only pointers; the budget evicts what B cannot keep
         for s in self.snapshots.iter().take_while(|s| s.tick() < at) {
-            b.add_snapshot(s.clone());
+            b.add_snapshot(Arc::clone(s));
         }
         b.push_snapshot();
         Ok(b)
     }
 
     fn window_start(&self) -> u64 {
-        self.snapshots.front().map_or(self.head_tick, Snapshot::tick)
+        self.snapshots.front().map_or(self.head_tick, |s| s.tick())
     }
 
     fn push_snapshot(&mut self) {
-        let s = self.world.snapshot();
+        let s = Arc::new(self.world.snapshot());
         self.add_snapshot(s);
     }
 
+    /// How many snapshots this timeline shares (the same `Arc`) with `other` (ward polish-005).
+    pub fn shared_snapshots(&self, other: &Timeline) -> usize {
+        self.snapshots.iter().filter(|s| other.snapshots.iter().any(|o| Arc::ptr_eq(s, o))).count()
+    }
+
     /// Append a snapshot (newest) and evict the oldest ones beyond the budget.
-    fn add_snapshot(&mut self, s: Snapshot) {
+    fn add_snapshot(&mut self, s: Arc<Snapshot>) {
         self.snapshot_bytes += s.bytes();
         self.snapshots.push_back(s);
         while self.snapshot_bytes > self.budget_bytes && self.snapshots.len() > 1 {

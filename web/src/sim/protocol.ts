@@ -54,7 +54,10 @@ export type ToWorker =
   | { type: 'setRunning'; running: boolean }
   | { type: 'setSpeed'; multiplier: number }
   | { type: 'command'; kind: 'close' | 'open'; link: number }
-  | { type: 'returnBuffer'; buffer: ArrayBuffer }
+  /** `scenario`: the side of the frame the buffer came from (each side has its own pool; default: the viewed one). */
+  | { type: 'returnBuffer'; buffer: ArrayBuffer; scenario?: 0 | 1 | undefined }
+  /** Test hook (ward polish-005): make the next iteration trap inside wasm. */
+  | { type: 'debugTrap' }
   /** Track the vehicle at `record` of the frame encoded at `frameTick` (resolved in the worker). */
   | { type: 'inspectVehicle'; frameTick: number; record: number; seq?: number }
   | { type: 'inspectVehicle'; clear: true; seq?: number }
@@ -290,4 +293,5 @@ export function decodeLinkDetail(link: number, a: ArrayLike<number>): LinkDetail
   };
 }
 
-export type FromWorker = ReadyMessage | FrameMessage | ComparisonMessage | { type: 'error'; message: string };
+/** `fatal`: the simulation stopped (a wasm trap, init failed): only a restart helps (ward polish-005). */
+export type FromWorker = ReadyMessage | FrameMessage | ComparisonMessage | { type: 'error'; message: string; fatal?: boolean };

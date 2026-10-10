@@ -779,3 +779,13 @@ button.bridge.closed {
   outline: 2px solid var(--text, #e6e6e6);
   outline-offset: -2px;
 }
+
+/* A fatal error (ward polish-005): centred over the city, not dismissible; "Restart simulation" helps. */
+.error.fatal {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 460px;
+  z-index: 5;
+}

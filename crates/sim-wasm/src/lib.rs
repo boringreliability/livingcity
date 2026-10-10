@@ -289,6 +289,11 @@ impl Sim {
         self.link_counts.clone()
     }
 
+    /// Test hook (ward polish-005): a deliberate panic, so the host's trap path can be exercised.
+    pub fn debug_trap(&self) {
+        panic!("debug trap (test hook)");
+    }
+
     /// Per record of the last encoded frame: the next link, or 65535 (none). A copy (2 bytes per vehicle).
     pub fn next_links(&self) -> Vec<u16> {
         self.next_links.clone()

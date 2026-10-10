@@ -1,7 +1,7 @@
 //! Simulation state and the fixed-step tick. Implements the model contract
 //! in `.wdd/epics/core.md` (tick order steps 4–7).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -287,6 +287,70 @@ impl Vehicle {
     }
 }
 
+/// Derived index over the live slots (ward polish-005): the metric counters, and the slots due for a
+/// periodic reroute or a retry, so a tick never scans every slot. Ordered sets keep ascending slot order
+/// (the order of the full scans they replace). Rebuilt on restore; neither hashed nor snapshotted.
+#[derive(Clone, Debug, Default)]
+struct SlotIndex {
+    live: u64,
+    created_sum: u128,
+    no_route: u64,
+    stranded: u64,
+    /// Live slots by `trip_id % REROUTE_PERIOD_TICKS`.
+    periodic: Vec<BTreeSet<u32>>,
+    /// `next_retry_tick` → slots without a route.
+    retries: BTreeMap<u64, BTreeSet<u32>>,
+    /// Slots visited by the last tick's periodic and retry steps.
+    last_visits: (usize, usize),
+}
+
+impl SlotIndex {
+    fn empty() -> SlotIndex {
+        SlotIndex { periodic: vec![BTreeSet::new(); REROUTE_PERIOD_TICKS as usize], ..SlotIndex::default() }
+    }
+
+    fn build(slots: &[Option<Vehicle>]) -> SlotIndex {
+        let mut ix = SlotIndex::empty();
+        for (slot, v) in slots.iter().enumerate() {
+            if let Some(v) = v {
+                ix.add(slot as u32, v);
+            }
+        }
+        ix
+    }
+
+    fn add(&mut self, slot: u32, v: &Vehicle) {
+        self.live += 1;
+        self.created_sum += u128::from(v.created_tick);
+        self.no_route += u64::from(v.state == Phase::NoRoute);
+        self.stranded += u64::from(v.stranded);
+        self.periodic[(v.trip_id % REROUTE_PERIOD_TICKS) as usize].insert(slot);
+        if v.without_route() {
+            self.retries.entry(v.next_retry_tick).or_default().insert(slot);
+        }
+    }
+
+    fn remove(&mut self, slot: u32, v: &Vehicle) {
+        self.live -= 1;
+        self.created_sum -= u128::from(v.created_tick);
+        self.no_route -= u64::from(v.state == Phase::NoRoute);
+        self.stranded -= u64::from(v.stranded);
+        self.periodic[(v.trip_id % REROUTE_PERIOD_TICKS) as usize].remove(&slot);
+        if v.without_route() {
+            self.unschedule_retry(v.next_retry_tick, slot);
+        }
+    }
+
+    fn unschedule_retry(&mut self, tick: u64, slot: u32) {
+        if let Some(set) = self.retries.get_mut(&tick) {
+            set.remove(&slot);
+            if set.is_empty() {
+                self.retries.remove(&tick);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct World {
     /// Immutable and shared (clones, snapshots and branches share it: ward timeline-001).
@@ -333,6 +397,8 @@ pub struct World {
     reroute_stats: RerouteStats,
     /// Derived from costs + epoch (+ closures); rebuildable, not sim state.
     router: RouterCache,
+    /// Derived from the slots (ward polish-005); rebuildable, not sim state.
+    index: SlotIndex,
 }
 
 const NOT_MOVED: u64 = u64::MAX;
@@ -392,6 +458,7 @@ impl World {
             periodic_queue: VecDeque::new(),
             reroute_stats: RerouteStats::default(),
             router: RouterCache::default(),
+            index: SlotIndex::empty(),
         }
     }
 
@@ -507,14 +574,19 @@ impl World {
     }
 
     pub fn metrics(&self) -> Metrics {
-        self.metrics_full_scan()
+        let c = self.counts();
+        let queued = self.lanes.iter().flatten().flatten().filter(|&&slot| self.veh(slot).v < QUEUED_SPEED).count() as u64;
+        let live = self.index.live;
+        // Σ (tick − created) is an exact integer; × DT and ÷ live give the full scan's value bit for bit
+        let mean_incomplete_age_s = (live > 0).then(|| ((u128::from(self.tick) * u128::from(live) - self.index.created_sum) as f64 * DT) / live as f64);
+        self.metrics_from(c, queued, mean_incomplete_age_s)
     }
 
     /// `metrics()` computed by scanning every lane, buffer and slot: the reference the incremental
     /// counters are tested against (ward polish-005).
     #[doc(hidden)]
     pub fn metrics_full_scan(&self) -> Metrics {
-        let c = self.counts();
+        let c = self.counts_full_scan();
         let queued = self
             .lanes
             .iter()
@@ -529,6 +601,10 @@ impl World {
             .map(|v| (self.tick - v.created_tick) as f64 * DT)
             .collect();
         let mean_incomplete_age_s = (!ages.is_empty()).then(|| ages.iter().sum::<f64>() / ages.len() as f64);
+        self.metrics_from(c, queued, mean_incomplete_age_s)
+    }
+
+    fn metrics_from(&self, c: Counts, queued: u64, mean_incomplete_age_s: Option<f64>) -> Metrics {
         Metrics {
             tick: self.tick,
             sim_time_s: self.tick as f64 * DT,
@@ -560,6 +636,12 @@ impl World {
 
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// Slots visited by the last step's periodic-reroute and retry passes (ward polish-005; for tests).
+    #[doc(hidden)]
+    pub fn last_step_visits(&self) -> (usize, usize) {
+        self.index.last_visits
     }
 
     /// Accept a command for `cmd.tick >= tick()`; applied in step 1 of that tick.
@@ -624,6 +706,7 @@ impl World {
             periodic_queue: self.periodic_queue.clone(),
             reroute_stats: self.reroute_stats,
             router: RouterCache::default(),
+            index: SlotIndex::default(), // derived: rebuilt by `restored`
         };
         let lens = LogLens { generated: self.generated.len(), completed: self.completed_log.len(), removed: self.removed_log.len() };
         Snapshot::new(state, lens)
@@ -678,6 +761,7 @@ impl World {
         w.completed_log = logs.completed;
         w.removed_log = logs.removed;
         w.router = RouterCache::default();
+        w.index = SlotIndex::build(&w.slots);
         w
     }
 
@@ -899,6 +983,8 @@ impl World {
             }
         };
         self.origin_buffers[origin.index()].push_back(slot);
+        let v = self.slots[slot as usize].as_ref().expect("just stored");
+        self.index.add(slot, v);
         VehicleId(slot)
     }
 
@@ -981,7 +1067,11 @@ impl World {
     /// Step 3(b): vehicles due for periodic reconsideration this tick.
     fn enqueue_periodic(&mut self) {
         let tick = self.tick;
-        for slot in 0..self.slots.len() as u32 {
+        // the slots with (tick + trip_id) % period == 0, ascending (as the full scan visited them)
+        let due = ((REROUTE_PERIOD_TICKS - tick % REROUTE_PERIOD_TICKS) % REROUTE_PERIOD_TICKS) as usize;
+        let slots: Vec<u32> = self.index.periodic[due].iter().copied().collect();
+        self.index.last_visits.0 = slots.len();
+        for slot in slots {
             let Some(v) = self.slots[slot as usize].as_mut() else { continue };
             let eligible = match v.state {
                 Phase::WaitingAtOrigin => true,
@@ -1003,7 +1093,10 @@ impl World {
     /// Step 3(c): NoRoute/stranded retries due this tick (outside the budget).
     fn run_retries(&mut self) {
         let tick = self.tick;
-        for slot in 0..self.slots.len() as u32 {
+        // the slots whose retry is due now, ascending (as the full scan visited them)
+        let slots: Vec<u32> = self.index.retries.remove(&tick).map(|set| set.into_iter().collect()).unwrap_or_default();
+        self.index.last_visits.1 = slots.len();
+        for slot in slots {
             let due = self.slots[slot as usize].as_ref().is_some_and(|v| v.without_route() && v.next_retry_tick == tick);
             if !due {
                 continue;
@@ -1014,11 +1107,14 @@ impl World {
                 Some((path, _)) => {
                     self.assign_route(slot, path);
                     let v = self.veh_mut(slot);
+                    let (was_no_route, was_stranded) = (v.state == Phase::NoRoute, v.stranded);
                     if v.state == Phase::NoRoute {
                         v.state = Phase::WaitingAtOrigin;
                     }
                     v.stranded = false;
                     v.retries = 0;
+                    self.index.no_route -= u64::from(was_no_route);
+                    self.index.stranded -= u64::from(was_stranded);
                 }
                 None => {
                     let v = self.veh_mut(slot);
@@ -1027,6 +1123,7 @@ impl World {
                         self.remove_unreachable(slot);
                     } else {
                         v.next_retry_tick = tick + NO_ROUTE_RETRY_TICKS;
+                        self.index.retries.entry(tick + NO_ROUTE_RETRY_TICKS).or_default().insert(slot);
                     }
                 }
             }
@@ -1121,6 +1218,8 @@ impl World {
     fn enter_without_route(&mut self, slot: u32) {
         let tick = self.tick;
         let v = self.veh_mut(slot);
+        let (was_without, old_next) = (v.without_route(), v.next_retry_tick);
+        let (was_no_route, was_stranded) = (v.state == Phase::NoRoute, v.stranded);
         match v.state {
             Phase::OnLink => v.stranded = true,
             Phase::WaitingAtOrigin | Phase::NoRoute => {
@@ -1131,11 +1230,19 @@ impl World {
         }
         v.retries = 0;
         v.next_retry_tick = tick + NO_ROUTE_RETRY_TICKS;
+        let (no_route, stranded) = (v.state == Phase::NoRoute, v.stranded);
+        self.index.no_route = self.index.no_route + u64::from(no_route) - u64::from(was_no_route);
+        self.index.stranded = self.index.stranded + u64::from(stranded) - u64::from(was_stranded);
+        if was_without {
+            self.index.unschedule_retry(old_next, slot);
+        }
+        self.index.retries.entry(tick + NO_ROUTE_RETRY_TICKS).or_default().insert(slot);
     }
 
     /// Explicit removal after the last failed retry: not an exit, not a completion.
     fn remove_unreachable(&mut self, slot: u32) {
         let v = self.slots[slot as usize].take().expect("live vehicle slot");
+        self.index.remove(slot, &v);
         match v.state {
             Phase::OnLink => {
                 let q = &mut self.lanes[v.current_link().index()][v.lane as usize];
@@ -1388,8 +1495,9 @@ impl World {
     fn remove_gridlocked(&mut self, slot: u32, link: LinkId, lane: usize) {
         let front = self.lanes[link.index()][lane].pop_front();
         debug_assert_eq!(front, Some(slot));
-        let trip = self.veh(slot).trip_id;
-        self.slots[slot as usize] = None;
+        let v = self.slots[slot as usize].take().expect("live vehicle slot");
+        self.index.remove(slot, &v);
+        let trip = v.trip_id;
         self.removed_log.push((trip, RemovalKind::Gridlock));
         self.removed += 1;
         self.removed_gridlock += 1;
@@ -1398,6 +1506,7 @@ impl World {
 
     fn complete(&mut self, slot: u32) {
         let veh = self.slots[slot as usize].take().expect("live vehicle slot");
+        self.index.remove(slot, &veh);
         self.completed_log.push(CompletedTrip {
             trip_id: veh.trip_id,
             created_tick: veh.created_tick,
@@ -1479,6 +1588,22 @@ impl World {
     }
 
     pub fn counts(&self) -> Counts {
+        let on_network: u64 = self.lanes.iter().flatten().map(|q| q.len() as u64).sum();
+        let buffered: u64 = self.origin_buffers.iter().map(|b| b.len() as u64).sum();
+        let no_route = self.index.no_route;
+        Counts {
+            spawned: self.spawned,
+            active: on_network + buffered,
+            on_network,
+            waiting_at_origin: buffered - no_route,
+            no_route,
+            stranded: self.index.stranded,
+            completed: self.completed,
+            removed: self.removed,
+        }
+    }
+
+    fn counts_full_scan(&self) -> Counts {
         let on_network: u64 = self.lanes.iter().flatten().map(|q| q.len() as u64).sum();
         let buffered: u64 = self.origin_buffers.iter().map(|b| b.len() as u64).sum();
         let no_route = self

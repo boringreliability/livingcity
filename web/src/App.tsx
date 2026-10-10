@@ -123,6 +123,17 @@ export function App() {
   const followingRef = useRef(false);
   /** The user moved the camera (pan, zoom, Follow) since the last fit: a resize then keeps the view. */
   const cameraTouched = useRef(false);
+  /** A fatal error (the simulation stopped): shown until "Restart simulation" makes a new worker. */
+  const [fatal, setFatal] = useState<string | null>(null);
+  /** Bumped by a restart: the client effect makes a new worker (and renderer). */
+  const [generation, setGeneration] = useState(0);
+  const restart = useCallback(() => {
+    setFatal(null);
+    setError(null);
+    setReady(null);
+    setFrame(null);
+    setGeneration((g) => g + 1);
+  }, []);
   /** Demo guide: hidden by the viewer, and the steps done so far (from frames only). */
   const [guideHidden, setGuideHidden] = useState(readGuideHidden);
   const guideRef = useRef<GuideProgress>(initialGuideProgress());
@@ -279,7 +290,11 @@ export function App() {
     c.setSpeed(speedRef.current);
     c.setRunning(true);
     client.current = c;
-    c.onError((m) => {
+    c.onError((m, isFatal) => {
+      if (isFatal) {
+        setFatal(m);
+        return;
+      }
       setError(m);
       // a refused seek never arrives: stop waiting for it
       pendingSeekRef.current = null;
@@ -309,7 +324,7 @@ export function App() {
       const words = new Uint32Array(f.vehicles);
       bRecordsRef.current = { words: words.slice(0, f.count * 4), next: f.nextLinks, count: f.count, tick: f.tick, running: f.clock.running, multiplier: f.clock.multiplier };
       rendererB.current?.setFrame(words, f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier, f.nextLinks);
-      c.returnBuffer(f.vehicles);
+      c.returnBuffer(f.vehicles, f.scenario);
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
       names.forEach((n, i) => (metrics[n] = f.metrics[i]!));
@@ -331,15 +346,15 @@ export function App() {
       if (f.timeline.compare === 1) {
         // a pair: hold A until its B partner arrives, then apply and draw both together
         if (f.scenario === 0) {
-          if (pendingPairA.current) c.returnBuffer(pendingPairA.current.vehicles);
+          if (pendingPairA.current) c.returnBuffer(pendingPairA.current.vehicles, pendingPairA.current.scenario);
           pendingPairA.current = f;
           return;
         }
         const a = pendingPairA.current;
         pendingPairA.current = null;
         if (!a || a.tick !== f.tick) {
-          if (a) c.returnBuffer(a.vehicles);
-          c.returnBuffer(f.vehicles);
+          if (a) c.returnBuffer(a.vehicles, a.scenario);
+          c.returnBuffer(f.vehicles, f.scenario);
           return;
         }
         applyFrameB(f);
@@ -347,7 +362,7 @@ export function App() {
         return;
       }
       if (pendingPairA.current) {
-        c.returnBuffer(pendingPairA.current.vehicles);
+        c.returnBuffer(pendingPairA.current.vehicles, pendingPairA.current.scenario);
         pendingPairA.current = null;
       }
       bFrameRef.current = null;
@@ -389,7 +404,7 @@ export function App() {
       }
       setLinkDetail(f.linkDetail ?? null);
       const frameBytes = f.vehicles.byteLength + f.nextLinks.byteLength; // records + next links
-      c.returnBuffer(f.vehicles); // uploaded: give the buffer back to the worker's pool
+      c.returnBuffer(f.vehicles, f.scenario); // uploaded: give the buffer back to its side's pool
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
       names.forEach((n, i) => (metrics[n] = f.metrics[i]!));
@@ -427,7 +442,7 @@ export function App() {
       renderer.current?.dispose();
       renderer.current = null;
     };
-  }, [camera, pushLinkState]);
+  }, [camera, pushLinkState, generation]);
 
   const comparingNow = frame?.timeline.compare === 1;
   useLayoutEffect(() => {
@@ -906,6 +921,7 @@ export function App() {
         const [sx, sy] = camera.worldToScreen(d.world[0], d.world[1]);
         return { ...d, page: [rect.left + sx, rect.top + sy] as [number, number] };
       },
+      debugTrap: () => client.current?.debugTrap(),
       drawAt: (link: number, s: number, lane: number, next: number) => {
         const g = geometry.current;
         if (!g || !g.links[link]) return [NaN, NaN] as [number, number];
@@ -1057,6 +1073,14 @@ export function App() {
               <span className="zone-icon">{l.icon}</span> {l.text}
             </span>
           ))}
+        </div>
+      )}
+      {fatal && (
+        <div role="alert" className="panel error fatal">
+          <span>The simulation stopped: {fatal}</span>
+          <button type="button" onClick={restart}>
+            Restart simulation
+          </button>
         </div>
       )}
       {/* Top band (ward polish-002): one grid in a fixed DOM order; CSS alone places the panels in a
