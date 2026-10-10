@@ -1,7 +1,7 @@
 # Progress — livingcity
 
 ## Summary
-19 of 19 Wards complete · 348 estimated tests · 0 blocked
+20 of 20 Wards complete · 358 estimated tests · 0 blocked
 
 ## Ward Status
 | Ward | Name | Tests | Status | Date |
@@ -20,6 +20,7 @@
 | polish-002 | Layout that fits: resize refit, split-view panels and narrow widths | 6 | ✅ Complete | 2026-10-09 |
 | polish-003 | Calm motion and clear markers in the renderer | 10 | ✅ Complete | 2026-10-09 |
 | polish-004 | First-run demonstration | 9 | ✅ Complete | 2026-10-10 |
+| polish-005 | Profile and optimize the measured per-frame bottlenecks | 10 | ✅ Complete | 2026-10-10 |
 | timeline-001 | Snapshots and seek in sim-core | 18 | ✅ Complete | 2026-10-08 |
 | timeline-002 | Branch and window metrics in sim-core | 19 | ✅ Complete | 2026-10-08 |
 | timeline-003 | Timeline in the worker and UI | 20 | ✅ Complete | 2026-10-08 |
@@ -27,4 +28,4 @@
 | timeline-005 | The full brief workflow in the browser, measured | 9 | ✅ Complete | 2026-10-09 |
 
 ## Test Summary
-- Estimated total: 348
+- Estimated total: 358

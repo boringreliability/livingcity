@@ -1,7 +1,7 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-10: **Epic polish active:** polish-001…004 done; next polish-005 (profile and optimize the measured per-frame bottlenecks).
+2026-10-10: **Epic polish active:** polish-001…005 done; next polish-006 (integration ward, then the human epic gate).
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
@@ -12,7 +12,8 @@
   - **polish-001 done**: Esc innermost-first, Speed pointer pick blurs, honest compare labels, sr-only h1, axe audit (`e2e/a11y.spec.ts`).
   - **polish-002 done**: `.top-band` grid (2 columns ≥ 960 px, 1 below, fixed DOM order), refit on resize unless the user moved the camera, no panel overlaps at ≥ 768 px, cut labels hidden, error banner dismissible (`e2e/layout.spec.ts`, `gold_polish002.spec.ts`).
   - **polish-003 done**: frame `nextLinks` (u16/record), `render/motion.ts` junction curve mirrored in `VEH_VS`, `ExtrapolationClock`, dashed hover, closure ring sign. **Epic gate items:** i1 (stop at curve end, then ~7 m jump at 1×), i2 (held cars stack in junctions), i3/i5 deviations.
-  - **polish-004 done** (Red r3, Gold r2): demo guide (`ui/DemoGuide.tsx`, `ui/guideProgress.ts`) at the top of the right column; steps ticked from frames by sim ticks only, sticky; "?" (Guide) toggle in the first control row; Esc hides it; remembered in `localStorage`. Machine load spikes (load avg ~150 from other processes) cause spurious e2e timeouts: log `uptime`, re-run alone. Tests: Vitest 118, e2e 114 + 1 skipped.
+  - **polish-004 done**: demo guide (`ui/DemoGuide.tsx`, `ui/guideProgress.ts`; steps from frames by sim ticks), "?" (Guide) toggle. Load spikes (other processes) cause spurious e2e timeouts: log `uptime`, re-run alone.
+  - **polish-005 done** (Red r3, Gold r1): derived `SlotIndex` in `World` (incremental metric counters; periodic/retry passes visit only due slots, ascending), `Arc` snapshots shared by branches, per-side frame pools (`returnBuffer.scenario`), `SimClock.reset()` on init, fatal errors + "Restart simulation" (`debugTrap` hook). ×5: step 0.331 → 0.076 ms, metrics 0.354 → 0.009 ms, branch 15.3 → 1.3 ms (`frame_cost_probe`, `web/perf-results/frame-cost.json`). Golden `state_hash` values pin determinism. Pinned deviations e2/e3. **polish-006 must re-run `e2e:perf` (k1).**
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.

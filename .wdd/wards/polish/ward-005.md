@@ -3,12 +3,12 @@ ward: 5
 revision: null
 name: "Profile and optimize the measured per-frame bottlenecks"
 epic: "polish"
-status: "gold"
+status: "complete"
 dependencies: ["polish-004"]
 layer: "fullstack"
 estimated_tests: 10
 created: "2026-10-10"
-completed: null
+completed: "2026-10-10"
 ---
 # Ward polish-005: Profile and optimize the measured bottlenecks
 

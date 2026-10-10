@@ -82,3 +82,11 @@ Items marked *pinned* are constrained by a frozen test.
 - **j4:** the disabled "?" (while comparing) explains itself only in its `title`. From polish-004-gold-2 #4.
 - **j5:** step 2 can tick from forward seeks while paused (`guideProgress.ts:31-34`). Fix: count ticks only while running. From polish-004-gold-1/2.
 - **j6:** `layout.spec.ts` `labels_never_half_cut` is intermittent under heavy machine load (it failed 3/3 alone at load ~30 in gold-1; it passed in 4 later full runs). From polish-004-gold-1/2.
+
+## (k) From polish-005 (resolved here: e1, e4, f1, f2, g7; e3 partly = per-side pools; e2 pinned by G4/G4b)
+- **k1 (polish-006):** the browser perf harness (`pnpm -C web e2e:perf`) was not re-run in polish-005, so `docs/performance.md`'s browser baseline still shows the pre-optimization numbers. polish-006 re-runs it and cites before/after. From polish-005-gold-1 m1.
+- **k2:** Restart does not give a clean UI state. The guide keeps progress from the dead world, the selected road carries over, and tracked vehicle, follow, pending seek, the held A/B pair, comparison and confirm are not reset (`App.tsx:130-136`). From polish-005-gold-1 m2.
+- **k3:** the fatal banner clears on the Restart click, not when the new worker is ready. The halted state is unclear: the message reads "simulation halted: unreachable", and the controls still show Pause and stay enabled. From polish-005-gold-1 m3/m4.
+- **k4:** snapshot bytes are 112 B larger per snapshot, because the index field sits inside `World`. The `Snapshot` field-classification comment in `timeline.rs` doesn't list `index`. From polish-005-gold-1 m5.
+- **k5:** B's frame pool is never cleared after compare ends, and `init` clears neither pool. Bounded to a few buffers. From polish-005-gold-1 m6.
+- **k6:** test 7b (returnBuffer side) only counts arguments; all App calls do pass the right side. From polish-005-red-3 m1.
