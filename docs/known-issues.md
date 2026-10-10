@@ -12,7 +12,7 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - i2 — cars held at a stop line are drawn at the next link's start, so they can stack inside busy junctions (polish-003 tests 3(a)/4/7).
 - i3 — the hover keeps its grey halo under the dashed stroke (gold5 G1).
 - i5 — the closure sign is a ring around the hatch, not a solid core (look.spec midpoint hatch).
-- New in polish-006: under SwiftShader at `?demand=5`, the WebGL work that a compare switch needs (releasing B's old context, preparing a spare one) runs as 0.1–0.8 s main-thread tasks just *after* the switch is drawn. The switch itself shows within 300 ms; input in that moment waits. On a hardware GPU these calls take a few milliseconds.
+- New in polish-006: under SwiftShader at `?demand=5`, the WebGL work that a compare switch needs (releasing B's old context, preparing a spare one) runs as main-thread tasks just *after* the switch is drawn: 0.1–0.8 s with one app tab, and up to 2.9 s was seen with two more app tabs open (Gold review). The switch itself shows within 300 ms; input in that moment waits. On a hardware GPU these calls take a few milliseconds.
 
 ## (a) Accessibility and keyboard
 - **a1:** Esc closes "Replace the branch?" — resolved (polish-001).
@@ -96,3 +96,10 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - **k4:** `index` missing from the snapshot field classification — resolved (polish-006).
 - **k5:** frame pools not cleared — resolved (polish-006): on init, on leaving compare and when B is freed.
 - **k6:** test 7b counts `returnBuffer` arguments only — limitation: a frozen test; every App call passes its side (checked in review).
+
+## (k) From polish-006 (Gold review minors)
+- **k7:** while halted, keyboard shortcuts still act: `+`/`-` change the disabled speed (carried into the new world), Space goes to the stopped worker; the timeline, Compare and Discard stay enabled — limitation: no effect on a stopped simulation besides the remembered speed; left for a follow-up.
+- **k8:** the test hook's `snapshot()` settles pending B-context releases (a microtask) — limitation: it only brings forward a release the app makes anyway right after the next draw.
+- **k9:** a B buffer returned after compare was left goes into B's just-cleared pool — limitation: bounded (one buffer), reused or cleared at the next change.
+- **k10:** the fatal alert reads "The simulation stopped: simulation halted: …" — limitation: wording only.
+- **k11:** the post-switch WebGL tasks grow with more app tabs open (2.9 s seen with three tabs), and compareOn's median reached 280 ms of the 300 ms at load 19 — limitation: SwiftShader GPU contention; making the spare only when idle would help.

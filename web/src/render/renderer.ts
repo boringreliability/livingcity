@@ -555,12 +555,12 @@ export class CityRenderer {
     return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
   }
 
-  /** Release the WebGL context itself (a removed canvas must not count against the browser's limit). */
   /** The canvas this renderer draws into (a spare B renderer is made on a detached canvas). */
   get element(): HTMLCanvasElement {
     return this.canvas;
   }
 
+  /** Release the WebGL context itself (a removed canvas must not count against the browser's limit). */
   loseContext(): void {
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }

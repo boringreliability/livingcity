@@ -23,7 +23,7 @@ It closes the open MINOR backlog from epics core, city and timeline. That backlo
 | polish-003 | Calm motion and clear markers in the renderer | complete |
 | polish-004 | First-run demonstration | complete |
 | polish-005 | Profile and optimize the measured per-frame bottlenecks | complete |
-| polish-006 | Finished product, verified (integration ward) | planned |
+| polish-006 | Finished product, verified (integration ward) | complete |
 
 ## Measured basis (2026-10-09)
 Measured natively in release on River City (seed 2026/7) with a temporary probe that is not committed. Setup: 1 sim h of warm-up, then 2,000 ticks, with each part timed separately per tick. The machine is an Apple M4 Pro.

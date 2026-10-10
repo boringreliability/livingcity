@@ -1,18 +1,16 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-10: **Epic polish active:** polish-001…005 done; next polish-006 (integration ward, then the human epic gate).
+2026-10-10: **Epic polish built** (polish-001…006 complete); **awaiting the human epic gate** ("godkendt").
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
 - **Epic core: complete, approved 2026-10-07.** sim-core (network, world, routing, demand, closures, commands, `state_hash`, frame), thin `sim-wasm`, worker host + `SimClock`, WebGL2 renderer, React UI.
 - **Epic city: complete, approved 2026-10-08** (`.wdd/epics/city.md`, C1–C5): per-link sat flow + gridlock relief, River City (3 bridges, 22 zones, calibrated), inspect/follow, miniature look, 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, `docs/performance.md`. Core G4 superseded by city.e2e test 15 (user). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`.
 - **Epic timeline: complete, approved 2026-10-09** (`.wdd/epics/timeline.md`, T1–T5): snapshots every 120 ticks within 48 MiB per scenario, seek = restore + replay, branch B from A's past (A never edited), lockstep compare with linked cameras and cohort metrics incl. incomplete, acceptance e2e, docs (`README.md`, `docs/`). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-09-timeline-004-final.md` and the ward files.
-- **Epic polish: active.** Spec `.wdd/epics/polish.md` (P1–P6, measured per-frame basis); backlog ids a1–g5 in `.wdd/memory/polish-backlog.md`.
-  - **polish-001/002 done**: keyboard/focus/labels + axe (`e2e/a11y.spec.ts`); `.top-band` grid layout, refit on resize, no overlaps at ≥ 768 px (`e2e/layout.spec.ts`).
-  - **polish-003 done**: frame `nextLinks` (u16/record), `render/motion.ts` junction curve mirrored in `VEH_VS`, `ExtrapolationClock`, dashed hover, closure ring sign. **Epic gate items:** i1 (stop at curve end, then ~7 m jump at 1×), i2 (held cars stack in junctions), i3/i5 deviations.
-  - **polish-004 done**: demo guide (`ui/DemoGuide.tsx`, `ui/guideProgress.ts`; steps from frames by sim ticks), "?" (Guide) toggle. Load spikes (other processes) cause spurious e2e timeouts: log `uptime`, re-run alone.
-  - **polish-005 done** (Red r3, Gold r1): derived `SlotIndex` in `World` (incremental metric counters; periodic/retry passes visit only due slots, ascending), `Arc` snapshots shared by branches, per-side frame pools (`returnBuffer.scenario`), `SimClock.reset()` on init, fatal errors + "Restart simulation" (`debugTrap` hook). ×5: step 0.331 → 0.076 ms, metrics 0.354 → 0.009 ms, branch 15.3 → 1.3 ms (`frame_cost_probe`, `web/perf-results/frame-cost.json`). Golden `state_hash` values pin determinism. Pinned deviations e2/e3. **polish-006 must re-run `e2e:perf` (k1).**
+- **Epic polish: built, awaiting the epic gate.** Spec `.wdd/epics/polish.md` (P1–P6); backlog a1–k11 in `.wdd/memory/polish-backlog.md`, every id accounted in `docs/known-issues.md` (§ Epic gate: deviations e2, e3, i1, i2, i3, i5 + post-switch WebGL tasks).
+  - **polish-001…005 done**: keyboard/focus + axe; `.top-band` layout and refit; frame `nextLinks` + junction curves (`render/motion.ts`), closure ring; demo guide ("?" toggle); derived `SlotIndex` (incremental metrics, due-slot passes), `Arc` snapshots, per-side frame pools, fatal errors + Restart (`debugTrap`). Golden `state_hash` values pin determinism. Details in the ward files and `.wdd/memory/snapshots/CONTEXT-2026-10-10-polish-005.md`.
+  - **polish-006 done** (Red r3, Gold r1): f6 (failed B replace falls back to A), k5 pool clearing, rustfmt gate on src/examples (f3), clean Restart with the alert until the new world's first frame and halted controls (k2/k3), Esc focus only from the confirm (g1), outer focus ring on pressed toggles (j3). Compare switch off the GPU critical path: A's backing store sized for the app area, spare B renderer, B context released after the first single-view draw (sync WebGL calls took 0.3–0.9 s under SwiftShader load); the hook's `snapshot().compare` = drawn. `e2e:perf` + `frame_cost_probe` re-run 2026-10-10 (stress tick mean 0.248 → 0.161 ms).
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
@@ -50,25 +48,15 @@
 | Metric | Value | Ward |
 |--------|-------|------|
 | Browser app (75 Hz) | ~13 ms rAF interval, ~7 % main-thread busy; JS 244 kB (77 kB gzip); wasm 119 kB (47 kB) | core-005 |
-| Browser, River City (docs/performance.md) | tick mean 0.06 ms (~1.7k) / 0.25 ms (~5.7k); render 120 FPS Metal, 20 FPS SwiftShader | city-005 |
-| Timeline (SwiftShader, timeline.json) | seek 86.9 ms median (frame-bound); branch 38.3 ms; A 44.3 + B 37.0 MiB; lockstep ×1.84 per tick | timeline-005 |
+| Browser, River City (docs/performance.md) | tick mean 0.05–0.06 ms (~1.7k) / 0.16 ms (~5.7k); render 120 FPS Metal, 20 FPS SwiftShader | polish-006 |
+| Timeline (SwiftShader, timeline.json) | seek 87.6 ms median (frame-bound); branch 39.7 ms; A 44.3 + B 37.0 MiB; lockstep ×1.75 per tick | polish-006 |
+| Controls under `?demand=5` at 20× (polish-006 test 1) | pause/play/seek ~100 ms; compare on ≤ 280, off ≤ 75 ms (medians) | polish-006 |
 | Step, 20×20 grid, 25–32k vehicles (release) | 0.195 ms median, 0.36 ms p95 | core-003 |
 
 ## Known Limitations
-- city-003 MINORs: cars step ~4–7 m at junctions (ring/Follow too); speed changes restart extrapolation. `cargo fmt --check` reports diffs (no fmt gate).
-- Performance (docs/performance.md):
-  - **10,000 on the network: missed.** River City peaks at 7,615 (×6, 3 h), limited by intersection/entry throughput.
-  - **~60 FPS: missed on SwiftShader (20 FPS), met on the hardware GPU (120 FPS).**
-  - Tick mean is 0.06 ms at ~1.7k and 0.25 ms at ~5.7k on the network.
-- Polish backlog (city MINORs):
-  - the legend covers `unserved` below ~1,255 px;
-  - re-init resets only `executedTicks`;
-  - the hover halo is close in lightness to congestion;
-  - the hatch is dropped below zoom 0.07;
-  - no e2e test for close-while-paused.
-- `World::metrics()` dominates per-frame cost at high demand (make it incremental or sample it).
-- Browser `performance.now()` is coarse (0.1 ms). After a wasm trap the host halts, and recovery needs a new worker.
+- All known limitations and deviations, with reasons: `docs/known-issues.md` (one line per backlog id). Targets missed: 10,000 on the network (peak 7,615) and ~60 FPS on SwiftShader (met on a hardware GPU).
+- e2e under heavy machine load: some older specs (e.g. `brief_acceptance_flow`, `labels_never_half_cut`) are load-sensitive; log `uptime`, re-run alone.
 
 ## What Comes Next
-- Plan epic `polish` (spec + wards), then build it with the same gates.
-- Then epic `polish`: the MINORs above (city + timeline), a11y, onboarding.
+- **Epic gate for `polish`:** present the demo, commands, review log, deviations and known issues; wait for "godkendt".
+- After that: no further epic is planned (v2+ is out of scope for v1).

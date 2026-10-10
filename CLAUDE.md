@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Living City** is an interactive city traffic simulation: Rust compiled to WebAssembly runs the simulation in a Web Worker, and a TypeScript/React UI sits on top of a GPU canvas renderer (WebGL2 or WebGPU). The demo it is built around: *close a bridge → watch traffic adapt → rewind → branch → compare the two scenarios side by side.*
 
 - `livingcity.md` is the full product brief. It is the authoritative spec for scope, simulation model, replay, visuals, metrics, performance targets, verification and deliverables, so read it before planning work.
-- `.wdd/` holds the Ward-Driven Development state. Its `CONTEXT.md` is the source of truth for what has been built (as of 2026-10-09: epics `core`, `city` and `timeline` approved; next is `polish`). User-facing docs: `README.md` and `docs/`.
+- `.wdd/` holds the Ward-Driven Development state. Its `CONTEXT.md` is the source of truth for what has been built (as of 2026-10-10: epics `core`, `city` and `timeline` approved; `polish` built and awaiting its epic gate). User-facing docs: `README.md` and `docs/` (known limitations: `docs/known-issues.md`).
 
 ### Layout
 - `crates/sim-core`: the authoritative simulation in pure Rust.
@@ -26,7 +26,7 @@ pnpm -C web build                      # typecheck + production build
 pnpm -C web typecheck
 pnpm -C web test                       # Vitest (all)
 pnpm -C web exec vitest run tests/diagnostics.test.ts -t "warmup"    # one file / one test
-pnpm -C web e2e                        # Playwright (excludes @perf), ~13 min
+pnpm -C web e2e                        # Playwright (excludes @perf), ~19 min
 pnpm -C web exec playwright test e2e/look.spec.ts -g "legend"       # one spec / one test
 pnpm -C web e2e:perf                   # performance harness → web/perf-results/*.json (docs/performance.md)
 cargo test --workspace                 # Rust (calibration tests are skipped in debug builds)

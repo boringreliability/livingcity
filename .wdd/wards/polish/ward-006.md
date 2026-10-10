@@ -3,12 +3,12 @@ ward: 6
 revision: null
 name: "Finished product, verified"
 epic: "polish"
-status: "gold"
+status: "complete"
 dependencies: ["polish-005"]
 layer: "fullstack"
 estimated_tests: 9
 created: "2026-10-10"
-completed: null
+completed: "2026-10-10"
 ---
 # Ward polish-006: Finished product, verified (integration ward)
 

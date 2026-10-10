@@ -90,3 +90,10 @@ Items marked *pinned* are constrained by a frozen test.
 - **k4:** snapshot bytes are 112 B larger per snapshot, because the index field sits inside `World`. The `Snapshot` field-classification comment in `timeline.rs` doesn't list `index`. From polish-005-gold-1 m5.
 - **k5:** B's frame pool is never cleared after compare ends, and `init` clears neither pool. Bounded to a few buffers. From polish-005-gold-1 m6.
 - **k6:** test 7b (returnBuffer side) only counts arguments; all App calls do pass the right side. From polish-005-red-3 m1.
+
+## (k) From polish-006 Gold review (accounted in docs/known-issues.md)
+- **k7:** while halted, keyboard shortcuts still act (`+`/`-` change the disabled speed, Space goes to the stopped worker); timeline, Compare and Discard stay enabled (`App.tsx:786-800`). From polish-006-gold-1 m2.
+- **k8:** the test hook's `snapshot()` does real work (it settles pending B-context releases in a microtask). From polish-006-gold-1 m3.
+- **k9:** a B buffer returned after leaving compare goes into the just-cleared pool (`host.ts:580`). From polish-006-gold-1 m4.
+- **k10:** redundant fatal text "The simulation stopped: simulation halted: unreachable". From polish-006-gold-1 m6.
+- **k11:** the post-switch WebGL tasks reached 2.9 s with three app tabs; compareOn median 280 ms at load 19. From polish-006-gold-1 m1/m7.
