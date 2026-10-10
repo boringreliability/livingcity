@@ -1,14 +1,14 @@
 # Context: Living City
 
 ## Last Updated
-2026-10-10: **Epic polish built** (polish-001…006 complete); **awaiting the human epic gate** ("godkendt").
+2026-10-10: **Epic polish complete, approved by the user ("godkendt").** All planned v1 epics (core, city, timeline, polish) are approved.
 
 ## Current State
 - Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
 - **Epic core: complete, approved 2026-10-07.** sim-core (network, world, routing, demand, closures, commands, `state_hash`, frame), thin `sim-wasm`, worker host + `SimClock`, WebGL2 renderer, React UI.
 - **Epic city: complete, approved 2026-10-08** (`.wdd/epics/city.md`, C1–C5): per-link sat flow + gridlock relief, River City (3 bridges, 22 zones, calibrated), inspect/follow, miniature look, 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, `docs/performance.md`. Core G4 superseded by city.e2e test 15 (user). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`.
 - **Epic timeline: complete, approved 2026-10-09** (`.wdd/epics/timeline.md`, T1–T5): snapshots every 120 ticks within 48 MiB per scenario, seek = restore + replay, branch B from A's past (A never edited), lockstep compare with linked cameras and cohort metrics incl. incomplete, acceptance e2e, docs (`README.md`, `docs/`). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-09-timeline-004-final.md` and the ward files.
-- **Epic polish: built, awaiting the epic gate.** Spec `.wdd/epics/polish.md` (P1–P6); backlog a1–k11 in `.wdd/memory/polish-backlog.md`, every id accounted in `docs/known-issues.md` (§ Epic gate: deviations e2, e3, i1, i2, i3, i5 + post-switch WebGL tasks).
+- **Epic polish: complete, approved 2026-10-10.** Spec `.wdd/epics/polish.md` (P1–P6); backlog a1–k11 in `.wdd/memory/polish-backlog.md`, every id accounted in `docs/known-issues.md` (§ Epic gate: deviations e2, e3, i1, i2, i3, i5 + post-switch WebGL tasks).
   - **polish-001…005 done**: keyboard/focus + axe; `.top-band` layout and refit; frame `nextLinks` + junction curves (`render/motion.ts`), closure ring; demo guide ("?" toggle); derived `SlotIndex` (incremental metrics, due-slot passes), `Arc` snapshots, per-side frame pools, fatal errors + Restart (`debugTrap`). Golden `state_hash` values pin determinism. Details in the ward files and `.wdd/memory/snapshots/CONTEXT-2026-10-10-polish-005.md`.
   - **polish-006 done** (Red r3, Gold r1): f6 (failed B replace falls back to A), k5 pool clearing, rustfmt gate on src/examples (f3), clean Restart with the alert until the new world's first frame and halted controls (k2/k3), Esc focus only from the confirm (g1), outer focus ring on pressed toggles (j3). Compare switch off the GPU critical path: A's backing store sized for the app area, spare B renderer, B context released after the first single-view draw (sync WebGL calls took 0.3–0.9 s under SwiftShader load); the hook's `snapshot().compare` = drawn. `e2e:perf` + `frame_cost_probe` re-run 2026-10-10 (stress tick mean 0.248 → 0.161 ms).
 - **User decisions:**
@@ -58,5 +58,5 @@
 - e2e under heavy machine load: some older specs (e.g. `brief_acceptance_flow`, `labels_never_half_cut`) are load-sensitive; log `uptime`, re-run alone.
 
 ## What Comes Next
-- **Epic gate for `polish`:** present the demo, commands, review log, deviations and known issues; wait for "godkendt".
+- v1 is complete. Candidate follow-ups from `docs/known-issues.md` (e.g. k7 halted shortcuts, i1/i2 motion via frame interpolation) need a new epic and the user's go-ahead.
 - After that: no further epic is planned (v2+ is out of scope for v1).
