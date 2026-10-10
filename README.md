@@ -41,7 +41,7 @@ The app opens on River City after a 15-minute (sim time) warm-up, so traffic is 
 | Esc | clear the selection |
 | ← / → / Home / End | on the focused timeline: one sim minute back / forward, window start / live |
 
-A **demo guide** in the app (top right) walks through the demo on a first visit and ticks off each step as you do it; hide it with ×, and the **Guide** button shows it again. [`docs/demo.md`](docs/demo.md) walks through the same demo in five minutes.
+A **demo guide** in the app (top right) walks through the demo on a first visit and ticks off each step as you do it; hide it with ×, and the **?** (Guide) button shows it again. [`docs/demo.md`](docs/demo.md) walks through the same demo in five minutes.
 
 ## Tests
 
@@ -65,3 +65,4 @@ cargo run -p sim-core --release --example timeline_probe     # native snapshot /
 - [`docs/traffic-model.md`](docs/traffic-model.md): the deliberately simplified traffic model and what the metrics mean.
 - [`docs/demo.md`](docs/demo.md): the demo walkthrough.
 - [`docs/performance.md`](docs/performance.md): measured performance (sim tick and render reported separately), including the timeline costs.
+- [`docs/known-issues.md`](docs/known-issues.md): known limitations and deviations, with every backlog item's status.

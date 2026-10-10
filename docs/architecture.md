@@ -22,8 +22,8 @@ web/src/ui        React panels: controls, timeline, scenarios, comparison, selec
 
 ## Data flow per frame
 1. The host runs a batch of ticks, then builds one frame. The frame holds the vehicle records (16 bytes each: link, metres along it, speed, and flags with the lane, queued, on-closed-link and stranded bits), each record's next link (`nextLinks`, 2 bytes), per-link counts and queue state, the metrics in a fixed name order, the closed links and the timeline status.
-2. The frame's `ArrayBuffer` is posted as a **transferable**, so it is not copied. After drawing, the UI returns the buffer (`returnBuffer`) for reuse.
-3. The renderer uploads both to the GPU once per frame and places each vehicle along its link from a link-geometry table; in a link's last 6 m it curves the car onto the next link's start (`render/motion.ts`, mirrored in the vertex shader), so turns never jump. Extrapolation never passes the link end and is capped at 1.5 × the frame interval.
+2. The frame's vehicle `ArrayBuffer` is posted as a **transferable**, so it is not copied. After drawing, the UI returns the buffer (`returnBuffer`, with its scenario) to that side's pool for reuse. The `nextLinks` array is copied (structured clone, 2 bytes per vehicle), not transferred.
+3. The renderer uploads both to the GPU once per frame and places each vehicle along its link from a link-geometry table; in a link's last 6 m it curves the car onto the next link's start (`render/motion.ts`, mirrored in the vertex shader), so turns never jump. Extrapolation never passes the link end and is capped at 1.5 × the expected sim advance between frames (the requested speed times the time since the frame).
 
 There are no per-vehicle JS↔wasm calls and no per-frame JSON. Vehicle and road details are fetched only on request: `inspectVehicle` names a vehicle by frame tick and record, and `inspectLink` names a link id. In compare mode a small `comparison` message (the windowed metrics of A and B) is sent at most every 500 ms. It is also sent on entering compare, on a seek and on pause.
 
@@ -58,7 +58,7 @@ The simulation owns *where a vehicle is along the road* (link id, metres from th
 - **`Sim.window_metrics`** is added to the wasm adapter in timeline-003; its consumer is the comparison panel.
 
 ### From the timeline contract (T4, ward timeline-004)
-- **Two canvases (two WebGL contexts) instead of one context with two viewports.** This reuses `CityRenderer` unchanged per side, at the cost of double (small) GPU buffers. B's context exists only while comparing.
+- **Two canvases (two WebGL contexts) instead of one context with two viewports.** This reuses `CityRenderer` unchanged per side, at the cost of double (small) GPU buffers. Since polish-006 a spare B context is made ahead of time while a branch exists, and a left B context is released right after the first single-view draw (both are synchronous GPU waits; see "From epic polish").
 - **Interventions are disabled while comparing.** T4 does not say which side a control would act on; comparing is for observing, and changes are made in the single view.
 - **Vehicle inspection is off while comparing, and so is the A/B view switch.** Road inspection works per side.
 - **Seeks below the branch tick are refused while comparing.** The slider spans the shared window.
@@ -68,3 +68,12 @@ The simulation owns *where a vehicle is along the road* (link id, metres from th
 - **Determinism:** restore + replay ≡ an uninterrupted run (hash and logs, River City and three_bridges, with commands and gridlock relief). Branch independence and identical demand are tested natively (`timeline_001_snapshots`, `timeline_002_branch`).
 - **In the browser:** the full flow (close, consequences, rewind, branch, compare) runs in `web/e2e/acceptance.spec.ts`. The memory window is shown in the timeline bar. The comparison shows matching sim time and incomplete trips.
 - **Performance:** seek, branch, snapshot memory and the lockstep cost are measured in `web/perf-results/timeline.json` and reported in `docs/performance.md` § Timeline.
+
+### From epic polish
+- **e2: paused frames.** While paused, the host still builds a frame about every 16 ms. A slower heartbeat was planned (P5) but the frozen host tests G4/G4b pin the paused frame rate.
+- **e3: frame pools.** Each side has its own pool, so A's frames no longer discard B's returned buffers. Wider reuse was not done because the frozen tests F2/G8 pin the pool rule (a pool is emptied by each post).
+- **i1: a car stops at the end of the junction curve.** At 1× a moving car waits up to a tick at the curve's end, then moves on (~7 m). Extrapolation never passes the link end (pinned by polish-003 test 4). Interpolating between frames by trip id would remove it.
+- **i2: held cars stack in junctions.** A car held at a stop line is drawn at the next link's start, so cars from several approaches can overlap inside a busy junction (pinned by polish-003 tests 3(a)/4/7).
+- **i3: the hover halo stays.** Hover keeps its light-grey halo and adds a dashed centre stroke; the frozen gold5 G1 pins the halo.
+- **i5: the closure sign is a ring.** A closed road shows a white ring with the hatch inside, not a 6 × 6 px white core; the frozen look.spec midpoint-hatch test pins it.
+- **Compare switch off the GPU critical path (polish-006).** WebGL context creation, release and drawing-buffer resizes wait for the GPU process (0.3–0.9 s each on SwiftShader under `?demand=5`). So A's drawing buffer is sized for the whole app area and is not resized by the switch (A is drawn 2× wide-sampled while comparing), B's renderer is prepared ahead of time, and a left B context is released after the first single-view draw. Those tasks still occupy the main thread afterwards; see `docs/known-issues.md`.

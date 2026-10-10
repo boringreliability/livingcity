@@ -31,7 +31,8 @@ export interface LivingCitySnapshot {
   timeline: TimelineStatus;
   /** The tick B was branched from, or null without a branch. */
   branchTick: number | null;
-  /** A and B side by side (true once the layout and fit are applied: ward timeline-004). */
+  /** A and B side by side: true once the layout and fit are applied (ward timeline-004) and a frame
+   *  was drawn that way; false once a frame was drawn without B (polish-006). */
   compare: boolean;
   /** The committed frame pair's ticks and closed links while comparing. */
   sides: { a: { tick: number; closed: number[] }; b: { tick: number; closed: number[] } } | null;

@@ -33,7 +33,7 @@ export function DemoGuide({ done, hint, onHide }: DemoGuideProps) {
           {complete ? 'Demo complete — hide with ×' : `${next + 1}. ${GUIDE_STEPS[next]}`}
           {!complete && <span className="sr-only">: {HOW[next]}</span>}
         </span>
-        <button type="button" className="guide-hide" aria-label="Hide demo guide" title="Hide the demo guide (Guide shows it again)" onClick={onHide}>
+        <button type="button" className="guide-hide" aria-label="Hide demo guide" title="Hide the demo guide (the ? (Guide) button shows it again)" onClick={onHide}>
           ×
         </button>
       </div>

@@ -149,6 +149,15 @@ export function App() {
   /** Side by side (ward timeline-004): B's canvas and renderer exist only while comparing. */
   const canvasBRef = useRef<HTMLCanvasElement | null>(null);
   const rendererB = useRef<CityRenderer | null>(null);
+  /** WebGL context creation and release are synchronous and wait for the GPU process: under load
+   *  (SwiftShader, ?demand=5) each took 0.3–0.9 s on the main thread. So they stay off the switch's
+   *  critical path (polish-006): a spare B renderer is made ahead of time on a detached canvas once a
+   *  branch exists, and a left B renderer is released in a task after the first single-view draw. */
+  const spareB = useRef<CityRenderer | null>(null);
+  const releaseB = useRef<CityRenderer[]>([]);
+  const housekeeping = useRef(false);
+  /** The comparison as last drawn (the hook's `compare`): both sides drawn, or A alone. */
+  const shownCompare = useRef(false);
   const decorRef = useRef<CityDecor | null>(null);
   /** B's latest frame view, and a copy of its records (replayed into a renderer created later). */
   const bFrameRef = useRef<FrameView | null>(null);
@@ -265,6 +274,57 @@ export function App() {
     setGone(null);
     follow(false);
   }, [follow]);
+
+  /** A B renderer on a new detached canvas, with the network set and its backing store sized for
+   *  B's half of the window (null when WebGL2 fails). */
+  const makeBRenderer = (g: RoadGeometry, d: CityDecor): CityRenderer | null => {
+    const cv = document.createElement('canvas');
+    cv.className = 'city city-b';
+    cv.setAttribute('aria-label', 'City map, branch B');
+    try {
+      const r = new CityRenderer(cv);
+      r.setNetwork(g, d);
+      const app = appBox();
+      if (app) r.resize(app.width / 2, app.height, window.devicePixelRatio || 1);
+      return r;
+    } catch {
+      return null;
+    }
+  };
+  /** A's backing store is sized for the whole app area, also while A's canvas shows only the left
+   *  half: resizing a WebGL drawing buffer waits for the GPU process (~0.3 s under load), so the
+   *  compare switch never resizes it (A is drawn 2× wide-sampled while comparing). */
+  const appBox = () => canvasRef.current?.parentElement?.getBoundingClientRect() ?? null;
+  const release = (r: CityRenderer) => {
+    r.dispose();
+    r.loseContext();
+  };
+  /** After a draw: release left B renderers, then (a separate task, so input can come first) make a
+   *  spare while a branch exists and B is not shown; drop the spare when there is no branch. */
+  const scheduleHousekeeping = () => {
+    if (housekeeping.current) return;
+    const branched = (frameRef.current?.timeline.branchTick ?? -1) >= 0;
+    const wantSpare = branched && !spareB.current && !compareViewRef.current && fatalRef.current === null;
+    const dropSpare = !branched && spareB.current !== null;
+    if (!releaseB.current.length && !wantSpare && !dropSpare) return;
+    housekeeping.current = true;
+    setTimeout(() => {
+      for (const r of releaseB.current.splice(0)) release(r);
+      if (!(frameRef.current && (frameRef.current.timeline.branchTick ?? -1) >= 0) && spareB.current) {
+        release(spareB.current);
+        spareB.current = null;
+      }
+      setTimeout(() => {
+        housekeeping.current = false;
+        const f = frameRef.current;
+        const g = geometry.current;
+        const d = decorRef.current;
+        if (f && f.timeline.branchTick >= 0 && !spareB.current && !compareViewRef.current && fatalRef.current === null && g && d) {
+          spareB.current = makeBRenderer(g, d);
+        }
+      }, 0);
+    }, 0);
+  };
 
   // Simulation client: ready → geometry + camera; frames → GPU + UI state.
   useEffect(() => {
@@ -444,6 +504,10 @@ export function App() {
       c.dispose();
       renderer.current?.dispose();
       renderer.current = null;
+      // a new world has a new network: no B renderer of the old one is kept
+      for (const r of releaseB.current.splice(0)) release(r);
+      if (spareB.current) release(spareB.current);
+      spareB.current = null;
     };
   }, [camera, pushLinkState, generation]);
 
@@ -454,30 +518,34 @@ export function App() {
     const d = decorRef.current;
     if (!g || !d) return;
     if (comparingNow) {
-      const cb = canvasBRef.current;
-      if (!cb) return;
-      try {
-        rendererB.current = new CityRenderer(cb);
-      } catch {
-        return;
-      }
-      rendererB.current.setNetwork(g, d);
+      const rb = spareB.current ?? makeBRenderer(g, d);
+      spareB.current = null;
+      if (!rb) return;
+      // B's canvas sits right after A's (both absolutely placed; the order only stacks them)
+      canvasRef.current!.after(rb.element);
+      canvasBRef.current = rb.element;
+      rendererB.current = rb;
       const b = bRecordsRef.current;
-      if (b) rendererB.current.setFrame(b.words, b.count, performance.now(), b.tick, b.running, b.multiplier, b.next);
+      if (b) rb.setFrame(b.words, b.count, performance.now(), b.tick, b.running, b.multiplier, b.next);
     } else {
       const rb = rendererB.current;
       rendererB.current = null;
+      canvasBRef.current = null;
       if (rb) {
+        rb.element.remove();
         rb.dispose();
-        rb.loseContext(); // never left for the browser to reclaim (it would drop the oldest: A's)
+        // its context is released after the next draw (never left for the browser to reclaim: it
+        // would drop the oldest, A's)
+        releaseB.current.push(rb);
       }
       setComparison(null);
     }
     const r = canvasRef.current!.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     camera.setViewport(r.width, r.height);
-    renderer.current?.resize(r.width, r.height, dpr);
-    rendererB.current?.resize(r.width, r.height, dpr);
+    const app = appBox() ?? r;
+    renderer.current?.resize(app.width, app.height, dpr); // unchanged by the switch: no reallocation
+    rendererB.current?.resize(r.width, r.height, dpr); // a spare is already this size
     camera.fitInsets(g.bounds, comparingNow ? COMPARE_FIT_INSETS : FIT_INSETS);
     cameraTouched.current = false;
     selectedRef.current = null;
@@ -501,7 +569,8 @@ export function App() {
     const resize = () => {
       const r = canvas.getBoundingClientRect();
       camera.setViewport(r.width, r.height);
-      renderer.current?.resize(r.width, r.height, window.devicePixelRatio || 1);
+      const app = canvas.parentElement?.getBoundingClientRect() ?? r;
+      renderer.current?.resize(app.width, app.height, window.devicePixelRatio || 1);
       rendererB.current?.resize(r.width, r.height, window.devicePixelRatio || 1);
       // an untouched view keeps showing the whole city; a camera the user moved stays where it is
       const g = geometry.current;
@@ -557,6 +626,7 @@ export function App() {
         rendererB.current.draw(camera, now, simPerMs);
         drawnCams.current = { a: camA, b: { cx: camera.cx, cy: camera.cy, zoom: camera.zoom } };
       } else drawnCams.current = null;
+      shownCompare.current = compareViewRef.current && rendererB.current !== null;
       const drawMs = performance.now() - d0;
       drawTimes.current.add(drawMs);
       recordingRef.current?.drawMs.push(drawMs);
@@ -576,6 +646,7 @@ export function App() {
       });
       if (placed.length) hideCutLabels(placed);
       renderFrames.current++;
+      scheduleHousekeeping();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -842,6 +913,9 @@ export function App() {
     window.__livingcity = {
       snapshot: (): LivingCitySnapshot => {
         const f = frameRef.current;
+        // a reader that sees the single view never then finds B's old context still alive: pending
+        // releases settle right after this call (a microtask, so a caller's own timing is unaffected)
+        if (releaseB.current.length) queueMicrotask(() => releaseB.current.splice(0).forEach(release));
         return {
           tick: f?.tick ?? 0,
           simTimeS: f?.simTimeS ?? 0,
@@ -865,7 +939,7 @@ export function App() {
             ? { ...f.timeline }
             : { windowStartTick: 0, headTick: 0, positionTick: 0, branchTick: -1, snapshotBytes: 0, budgetBytes: 0, compare: 0 },
           branchTick: f && f.timeline.branchTick >= 0 ? f.timeline.branchTick : null,
-          compare: compareViewRef.current,
+          compare: compareViewRef.current && shownCompare.current,
           sides:
             compareViewRef.current && f && bFrameRef.current
               ? { a: { tick: f.tick, closed: [...f.closed] }, b: { tick: bFrameRef.current.tick, closed: [...bFrameRef.current.closed] } }
@@ -1076,7 +1150,6 @@ export function App() {
     <main className={`app${comparingNow ? ' comparing' : ''}`}>
       <h1 className="sr-only">Living City: traffic simulation</h1>
       <canvas ref={canvasRef} className="city" aria-label="City map" />
-      {comparingNow && <canvas ref={canvasBRef} className="city city-b" aria-label="City map, branch B" />}
       {comparingNow && (
         <>
           <span className="side-label side-a">A: original</span>

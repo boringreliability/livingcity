@@ -2,7 +2,7 @@
 
 This takes about five minutes. It assumes the app is running (`pnpm -C web build:wasm`, then `pnpm -C web dev`; see the README) and is open in a desktop browser at least 1,280 px wide.
 
-The app has the same walkthrough built in: the **demo guide** at the top right ticks off each step when you actually do it (hide it with ×, show it again with **Guide**).
+The app has the same walkthrough built in: the **demo guide** at the top right ticks off each step when you actually do it (hide it with ×, show it again with the **?** (Guide) button).
 
 ## 1. A living city
 When the page opens, River City has already run for 15 sim minutes, and traffic flows over all three bridges.

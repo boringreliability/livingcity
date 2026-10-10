@@ -76,7 +76,7 @@ export function ControlPanel(p: Props) {
           aria-pressed={p.guideShown}
           onClick={p.onToggleGuide}
           disabled={p.guideDisabledReason !== undefined}
-          title={p.guideDisabledReason ?? 'Show or hide the demo guide'}
+          title={p.guideDisabledReason ?? 'Guide: show or hide the demo guide'}
         >
           <span aria-hidden="true">?</span>
         </button>
