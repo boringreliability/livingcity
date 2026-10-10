@@ -22,8 +22,8 @@ web/src/ui        React panels: controls, timeline, scenarios, comparison, selec
 
 ## Data flow per frame
 1. The host runs a batch of ticks, then builds one frame. The frame holds the vehicle records (16 bytes each: link, metres along it, speed, and flags with the lane, queued, on-closed-link and stranded bits), each record's next link (`nextLinks`, 2 bytes), per-link counts and queue state, the metrics in a fixed name order, the closed links and the timeline status.
-2. The frame's vehicle `ArrayBuffer` is posted as a **transferable**, so it is not copied. After drawing, the UI returns the buffer (`returnBuffer`, with its scenario) to that side's pool for reuse. The `nextLinks` array is copied (structured clone, 2 bytes per vehicle), not transferred.
-3. The renderer uploads both to the GPU once per frame and places each vehicle along its link from a link-geometry table; in a link's last 6 m it curves the car onto the next link's start (`render/motion.ts`, mirrored in the vertex shader), so turns never jump. Extrapolation never passes the link end and is capped at 1.5 × the expected sim advance between frames (the requested speed times the time since the frame).
+2. The vehicle `ArrayBuffer` is a **transferable** (not copied); the UI returns it (`returnBuffer`) to its side's pool. `nextLinks` is copied, not transferred.
+3. The renderer uploads both to the GPU once per frame and places each vehicle along its link from a link-geometry table; in a link's last 6 m it curves the car onto the next link's start (`render/motion.ts`, mirrored in the vertex shader), so turns never jump. Extrapolation never passes the link end and is capped at 1.5 × the expected sim advance.
 
 There are no per-vehicle JS↔wasm calls and no per-frame JSON. Vehicle and road details are fetched only on request: `inspectVehicle` names a vehicle by frame tick and record, and `inspectLink` names a link id. In compare mode a small `comparison` message (the windowed metrics of A and B) is sent at most every 500 ms. It is also sent on entering compare, on a seek and on pause.
 

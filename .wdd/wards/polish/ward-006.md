@@ -3,7 +3,7 @@ ward: 6
 revision: null
 name: "Finished product, verified"
 epic: "polish"
-status: "approved"
+status: "gold"
 dependencies: ["polish-005"]
 layer: "fullstack"
 estimated_tests: 9

@@ -1,20 +1,20 @@
 {
   "note": "native release; River City seed 2026/7, after 1 sim h, mean of 2000 ticks. before.metricsMs = metrics_full_scan() now; before.stepMs = baseline (code at 4e5d5c1)",
-  "loadAvg": "{ 14.29 13.28 14.29 } / { 14.29 13.28 14.29 }",
+  "loadAvg": "{ 7.21 12.86 14.25 } / { 7.21 12.86 14.25 }",
   "baseline": {
     "x1": {"stepMs": 0.0213, "metricsMs": 0.0096},
     "x3": {"stepMs": 0.1523, "metricsMs": 0.1644},
     "x5": {"stepMs": 0.3306, "metricsMs": 0.3824}
   },
   "before": {
-    "x1": {"stepMs": 0.0213, "metricsMs": 0.0094},
-    "x3": {"stepMs": 0.1523, "metricsMs": 0.1769},
-    "x5": {"stepMs": 0.3306, "metricsMs": 0.3539}
+    "x1": {"stepMs": 0.0213, "metricsMs": 0.0091},
+    "x3": {"stepMs": 0.1523, "metricsMs": 0.1482},
+    "x5": {"stepMs": 0.3306, "metricsMs": 0.3384}
   },
   "after": {
-    "x1": {"stepMs": 0.0151, "metricsMs": 0.0037, "active": 1761, "onNetwork": 1761},
-    "x3": {"stepMs": 0.0579, "metricsMs": 0.0083, "active": 41332, "onNetwork": 6125},
-    "x5": {"stepMs": 0.0762, "metricsMs": 0.0088, "active": 89550, "onNetwork": 6973}
+    "x1": {"stepMs": 0.0144, "metricsMs": 0.0035, "active": 1761, "onNetwork": 1761},
+    "x3": {"stepMs": 0.0456, "metricsMs": 0.0072, "active": 41332, "onNetwork": 6125},
+    "x5": {"stepMs": 0.0717, "metricsMs": 0.0082, "active": 89550, "onNetwork": 6973}
   },
-  "branchMs": {"before": 15.287, "after": 1.328}
+  "branchMs": {"before": 15.287, "after": 1.319}
 }
