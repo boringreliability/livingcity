@@ -3,7 +3,7 @@ ward: 6
 revision: null
 name: "Finished product, verified"
 epic: "polish"
-status: "planned"
+status: "red"
 dependencies: ["polish-005"]
 layer: "fullstack"
 estimated_tests: 9
@@ -70,7 +70,7 @@ Every other id ends up either "resolved in <ward>" or as a known limitation or d
 |---|-----------|----------|
 | 1 | `controls_respond_under_load` (e2e) | At `?demand=5` and 20× (≥ 4,000 on the network), measured in the page: Space pause, Space play, ← seek, the Compare click and the Compare-off click each show in `snapshot()` within 300 ms. Three repetitions; the median of each ≤ 300 ms. |
 | 2 | `close_while_paused` (e2e) | Paused: clicking "Close the main bridge" shows "(pending)", and `closed` is unchanged for 1 s. After Space, `closed` contains the main bridge within 2 s and "(pending)" is gone. |
-| 3 | `restart_is_clean` (e2e) | Branch, select a road, track a vehicle, compare, tick guide steps 1/4/5, then `debugTrap()`. The fatal alert shows; Play/Pause, Speed and the bridge button are disabled with a reason. After Restart, the alert stays until the new world's first frame and then disappears. After that: no compare, no branch, no selection, no tracked vehicle, guide steps all undone, controls enabled. |
+| 3 | `restart_is_clean` (e2e) | Close the main bridge, pause and rewind, branch, compare (guide steps 1/3/4/5 done), select a road, compare again, then `debugTrap()`. The fatal alert shows; Play/Pause, Speed and the bridge button are disabled with a reason. After Restart, the alert stays until the new world's first frame and then disappears. After that: no compare, no branch, no selection, no tracked vehicle, guide steps all undone, controls enabled. |
 | 4 | `replace_points_at_a` (vitest, host) | During a B replace, the host's `viewed` is 0 at the moment the old B is freed: a probe sim's `free()` hook records the host's `scenario()` view. When the new branch throws, frames continue from A (scenario 0) and no call goes to a freed sim. |
 | 5 | `esc_focus_only_from_the_confirm` (e2e) | Confirm-replace is open with focus on the canvas (body). Esc closes it and focus stays on the body. With focus inside the confirm panel, Esc moves focus to the slider (polish-001 behaviour). |
 | 6 | `pressed_toggles_show_focus` (e2e) | For "?" (pressed), Diagnostics (expanded) and the viewed scenario button (pressed): focused via Tab, the computed outline or box-shadow differs from the same button pressed and unfocused. |
