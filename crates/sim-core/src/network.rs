@@ -1,7 +1,10 @@
 //! Directed road network. Node coordinates are world meters (simulation
 //! data); nothing here knows about screens or drawing.
 
-use crate::params::{JAM_SPACING, MAX_LANES, MAX_LINK_LENGTH, MAX_SAT_FLOW_PER_LANE, MIN_LINK_LENGTH, SAT_FLOW_PER_LANE};
+use crate::params::{
+    JAM_SPACING, MAX_LANES, MAX_LINK_LENGTH, MAX_SAT_FLOW_PER_LANE, MIN_LINK_LENGTH,
+    SAT_FLOW_PER_LANE,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u32);
@@ -44,11 +47,29 @@ pub struct Link {
 pub enum NetworkError {
     UnknownNode(NodeId),
     SelfLoop(NodeId),
-    TooShort { from: NodeId, to: NodeId, length_m: f64 },
-    TooLong { from: NodeId, to: NodeId, length_m: f64 },
-    InvalidSpeed { from: NodeId, to: NodeId },
-    InvalidLanes { from: NodeId, to: NodeId, lanes: u8 },
-    InvalidSatFlow { from: NodeId, to: NodeId },
+    TooShort {
+        from: NodeId,
+        to: NodeId,
+        length_m: f64,
+    },
+    TooLong {
+        from: NodeId,
+        to: NodeId,
+        length_m: f64,
+    },
+    InvalidSpeed {
+        from: NodeId,
+        to: NodeId,
+    },
+    InvalidLanes {
+        from: NodeId,
+        to: NodeId,
+        lanes: u8,
+    },
+    InvalidSatFlow {
+        from: NodeId,
+        to: NodeId,
+    },
     /// A saturation-flow override names a link that does not exist.
     UnknownLink(LinkId),
 }
@@ -112,13 +133,35 @@ impl NetworkBuilder {
     }
 
     /// Two opposite links; returns (a→b, b→a).
-    pub fn two_way(&mut self, a: NodeId, b: NodeId, speed_limit_mps: f64, lanes: u8) -> (LinkId, LinkId) {
-        (self.link(a, b, speed_limit_mps, lanes), self.link(b, a, speed_limit_mps, lanes))
+    pub fn two_way(
+        &mut self,
+        a: NodeId,
+        b: NodeId,
+        speed_limit_mps: f64,
+        lanes: u8,
+    ) -> (LinkId, LinkId) {
+        (
+            self.link(a, b, speed_limit_mps, lanes),
+            self.link(b, a, speed_limit_mps, lanes),
+        )
     }
 
-    fn push_link(&mut self, from: NodeId, to: NodeId, length_m: Option<f64>, speed_limit_mps: f64, lanes: u8) -> LinkId {
+    fn push_link(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        length_m: Option<f64>,
+        speed_limit_mps: f64,
+        lanes: u8,
+    ) -> LinkId {
         let id = LinkId(self.links.len() as u32);
-        self.links.push(PendingLink { from, to, length_m, speed_limit_mps, lanes });
+        self.links.push(PendingLink {
+            from,
+            to,
+            length_m,
+            speed_limit_mps,
+            lanes,
+        });
         id
     }
 
@@ -146,21 +189,45 @@ impl NetworkBuilder {
                 (dx * dx + dy * dy).sqrt()
             });
             if !(length_m.is_finite() && length_m >= MIN_LINK_LENGTH) {
-                return Err(NetworkError::TooShort { from: p.from, to: p.to, length_m });
+                return Err(NetworkError::TooShort {
+                    from: p.from,
+                    to: p.to,
+                    length_m,
+                });
             }
             if length_m > MAX_LINK_LENGTH {
-                return Err(NetworkError::TooLong { from: p.from, to: p.to, length_m });
+                return Err(NetworkError::TooLong {
+                    from: p.from,
+                    to: p.to,
+                    length_m,
+                });
             }
             if !(p.speed_limit_mps.is_finite() && p.speed_limit_mps > 0.0) {
-                return Err(NetworkError::InvalidSpeed { from: p.from, to: p.to });
+                return Err(NetworkError::InvalidSpeed {
+                    from: p.from,
+                    to: p.to,
+                });
             }
             if p.lanes == 0 || p.lanes > MAX_LANES {
-                return Err(NetworkError::InvalidLanes { from: p.from, to: p.to, lanes: p.lanes });
+                return Err(NetworkError::InvalidLanes {
+                    from: p.from,
+                    to: p.to,
+                    lanes: p.lanes,
+                });
             }
-            let sat_flow_per_lane =
-                self.sat_flow.iter().find(|&&(l, _)| l.index() == i).map_or(SAT_FLOW_PER_LANE, |&(_, v)| v);
-            if !(sat_flow_per_lane.is_finite() && sat_flow_per_lane > 0.0 && sat_flow_per_lane <= MAX_SAT_FLOW_PER_LANE) {
-                return Err(NetworkError::InvalidSatFlow { from: p.from, to: p.to });
+            let sat_flow_per_lane = self
+                .sat_flow
+                .iter()
+                .find(|&&(l, _)| l.index() == i)
+                .map_or(SAT_FLOW_PER_LANE, |&(_, v)| v);
+            if !(sat_flow_per_lane.is_finite()
+                && sat_flow_per_lane > 0.0
+                && sat_flow_per_lane <= MAX_SAT_FLOW_PER_LANE)
+            {
+                return Err(NetworkError::InvalidSatFlow {
+                    from: p.from,
+                    to: p.to,
+                });
             }
             links.push(Link {
                 id: LinkId(i as u32),
@@ -172,7 +239,13 @@ impl NetworkBuilder {
                 sat_flow_per_lane,
             });
         }
-        if let Some(unknown) = self.sat_flow.iter().map(|&(l, _)| l).filter(|l| l.index() >= links.len()).min() {
+        if let Some(unknown) = self
+            .sat_flow
+            .iter()
+            .map(|&(l, _)| l)
+            .filter(|l| l.index() >= links.len())
+            .min()
+        {
             return Err(NetworkError::UnknownLink(unknown));
         }
 
@@ -196,7 +269,15 @@ impl NetworkBuilder {
             .map(|l| ((l.length_m / JAM_SPACING).floor() as u32).max(1))
             .collect();
 
-        Ok(Network { nodes: self.nodes, zones: self.zones, links, out_links, in_links, in_lanes, lane_capacity })
+        Ok(Network {
+            nodes: self.nodes,
+            zones: self.zones,
+            links,
+            out_links,
+            in_links,
+            in_lanes,
+            lane_capacity,
+        })
     }
 }
 

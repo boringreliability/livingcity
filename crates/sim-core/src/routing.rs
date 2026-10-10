@@ -28,7 +28,12 @@ impl Tree {
     /// Reverse Dijkstra over integer keys. Zones other than `dest` are never
     /// expanded, so no path passes through a zone. `usable(l)` excludes links
     /// (closures, core-003).
-    pub(crate) fn build(net: &Network, keys: &[u64], usable: impl Fn(LinkId) -> bool, dest: NodeId) -> Tree {
+    pub(crate) fn build(
+        net: &Network,
+        keys: &[u64],
+        usable: impl Fn(LinkId) -> bool,
+        dest: NodeId,
+    ) -> Tree {
         let n = net.nodes().len();
         let mut dist_ms = vec![UNREACHABLE; n];
         let mut heap = BinaryHeap::new();
@@ -62,7 +67,10 @@ impl Tree {
                 let mut best: Option<(u64, LinkId)> = None;
                 for &l in net.out_links(u) {
                     let v = net.link(l).to;
-                    if !usable(l) || dist_ms[v.index()] == UNREACHABLE || (v != dest && net.is_zone(v)) {
+                    if !usable(l)
+                        || dist_ms[v.index()] == UNREACHABLE
+                        || (v != dest && net.is_zone(v))
+                    {
                         continue;
                     }
                     let total = keys[l.index()].saturating_add(dist_ms[v.index()]);
@@ -107,7 +115,15 @@ impl RouterCache {
     }
 
     /// The cached tree for `dest`, built from `keys`/`usable` on a miss.
-    pub(crate) fn tree(&mut self, net: &Network, keys: &[u64], usable: impl Fn(LinkId) -> bool, dest: NodeId) -> &Tree {
-        self.trees.entry(dest).or_insert_with(|| Tree::build(net, keys, usable, dest))
+    pub(crate) fn tree(
+        &mut self,
+        net: &Network,
+        keys: &[u64],
+        usable: impl Fn(LinkId) -> bool,
+        dest: NodeId,
+    ) -> &Tree {
+        self.trees
+            .entry(dest)
+            .or_insert_with(|| Tree::build(net, keys, usable, dest))
     }
 }

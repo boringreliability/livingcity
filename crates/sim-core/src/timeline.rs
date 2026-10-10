@@ -53,7 +53,8 @@ impl Logs {
 /// - shared (`Arc`, not counted): network, demand;
 /// - logs (lengths only): generated, completed_log, removed_log;
 /// - owned by the timeline: command_log;
-/// - derived (empty in the snapshot): router.
+/// - derived (empty in the snapshot): router; index (the `SlotIndex`, rebuilt from the slots by
+///   `World::restored`).
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     state: World,
@@ -80,7 +81,11 @@ impl Snapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimelineError {
     /// `tick` is not in `[window_start, head_tick]`.
-    OutsideWindow { tick: u64, window_start: u64, head_tick: u64 },
+    OutsideWindow {
+        tick: u64,
+        window_start: u64,
+        head_tick: u64,
+    },
 }
 
 /// The retained replay window and its memory, as the UI shows it.
@@ -170,7 +175,9 @@ impl Timeline {
             self.head_logs = None;
         }
         let newest = self.snapshots.back().map_or(0, |s| s.tick());
-        if tick.is_multiple_of(SNAPSHOT_INTERVAL_TICKS) && (self.snapshots.is_empty() || tick > newest) {
+        if tick.is_multiple_of(SNAPSHOT_INTERVAL_TICKS)
+            && (self.snapshots.is_empty() || tick > newest)
+        {
             self.push_snapshot();
         }
     }
@@ -185,14 +192,22 @@ impl Timeline {
     pub fn seek(&mut self, tick: u64) -> Result<(), TimelineError> {
         let window_start = self.window_start();
         if tick < window_start || tick > self.head_tick {
-            return Err(TimelineError::OutsideWindow { tick, window_start, head_tick: self.head_tick });
+            return Err(TimelineError::OutsideWindow {
+                tick,
+                window_start,
+                head_tick: self.head_tick,
+            });
         }
         let idx = self.snapshots.partition_point(|s| s.tick() <= tick) - 1;
         if self.head_logs.is_none() {
             self.head_logs = Some(self.world.take_logs());
         }
         let snap = &self.snapshots[idx];
-        let logs = self.head_logs.as_ref().expect("set above").prefix(snap.lens);
+        let logs = self
+            .head_logs
+            .as_ref()
+            .expect("set above")
+            .prefix(snap.lens);
         let commands = self.world.take_commands();
         self.world = World::restored(&snap.state, commands, logs);
         let replay = tick - snap.tick();
@@ -226,7 +241,11 @@ impl Timeline {
     pub fn branch(&self, at: u64, budget_bytes: usize) -> Result<Timeline, TimelineError> {
         let window_start = self.window_start();
         if at < window_start || at > self.head_tick {
-            return Err(TimelineError::OutsideWindow { tick: at, window_start, head_tick: self.head_tick });
+            return Err(TimelineError::OutsideWindow {
+                tick: at,
+                window_start,
+                head_tick: self.head_tick,
+            });
         }
         let idx = self.snapshots.partition_point(|s| s.tick() <= at) - 1;
         let snap = &self.snapshots[idx];
@@ -234,7 +253,13 @@ impl Timeline {
             Some(h) => h.prefix(snap.lens),
             None => self.world.logs_prefix(snap.lens),
         };
-        let commands: Vec<Command> = self.world.command_log().iter().copied().filter(|c| c.tick < at).collect();
+        let commands: Vec<Command> = self
+            .world
+            .command_log()
+            .iter()
+            .copied()
+            .filter(|c| c.tick < at)
+            .collect();
         let mut world = World::restored(&snap.state, commands, logs);
         for _ in snap.tick()..at {
             world.step();
@@ -267,7 +292,10 @@ impl Timeline {
 
     /// How many snapshots this timeline shares (the same `Arc`) with `other` (ward polish-005).
     pub fn shared_snapshots(&self, other: &Timeline) -> usize {
-        self.snapshots.iter().filter(|s| other.snapshots.iter().any(|o| Arc::ptr_eq(s, o))).count()
+        self.snapshots
+            .iter()
+            .filter(|s| other.snapshots.iter().any(|o| Arc::ptr_eq(s, o)))
+            .count()
     }
 
     /// Append a snapshot (newest) and evict the oldest ones beyond the budget.

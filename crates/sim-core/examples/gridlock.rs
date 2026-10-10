@@ -12,16 +12,33 @@ use sim_core::{LinkId, NetworkBuilder, World};
 fn ring(detour: bool) -> World {
     let mut b = NetworkBuilder::new();
     let side = 75.0;
-    let n = [b.node(0.0, 0.0), b.node(side, 0.0), b.node(side, side), b.node(0.0, side)];
-    let ring: Vec<LinkId> = (0..4).map(|i| b.link(n[i], n[(i + 1) % 4], 10.0, 1)).collect();
-    let zpos = [(-150.0, 0.0), (side + 150.0, 0.0), (side + 150.0, side), (-150.0, side)];
+    let n = [
+        b.node(0.0, 0.0),
+        b.node(side, 0.0),
+        b.node(side, side),
+        b.node(0.0, side),
+    ];
+    let ring: Vec<LinkId> = (0..4)
+        .map(|i| b.link(n[i], n[(i + 1) % 4], 10.0, 1))
+        .collect();
+    let zpos = [
+        (-150.0, 0.0),
+        (side + 150.0, 0.0),
+        (side + 150.0, side),
+        (-150.0, side),
+    ];
     let conn: Vec<LinkId> = (0..4)
         .map(|i| {
             let z = b.zone(zpos[i].0, zpos[i].1);
             b.link(z, n[i], 10.0, 1)
         })
         .collect();
-    let spos = [(0.0, -150.0), (side, -150.0), (side, side + 150.0), (0.0, side + 150.0)];
+    let spos = [
+        (0.0, -150.0),
+        (side, -150.0),
+        (side, side + 150.0),
+        (0.0, side + 150.0),
+    ];
     let exit: Vec<LinkId> = (0..4)
         .map(|i| {
             let s = b.node(spos[i].0, spos[i].1);
@@ -51,13 +68,22 @@ fn main() {
         println!("ring {name}");
         println!(
             "{:>6} {:>8} {:>15} {:>11} {:>16} {:>18} {:>10}",
-            "sim", "active", "blocked fronts", "max blocked", "gridlock reroutes", "gridlock removals", "completed"
+            "sim",
+            "active",
+            "blocked fronts",
+            "max blocked",
+            "gridlock reroutes",
+            "gridlock removals",
+            "completed"
         );
         for t in 0..(40 * 60 * 2u64) {
             w.step();
             if (t + 1) % 60 == 0 {
-                let blocked: Vec<u32> =
-                    w.vehicle_ids().into_iter().map(|id| w.vehicle(id).unwrap().blocked_ticks).collect();
+                let blocked: Vec<u32> = w
+                    .vehicle_ids()
+                    .into_iter()
+                    .map(|id| w.vehicle(id).unwrap().blocked_ticks)
+                    .collect();
                 let blocked_fronts = blocked.iter().filter(|&&b| b > 0).count();
                 let max_blocked = blocked.iter().copied().max().unwrap_or(0);
                 let m = w.metrics();

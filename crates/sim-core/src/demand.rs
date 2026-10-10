@@ -30,13 +30,18 @@ impl Profile {
             return mn;
         }
         // First segment whose end is past `sim_s` (points are few).
-        let i = pts.iter().position(|&(t, _)| t > sim_s).expect("sim_s < last time");
+        let i = pts
+            .iter()
+            .position(|&(t, _)| t > sim_s)
+            .expect("sim_s < last time");
         let ((ta, ma), (tb, mb)) = (pts[i - 1], pts[i]);
         ma + (mb - ma) * (sim_s - ta) / (tb - ta)
     }
 
     fn is_valid(&self) -> bool {
-        self.points.iter().all(|&(t, m)| t.is_finite() && m.is_finite() && m >= 0.0)
+        self.points
+            .iter()
+            .all(|&(t, m)| t.is_finite() && m.is_finite() && m >= 0.0)
             && self.points.windows(2).all(|w| w[0].0 < w[1].0)
     }
 }
@@ -74,7 +79,9 @@ impl DemandModel {
             if f.origin == f.dest {
                 return Err(DemandError::SameOriginDest(i));
             }
-            if !(f.veh_per_hour.is_finite() && (0.0..=MAX_FLOW_VEH_PER_HOUR).contains(&f.veh_per_hour)) {
+            if !(f.veh_per_hour.is_finite()
+                && (0.0..=MAX_FLOW_VEH_PER_HOUR).contains(&f.veh_per_hour))
+            {
                 return Err(DemandError::BadRate(i));
             }
         }
@@ -102,7 +109,14 @@ pub fn trips_at(model: &DemandModel, demand_seed: u64, tick: u64) -> Vec<TripReq
         let whole = expected.floor();
         let extra = unit_f64(splitmix64(mix3(demand_seed, tick, i as u64))) < expected - whole;
         let count = whole as usize + usize::from(extra);
-        out.extend(std::iter::repeat_n(TripRequest { flow_index: i, origin: f.origin, dest: f.dest }, count));
+        out.extend(std::iter::repeat_n(
+            TripRequest {
+                flow_index: i,
+                origin: f.origin,
+                dest: f.dest,
+            },
+            count,
+        ));
     }
     out
 }

@@ -169,6 +169,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     sinceFrameTicks = 0;
     for (const old of scenarios) old.free?.();
     scenarios = [];
+    pools[0] = []; // buffers of the old world are not reused for the new one (k5)
+    pools[1] = [];
     try {
       sim = deps.createSim(demandSeed, behaviorSeed, city, demandScale);
     } catch (e) {
@@ -323,6 +325,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     if (!on) {
       if (!comparing) return;
       comparing = false;
+      if (viewed === 0) pools[1] = []; // B posts no frames until it is viewed or compared again (k5)
       const t = deps.now();
       postFrame(s, t);
       lastPost = t;
@@ -405,12 +408,23 @@ export function createSimHost(deps: HostDeps): SimHost {
       error(`branch outside the replay window: tick ${fromTick} not in ${info?.[0] ?? '?'}…${info?.[1] ?? '?'}`);
       return;
     }
-    // the replaced B goes first: A plus one B at most, also while replacing
+    // the replaced B goes first: A plus one B at most, also while replacing. Until the new B
+    // exists the host points at A, so a failing branch never leaves it on a freed B (f6)
     sim = a;
+    viewed = 0;
+    branchTick = -1;
+    comparing = false;
     scenarios[1]?.free?.();
     scenarios = [a];
-    comparing = false;
-    const b = a.branch(fromTick);
+    pools[1] = [];
+    let b: SimLike;
+    try {
+      b = a.branch(fromTick);
+    } catch (e) {
+      clock.setRunning(false);
+      afterJump(a);
+      throw e; // reported as an error by handle()
+    }
     scenarios = [a, b];
     viewed = 1;
     sim = b;
@@ -444,6 +458,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     comparing = false;
     scenarios[1]!.free?.();
     scenarios = [scenarios[0]!];
+    pools[1] = [];
     viewed = 0;
     branchTick = -1;
     sim = scenarios[0]!;

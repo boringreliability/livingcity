@@ -21,7 +21,10 @@ pub fn write_next_links(world: &World, out: &mut Vec<u16>) {
     out.clear();
     world.for_each_on_network_next(|next| {
         // (a network with ≥ 65535 links would draw turns onto those links straight: no next link)
-        out.push(next.and_then(|l| u16::try_from(l.0).ok()).unwrap_or(NO_NEXT_LINK));
+        out.push(
+            next.and_then(|l| u16::try_from(l.0).ok())
+                .unwrap_or(NO_NEXT_LINK),
+        );
     });
 }
 
@@ -80,7 +83,10 @@ impl NetworkExport {
         let nodes = network.nodes();
         let links = network.links();
         NetworkExport {
-            node_xy: nodes.iter().flat_map(|n| [n.x_m as f32, n.y_m as f32]).collect(),
+            node_xy: nodes
+                .iter()
+                .flat_map(|n| [n.x_m as f32, n.y_m as f32])
+                .collect(),
             node_is_zone: nodes.iter().map(|n| network.is_zone(n.id) as u8).collect(),
             link_from: links.iter().map(|l| l.from.0).collect(),
             link_to: links.iter().map(|l| l.to.0).collect(),

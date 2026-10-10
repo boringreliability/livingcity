@@ -5,10 +5,12 @@ use std::collections::VecDeque;
 
 use wasm_bindgen::prelude::*;
 
-use sim_core::cities::{river_city, river_city_scaled, three_bridges, City, Landmarks, Zone, ZoneKind};
+use sim_core::cities::{
+    river_city, river_city_scaled, three_bridges, City, Landmarks, Zone, ZoneKind,
+};
 use sim_core::frame::{
-    metrics_to_extended_array, write_link_stats, write_next_links, write_vehicle_records, NetworkExport,
-    EXTENDED_METRIC_NAMES,
+    metrics_to_extended_array, write_link_stats, write_next_links, write_vehicle_records,
+    NetworkExport, EXTENDED_METRIC_NAMES,
 };
 use sim_core::params::{DT, QUEUED_SPEED};
 use sim_core::{Command, CommandKind, LinkId, Timeline, TripOutcome, VehicleState, World};
@@ -70,7 +72,11 @@ impl Sim {
     }
 
     /// The demo city with every flow × `demand_scale` (0 < scale ≤ 6): measurement only.
-    pub fn river_city_scaled(demand_seed: u32, behavior_seed: u32, demand_scale: f64) -> Result<Sim, JsError> {
+    pub fn river_city_scaled(
+        demand_seed: u32,
+        behavior_seed: u32,
+        demand_scale: f64,
+    ) -> Result<Sim, JsError> {
         river_city_scaled(demand_seed as u64, behavior_seed as u64, demand_scale)
             .map(Sim::from_city)
             .map_err(|e| JsError::new(&e.to_string()))
@@ -170,24 +176,39 @@ impl Sim {
 
     fn command(&mut self, id: u32, kind: CommandKind) -> bool {
         (id as usize) < self.export.link_from.len()
-            && self.timeline.schedule(Command { tick: self.timeline.world().tick(), kind }).is_ok()
+            && self
+                .timeline
+                .schedule(Command {
+                    tick: self.timeline.world().tick(),
+                    kind,
+                })
+                .is_ok()
     }
 
     /// Encode the vehicle records and the per-link stats (one pass each);
     /// returns the record count. `link_counts`/`link_queued` return the stats
     /// of the last encoded frame.
     pub fn encode_frame(&mut self) -> u32 {
-        write_link_stats(self.timeline.world(), &mut self.link_counts, &mut self.link_queued);
+        write_link_stats(
+            self.timeline.world(),
+            &mut self.link_counts,
+            &mut self.link_queued,
+        );
         let count = write_vehicle_records(self.timeline.world(), &mut self.frame);
         write_next_links(self.timeline.world(), &mut self.next_links);
         // Record → trip table of this frame (same order as the records), reusing the oldest table.
         let mut trips = if self.frame_trips.len() == RETAINED_FRAMES {
-            self.frame_trips.pop_front().map(|(_, v)| v).unwrap_or_default()
+            self.frame_trips
+                .pop_front()
+                .map(|(_, v)| v)
+                .unwrap_or_default()
         } else {
             Vec::new()
         };
         trips.clear();
-        self.timeline.world().for_each_on_network_trip(|t| trips.push(t));
+        self.timeline
+            .world()
+            .for_each_on_network_trip(|t| trips.push(t));
         let tick = self.timeline.world().tick();
         self.frame_trips.retain(|&(t, _)| t != tick);
         self.frame_trips.push_back((tick, trips));
@@ -208,8 +229,12 @@ impl Sim {
     pub fn vehicle_detail(&self, trip_id: f64) -> Vec<f64> {
         let header = 13;
         let not_found = || vec![0.0; header];
-        let Some(trip) = as_trip_id(trip_id) else { return not_found() };
-        let Some(i) = self.timeline.world().vehicle_by_trip(trip) else { return not_found() };
+        let Some(trip) = as_trip_id(trip_id) else {
+            return not_found();
+        };
+        let Some(i) = self.timeline.world().vehicle_by_trip(trip) else {
+            return not_found();
+        };
         let (state, link, route): (f64, f64, &[LinkId]) = match i.state {
             VehicleState::WaitingAtOrigin => (0.0, -1.0, &[]),
             VehicleState::NoRoute => (4.0, -1.0, &[]),
@@ -246,7 +271,9 @@ impl Sim {
     /// `[code, travel_time_s]`: 0 live, 1 completed, 2 removed unreachable, 3 removed gridlock,
     /// 4 unknown; `travel_time_s` is NaN unless completed.
     pub fn trip_outcome(&self, trip_id: f64) -> Vec<f64> {
-        let Some(trip) = as_trip_id(trip_id) else { return vec![4.0, f64::NAN] };
+        let Some(trip) = as_trip_id(trip_id) else {
+            return vec![4.0, f64::NAN];
+        };
         match self.timeline.world().trip_outcome(trip) {
             TripOutcome::Live => vec![0.0, f64::NAN],
             TripOutcome::Completed { travel_time_s } => vec![1.0, travel_time_s],
@@ -308,11 +335,19 @@ impl Sim {
     }
 
     pub fn metric_names(&self) -> Vec<String> {
-        EXTENDED_METRIC_NAMES.iter().map(|s| s.to_string()).collect()
+        EXTENDED_METRIC_NAMES
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     pub fn closed_links(&self) -> Vec<u32> {
-        self.timeline.world().closed_links().into_iter().map(|l| l.0).collect()
+        self.timeline
+            .world()
+            .closed_links()
+            .into_iter()
+            .map(|l| l.0)
+            .collect()
     }
 
     pub fn state_hash_hex(&self) -> String {
@@ -370,7 +405,12 @@ impl Sim {
                     ZoneKind::Workplace => "workplace",
                     ZoneKind::Hospital => "hospital",
                 };
-                format!(r#"{{"name":{},"node":{},"kind":"{}"}}"#, json_string(&z.name), z.node.0, kind)
+                format!(
+                    r#"{{"name":{},"node":{},"kind":"{}"}}"#,
+                    json_string(&z.name),
+                    z.node.0,
+                    kind
+                )
             })
             .collect();
         format!("[{}]", items.join(","))

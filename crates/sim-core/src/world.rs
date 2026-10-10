@@ -9,10 +9,10 @@ use crate::command::{Command, CommandError, CommandKind};
 use crate::demand::{trips_at, DemandError, DemandModel};
 use crate::network::{LinkId, Network, NodeId};
 use crate::params::{
-    ACCEL, COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, GRIDLOCK_REMOVE_TICKS, GRIDLOCK_REROUTE_TICKS, JAM_SPACING,
-    LANE_CREDIT_CAP,
-    NO_ROUTE_MAX_RETRIES, NO_ROUTE_RETRY_TICKS, ORIGIN_ADMIT_PER_TICK, QUEUED_SPEED, REROUTE_BUDGET_PER_TICK,
-    REROUTE_PERIOD_TICKS, SWITCH_MIN_GAIN_S, SWITCH_RATIO,
+    ACCEL, COST_EMA_ALPHA, COST_EPOCH_TICKS, DT, GRIDLOCK_REMOVE_TICKS, GRIDLOCK_REROUTE_TICKS,
+    JAM_SPACING, LANE_CREDIT_CAP, NO_ROUTE_MAX_RETRIES, NO_ROUTE_RETRY_TICKS,
+    ORIGIN_ADMIT_PER_TICK, QUEUED_SPEED, REROUTE_BUDGET_PER_TICK, REROUTE_PERIOD_TICKS,
+    SWITCH_MIN_GAIN_S, SWITCH_RATIO,
 };
 use crate::rng::BehaviorRng;
 use crate::routing::{cost_key, free_flow_cost, RouterCache, Tree};
@@ -117,7 +117,9 @@ pub struct LinkStats {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TripOutcome {
     Live,
-    Completed { travel_time_s: f64 },
+    Completed {
+        travel_time_s: f64,
+    },
     RemovedUnreachable,
     RemovedGridlock,
     /// Never spawned.
@@ -188,12 +190,16 @@ pub struct Metrics {
 pub enum SpawnError {
     EmptyRoute,
     UnknownLink(LinkId),
-    NonContiguousRoute { at: usize },
+    NonContiguousRoute {
+        at: usize,
+    },
     /// The origin has in-links and is not a zone: admission there would
     /// compete unfairly with through traffic.
     OriginHasThroughTraffic(NodeId),
     /// `route[at].from` is a zone in the middle of the route.
-    RouteThroughZone { at: usize },
+    RouteThroughZone {
+        at: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,7 +312,10 @@ struct SlotIndex {
 
 impl SlotIndex {
     fn empty() -> SlotIndex {
-        SlotIndex { periodic: vec![BTreeSet::new(); REROUTE_PERIOD_TICKS as usize], ..SlotIndex::default() }
+        SlotIndex {
+            periodic: vec![BTreeSet::new(); REROUTE_PERIOD_TICKS as usize],
+            ..SlotIndex::default()
+        }
     }
 
     fn build(slots: &[Option<Vehicle>]) -> SlotIndex {
@@ -326,7 +335,10 @@ impl SlotIndex {
         self.stranded += u64::from(v.stranded);
         self.periodic[(v.trip_id % REROUTE_PERIOD_TICKS) as usize].insert(slot);
         if v.without_route() {
-            self.retries.entry(v.next_retry_tick).or_default().insert(slot);
+            self.retries
+                .entry(v.next_retry_tick)
+                .or_default()
+                .insert(slot);
         }
     }
 
@@ -410,10 +422,20 @@ impl World {
 
     pub fn from_scenario(scenario: Scenario) -> Result<World, DemandError> {
         scenario.demand.validate(&scenario.network)?;
-        Ok(Self::from_parts(scenario.network, scenario.demand, scenario.demand_seed, scenario.behavior_seed))
+        Ok(Self::from_parts(
+            scenario.network,
+            scenario.demand,
+            scenario.demand_seed,
+            scenario.behavior_seed,
+        ))
     }
 
-    fn from_parts(network: Network, demand: DemandModel, demand_seed: u64, behavior_seed: u64) -> Self {
+    fn from_parts(
+        network: Network,
+        demand: DemandModel,
+        demand_seed: u64,
+        behavior_seed: u64,
+    ) -> Self {
         let free_flow: Vec<f64> = network.links().iter().map(free_flow_cost).collect();
         let cost_keys = free_flow.iter().map(|&c| cost_key(c)).collect();
         let lanes = network
@@ -421,7 +443,11 @@ impl World {
             .iter()
             .map(|l| vec![VecDeque::new(); l.lanes as usize])
             .collect();
-        let credit = network.links().iter().map(|l| vec![0.0; l.lanes as usize]).collect();
+        let credit = network
+            .links()
+            .iter()
+            .map(|l| vec![0.0; l.lanes as usize])
+            .collect();
         let n_nodes = network.nodes().len();
         let n_links = network.links().len();
         World {
@@ -491,13 +517,16 @@ impl World {
             return None;
         }
         let closed = &self.closed;
-        Tree::build(&self.network, &self.cost_keys, |l| !closed[l.index()], to).route(&self.network, from)
+        Tree::build(&self.network, &self.cost_keys, |l| !closed[l.index()], to)
+            .route(&self.network, from)
     }
 
     /// Route via the cache (same result as `shortest_route`).
     fn route_for(&mut self, from: NodeId, to: NodeId) -> Option<(Vec<LinkId>, f64)> {
         let (net, keys, closed) = (&self.network, &self.cost_keys, &self.closed);
-        self.router.tree(net, keys, |l| !closed[l.index()], to).route(net, from)
+        self.router
+            .tree(net, keys, |l| !closed[l.index()], to)
+            .route(net, from)
     }
 
     pub fn vehicle(&self, id: VehicleId) -> Option<VehicleInfo> {
@@ -534,13 +563,20 @@ impl World {
 
     /// The live vehicle of a trip (None once completed or removed, or if never spawned).
     pub fn vehicle_by_trip(&self, trip_id: u64) -> Option<VehicleInfo> {
-        let slot = self.slots.iter().position(|v| v.as_ref().is_some_and(|v| v.trip_id == trip_id))?;
+        let slot = self
+            .slots
+            .iter()
+            .position(|v| v.as_ref().is_some_and(|v| v.trip_id == trip_id))?;
         self.vehicle(VehicleId(slot as u32))
     }
 
     /// Statistics of one link (panics on an unknown link, like the other accessors).
     pub fn link_stats(&self, link: LinkId) -> LinkStats {
-        let queued = self.lanes[link.index()].iter().flatten().filter(|&&slot| self.veh(slot).v < QUEUED_SPEED).count();
+        let queued = self.lanes[link.index()]
+            .iter()
+            .flatten()
+            .filter(|&&slot| self.veh(slot).v < QUEUED_SPEED)
+            .count();
         LinkStats {
             vehicles: self.link_count(link),
             queued: queued as u32,
@@ -559,7 +595,9 @@ impl World {
             return TripOutcome::Live;
         }
         if let Some(c) = self.completed_log.iter().find(|c| c.trip_id == trip_id) {
-            return TripOutcome::Completed { travel_time_s: (c.completed_tick - c.created_tick) as f64 * DT };
+            return TripOutcome::Completed {
+                travel_time_s: (c.completed_tick - c.created_tick) as f64 * DT,
+            };
         }
         match self.removed_log.iter().find(|&&(t, _)| t == trip_id) {
             Some((_, RemovalKind::Unreachable)) => TripOutcome::RemovedUnreachable,
@@ -570,15 +608,27 @@ impl World {
 
     /// Live vehicles, ascending.
     pub fn vehicle_ids(&self) -> Vec<VehicleId> {
-        (0..self.slots.len() as u32).filter(|&s| self.slots[s as usize].is_some()).map(VehicleId).collect()
+        (0..self.slots.len() as u32)
+            .filter(|&s| self.slots[s as usize].is_some())
+            .map(VehicleId)
+            .collect()
     }
 
     pub fn metrics(&self) -> Metrics {
         let c = self.counts();
-        let queued = self.lanes.iter().flatten().flatten().filter(|&&slot| self.veh(slot).v < QUEUED_SPEED).count() as u64;
+        let queued = self
+            .lanes
+            .iter()
+            .flatten()
+            .flatten()
+            .filter(|&&slot| self.veh(slot).v < QUEUED_SPEED)
+            .count() as u64;
         let live = self.index.live;
         // Σ (tick − created) is an exact integer; × DT and ÷ live give the full scan's value bit for bit
-        let mean_incomplete_age_s = (live > 0).then(|| ((u128::from(self.tick) * u128::from(live) - self.index.created_sum) as f64 * DT) / live as f64);
+        let mean_incomplete_age_s = (live > 0).then(|| {
+            ((u128::from(self.tick) * u128::from(live) - self.index.created_sum) as f64 * DT)
+                / live as f64
+        });
         self.metrics_from(c, queued, mean_incomplete_age_s)
     }
 
@@ -600,7 +650,8 @@ impl World {
             .flatten()
             .map(|v| (self.tick - v.created_tick) as f64 * DT)
             .collect();
-        let mean_incomplete_age_s = (!ages.is_empty()).then(|| ages.iter().sum::<f64>() / ages.len() as f64);
+        let mean_incomplete_age_s =
+            (!ages.is_empty()).then(|| ages.iter().sum::<f64>() / ages.len() as f64);
         self.metrics_from(c, queued, mean_incomplete_age_s)
     }
 
@@ -619,7 +670,8 @@ impl World {
             completed: c.completed,
             removed_unreachable: c.removed - self.removed_gridlock,
             unreachable: c.no_route + c.stranded + c.removed - self.removed_gridlock,
-            mean_travel_time_s: (self.completed > 0).then(|| self.completed_tt_sum / self.completed as f64),
+            mean_travel_time_s: (self.completed > 0)
+                .then(|| self.completed_tt_sum / self.completed as f64),
             incomplete: c.active,
             mean_incomplete_age_s,
             removed_gridlock: self.removed_gridlock,
@@ -630,7 +682,9 @@ impl World {
     /// Mean travel time (s) of trips with `completed_tick` in `[from_tick, to_tick)`.
     pub fn mean_travel_time_s_between(&self, from_tick: u64, to_tick: u64) -> Option<f64> {
         mean_travel_time(
-            self.completed_log.iter().filter(|c| c.completed_tick >= from_tick && c.completed_tick < to_tick),
+            self.completed_log
+                .iter()
+                .filter(|c| c.completed_tick >= from_tick && c.completed_tick < to_tick),
         )
     }
 
@@ -708,7 +762,11 @@ impl World {
             router: RouterCache::default(),
             index: SlotIndex::default(), // derived: rebuilt by `restored`
         };
-        let lens = LogLens { generated: self.generated.len(), completed: self.completed_log.len(), removed: self.removed_log.len() };
+        let lens = LogLens {
+            generated: self.generated.len(),
+            completed: self.completed_log.len(),
+            removed: self.removed_log.len(),
+        };
         Snapshot::new(state, lens)
     }
 
@@ -721,7 +779,11 @@ impl World {
             v.capacity() * size_of::<T>()
         }
         let routes: usize = self.slots.iter().flatten().map(|v| vec(&v.route)).sum();
-        let lanes: usize = self.lanes.iter().map(|l| vec(l) + l.iter().map(deque).sum::<usize>()).sum();
+        let lanes: usize = self
+            .lanes
+            .iter()
+            .map(|l| vec(l) + l.iter().map(deque).sum::<usize>())
+            .sum();
         let credit: usize = self.credit.iter().map(vec).sum::<usize>() + vec(&self.credit);
         size_of::<World>()
             + vec(&self.slots)
@@ -783,7 +845,9 @@ impl World {
     /// (contract T2). Linear in the logs plus a sort for p95: not for per-tick hot paths.
     pub fn window_metrics(&self, from_tick: u64) -> WindowMetrics {
         // the generated log is in creation order: ticks and trip ids both ascend
-        let first = self.generated.partition_point(|t| t.created_tick < from_tick);
+        let first = self
+            .generated
+            .partition_point(|t| t.created_tick < from_tick);
         let cohort = &self.generated[first..];
         let member = |id: u64| cohort.binary_search_by_key(&id, |t| t.trip_id).is_ok();
         let mut tts: Vec<f64> = self
@@ -833,7 +897,10 @@ impl World {
 
     /// Closed links, ascending.
     pub fn closed_links(&self) -> Vec<LinkId> {
-        (0..self.closed.len() as u32).map(LinkId).filter(|l| self.closed[l.index()]).collect()
+        (0..self.closed.len() as u32)
+            .map(LinkId)
+            .filter(|l| self.closed[l.index()])
+            .collect()
     }
 
     /// 64-bit FNV-1a over all simulation state (see the contract); excludes
@@ -886,7 +953,13 @@ impl World {
             buf.iter().for_each(|&s| h.u64(s as u64));
         }
         self.exit_count.iter().for_each(|&e| h.u64(e));
-        for x in [self.next_trip_id, self.spawned, self.completed, self.removed, self.removed_gridlock] {
+        for x in [
+            self.next_trip_id,
+            self.spawned,
+            self.completed,
+            self.removed,
+            self.removed_gridlock,
+        ] {
             h.u64(x);
         }
         h.u64(self.removed_log.len() as u64);
@@ -962,7 +1035,15 @@ impl World {
         self.validate_route(&route)?;
         let origin = self.network.link(route[0]).from;
         let dest = self.network.link(*route.last().expect("validated")).to;
-        let vehicle = Vehicle::new(self.next_trip_id, origin, dest, route, Phase::WaitingAtOrigin, 1.0, self.tick);
+        let vehicle = Vehicle::new(
+            self.next_trip_id,
+            origin,
+            dest,
+            route,
+            Phase::WaitingAtOrigin,
+            1.0,
+            self.tick,
+        );
         Ok(self.enqueue_at_origin(origin, vehicle))
     }
 
@@ -1004,7 +1085,15 @@ impl World {
                 dest: req.dest,
                 created_tick: self.tick,
             });
-            let vehicle = Vehicle::new(trip_id, req.origin, req.dest, route, state, speed_factor, self.tick);
+            let vehicle = Vehicle::new(
+                trip_id,
+                req.origin,
+                req.dest,
+                route,
+                state,
+                speed_factor,
+                self.tick,
+            );
             self.enqueue_at_origin(req.origin, vehicle);
         }
     }
@@ -1012,7 +1101,11 @@ impl World {
     /// Step 3 at epoch boundaries: EMA link-cost update (see the contract).
     fn update_costs(&mut self) {
         for (l, link) in self.network.links().iter().enumerate() {
-            let queued = self.lanes[l].iter().flatten().filter(|&&s| self.veh(s).v < QUEUED_SPEED).count();
+            let queued = self.lanes[l]
+                .iter()
+                .flatten()
+                .filter(|&&s| self.veh(s).v < QUEUED_SPEED)
+                .count();
             let queue_term = link.length_m / link.speed_limit_mps
                 + queued as f64 / (link.lanes as f64 * link.sat_flow_per_lane);
             let observed = if self.exit_time_n[l] > 0 {
@@ -1020,8 +1113,8 @@ impl World {
             } else {
                 queue_term
             };
-            self.smoothed[l] =
-                self.free_flow[l].max(COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * self.smoothed[l]);
+            self.smoothed[l] = self.free_flow[l]
+                .max(COST_EMA_ALPHA * observed + (1.0 - COST_EMA_ALPHA) * self.smoothed[l]);
             self.cost_keys[l] = cost_key(self.smoothed[l]);
             self.exit_time_sum[l] = 0.0;
             self.exit_time_n[l] = 0;
@@ -1032,8 +1125,12 @@ impl World {
 
     /// Step 1: commands of this tick, in acceptance order.
     fn apply_commands(&mut self) {
-        let due: Vec<CommandKind> =
-            self.command_log.iter().filter(|c| c.tick == self.tick).map(|c| c.kind).collect();
+        let due: Vec<CommandKind> = self
+            .command_log
+            .iter()
+            .filter(|c| c.tick == self.tick)
+            .map(|c| c.kind)
+            .collect();
         for kind in due {
             match kind {
                 CommandKind::CloseLink(l) => self.close_link(l),
@@ -1054,7 +1151,9 @@ impl World {
         self.closed[l.index()] = true;
         self.router.invalidate();
         for slot in 0..self.slots.len() as u32 {
-            let Some(v) = self.slots[slot as usize].as_mut() else { continue };
+            let Some(v) = self.slots[slot as usize].as_mut() else {
+                continue;
+            };
             if v.without_route() || v.in_priority || !v.remaining().contains(&l) {
                 continue;
             }
@@ -1068,11 +1167,14 @@ impl World {
     fn enqueue_periodic(&mut self) {
         let tick = self.tick;
         // the slots with (tick + trip_id) % period == 0, ascending (as the full scan visited them)
-        let due = ((REROUTE_PERIOD_TICKS - tick % REROUTE_PERIOD_TICKS) % REROUTE_PERIOD_TICKS) as usize;
+        let due =
+            ((REROUTE_PERIOD_TICKS - tick % REROUTE_PERIOD_TICKS) % REROUTE_PERIOD_TICKS) as usize;
         let slots: Vec<u32> = self.index.periodic[due].iter().copied().collect();
         self.index.last_visits.0 = slots.len();
         for slot in slots {
-            let Some(v) = self.slots[slot as usize].as_mut() else { continue };
+            let Some(v) = self.slots[slot as usize].as_mut() else {
+                continue;
+            };
             let eligible = match v.state {
                 Phase::WaitingAtOrigin => true,
                 Phase::OnLink => !v.stranded && v.route_pos + 1 < v.route.len(),
@@ -1094,10 +1196,17 @@ impl World {
     fn run_retries(&mut self) {
         let tick = self.tick;
         // the slots whose retry is due now, ascending (as the full scan visited them)
-        let slots: Vec<u32> = self.index.retries.remove(&tick).map(|set| set.into_iter().collect()).unwrap_or_default();
+        let slots: Vec<u32> = self
+            .index
+            .retries
+            .remove(&tick)
+            .map(|set| set.into_iter().collect())
+            .unwrap_or_default();
         self.index.last_visits.1 = slots.len();
         for slot in slots {
-            let due = self.slots[slot as usize].as_ref().is_some_and(|v| v.without_route() && v.next_retry_tick == tick);
+            let due = self.slots[slot as usize]
+                .as_ref()
+                .is_some_and(|v| v.without_route() && v.next_retry_tick == tick);
             if !due {
                 continue;
             }
@@ -1123,7 +1232,11 @@ impl World {
                         self.remove_unreachable(slot);
                     } else {
                         v.next_retry_tick = tick + NO_ROUTE_RETRY_TICKS;
-                        self.index.retries.entry(tick + NO_ROUTE_RETRY_TICKS).or_default().insert(slot);
+                        self.index
+                            .retries
+                            .entry(tick + NO_ROUTE_RETRY_TICKS)
+                            .or_default()
+                            .insert(slot);
                     }
                 }
             }
@@ -1142,7 +1255,10 @@ impl World {
                 },
             };
             let (slot, trip) = entry;
-            let Some(v) = self.slots[slot as usize].as_mut().filter(|v| v.trip_id == trip) else {
+            let Some(v) = self.slots[slot as usize]
+                .as_mut()
+                .filter(|v| v.trip_id == trip)
+            else {
                 continue; // gone (completed/removed, slot reused)
             };
             if priority {
@@ -1162,7 +1278,8 @@ impl World {
             }
         }
         self.reroute_stats.budgeted_total += used as u64;
-        self.reroute_stats.max_budgeted_in_a_tick = self.reroute_stats.max_budgeted_in_a_tick.max(used);
+        self.reroute_stats.max_budgeted_in_a_tick =
+            self.reroute_stats.max_budgeted_in_a_tick.max(used);
     }
 
     /// Node to reroute from and the trip's destination.
@@ -1185,13 +1302,19 @@ impl World {
 
     fn periodic_reroute(&mut self, slot: u32) {
         let (from, dest) = self.decision_point(slot);
-        let Some((path, new_cost)) = self.route_for(from, dest) else { return };
+        let Some((path, new_cost)) = self.route_for(from, dest) else {
+            return;
+        };
         let v = self.veh(slot);
         let remaining = v.remaining();
         let current = if remaining.iter().any(|l| self.closed[l.index()]) {
             f64::INFINITY
         } else {
-            remaining.iter().map(|&l| self.cost_keys[l.index()]).sum::<u64>() as f64 / 1000.0
+            remaining
+                .iter()
+                .map(|&l| self.cost_keys[l.index()])
+                .sum::<u64>() as f64
+                / 1000.0
         };
         if new_cost < SWITCH_RATIO * current && current - new_cost >= SWITCH_MIN_GAIN_S {
             self.assign_route(slot, path);
@@ -1236,7 +1359,11 @@ impl World {
         if was_without {
             self.index.unschedule_retry(old_next, slot);
         }
-        self.index.retries.entry(tick + NO_ROUTE_RETRY_TICKS).or_default().insert(slot);
+        self.index
+            .retries
+            .entry(tick + NO_ROUTE_RETRY_TICKS)
+            .or_default()
+            .insert(slot);
     }
 
     /// Explicit removal after the last failed retry: not an exit, not a completion.
@@ -1246,7 +1373,10 @@ impl World {
         match v.state {
             Phase::OnLink => {
                 let q = &mut self.lanes[v.current_link().index()][v.lane as usize];
-                let i = q.iter().position(|&s| s == slot).expect("vehicle in its lane");
+                let i = q
+                    .iter()
+                    .position(|&s| s == slot)
+                    .expect("vehicle in its lane");
                 q.remove(i);
             }
             Phase::WaitingAtOrigin | Phase::NoRoute => {
@@ -1275,7 +1405,9 @@ impl World {
         if let Some(&bad) = route.iter().find(|l| l.index() >= net.links().len()) {
             return Err(SpawnError::UnknownLink(bad));
         }
-        if let Some(i) = (1..route.len()).find(|&i| net.link(route[i - 1]).to != net.link(route[i]).from) {
+        if let Some(i) =
+            (1..route.len()).find(|&i| net.link(route[i - 1]).to != net.link(route[i]).from)
+        {
             return Err(SpawnError::NonContiguousRoute { at: i });
         }
         let origin = net.link(route[0]).from;
@@ -1305,11 +1437,15 @@ impl World {
     }
 
     fn veh(&self, slot: u32) -> &Vehicle {
-        self.slots[slot as usize].as_ref().expect("live vehicle slot")
+        self.slots[slot as usize]
+            .as_ref()
+            .expect("live vehicle slot")
     }
 
     fn veh_mut(&mut self, slot: u32) -> &mut Vehicle {
-        self.slots[slot as usize].as_mut().expect("live vehicle slot")
+        self.slots[slot as usize]
+            .as_mut()
+            .expect("live vehicle slot")
     }
 
     fn vmax(&self, link: LinkId, v: &Vehicle) -> f64 {
@@ -1468,7 +1604,8 @@ impl World {
             return Crossing::None;
         }
         let next_lane = next_lane.expect("space was found above");
-        let v_entry = v_next.min(self.network.link(next).speed_limit_mps * self.veh(slot).speed_factor);
+        let v_entry =
+            v_next.min(self.network.link(next).speed_limit_mps * self.veh(slot).speed_factor);
 
         self.credit[link.index()][lane] -= 1.0;
         self.lanes[link.index()][lane].pop_front();
@@ -1485,9 +1622,14 @@ impl World {
     fn gridlock_path(&self, slot: u32, excluded: LinkId) -> Option<Vec<LinkId>> {
         let (from, dest) = self.decision_point(slot);
         let closed = &self.closed;
-        Tree::build(&self.network, &self.cost_keys, |l| !closed[l.index()] && l != excluded, dest)
-            .route(&self.network, from)
-            .map(|(path, _)| path)
+        Tree::build(
+            &self.network,
+            &self.cost_keys,
+            |l| !closed[l.index()] && l != excluded,
+            dest,
+        )
+        .route(&self.network, from)
+        .map(|(path, _)| path)
     }
 
     /// Contract C2 last resort: the blocked front leaves its lane. Not a completion,
@@ -1538,7 +1680,11 @@ impl World {
                     i += 1;
                     continue;
                 }
-                let lane = if self.closed[first.index()] { None } else { self.choose_lane(first, 0.0) };
+                let lane = if self.closed[first.index()] {
+                    None
+                } else {
+                    self.choose_lane(first, 0.0)
+                };
                 match lane {
                     Some(lane) => {
                         self.origin_buffers[n].remove(i);
@@ -1571,7 +1717,9 @@ impl World {
                 let mut leader_s: Option<f64> = None;
                 for k in 0..self.lanes[li][lane].len() {
                     let slot = self.lanes[li][lane][k];
-                    let veh = self.slots[slot as usize].as_mut().expect("live vehicle slot");
+                    let veh = self.slots[slot as usize]
+                        .as_mut()
+                        .expect("live vehicle slot");
                     if veh.moved_tick == tick {
                         leader_s = Some(veh.s);
                         continue;
@@ -1630,7 +1778,13 @@ impl World {
         for q in &self.lanes[link.index()] {
             for &slot in q {
                 let v = self.veh(slot);
-                out.push(VehicleView { id: VehicleId(slot), trip_id: v.trip_id, lane: v.lane, s: v.s, v: v.v });
+                out.push(VehicleView {
+                    id: VehicleId(slot),
+                    trip_id: v.trip_id,
+                    lane: v.lane,
+                    s: v.s,
+                    v: v.v,
+                });
             }
         }
         out
@@ -1654,7 +1808,11 @@ impl World {
     pub fn for_each_on_network_next(&self, mut f: impl FnMut(Option<LinkId>)) {
         for &slot in self.lanes.iter().flatten().flatten() {
             let v = self.veh(slot);
-            f(if v.stranded { None } else { v.route.get(v.route_pos + 1).copied() });
+            f(if v.stranded {
+                None
+            } else {
+                v.route.get(v.route_pos + 1).copied()
+            });
         }
     }
 
@@ -1666,7 +1824,10 @@ impl World {
     }
 
     pub fn link_count(&self, link: LinkId) -> u32 {
-        self.lanes[link.index()].iter().map(|q| q.len() as u32).sum()
+        self.lanes[link.index()]
+            .iter()
+            .map(|q| q.len() as u32)
+            .sum()
     }
 
     /// Cumulative vehicles that left the link (transfer or completion).
@@ -1686,13 +1847,22 @@ impl World {
     pub fn check_invariants(&self) -> Result<(), String> {
         let c = self.counts();
         if self.removed_gridlock > self.removed {
-            return Err(format!("removed_gridlock {} > removed {}", self.removed_gridlock, self.removed));
+            return Err(format!(
+                "removed_gridlock {} > removed {}",
+                self.removed_gridlock, self.removed
+            ));
         }
         // Only lane fronts can be blocked (contract C2).
         for link in &self.lanes {
             for q in link {
-                if let Some(&behind) = q.iter().skip(1).find(|&&slot| self.veh(slot).blocked_ticks > 0) {
-                    return Err(format!("vehicle slot {behind} is blocked but not a lane front"));
+                if let Some(&behind) = q
+                    .iter()
+                    .skip(1)
+                    .find(|&&slot| self.veh(slot).blocked_ticks > 0)
+                {
+                    return Err(format!(
+                        "vehicle slot {behind} is blocked but not a lane front"
+                    ));
                 }
             }
         }
@@ -1701,21 +1871,34 @@ impl World {
         }
         let live = self.slots.iter().filter(|s| s.is_some()).count() as u64;
         if live != c.active {
-            return Err(format!("slot table holds {live} vehicles, active = {}", c.active));
+            return Err(format!(
+                "slot table holds {live} vehicles, active = {}",
+                c.active
+            ));
         }
         for link in self.network.links() {
             let cap = self.network.lane_capacity(link.id) as usize;
             for (lane, q) in self.lanes[link.id.index()].iter().enumerate() {
                 if q.len() > cap {
-                    return Err(format!("{:?} lane {lane}: {} > lane capacity {cap}", link.id, q.len()));
+                    return Err(format!(
+                        "{:?} lane {lane}: {} > lane capacity {cap}",
+                        link.id,
+                        q.len()
+                    ));
                 }
                 let mut leader: Option<f64> = None;
                 for &slot in q {
-                    let v = self.slots[slot as usize]
-                        .as_ref()
-                        .ok_or_else(|| format!("{:?} lane {lane} holds freed slot {slot}", link.id))?;
-                    if v.state != Phase::OnLink || v.current_link() != link.id || v.lane as usize != lane {
-                        return Err(format!("slot {slot} misplaced on {:?} lane {lane}", link.id));
+                    let v = self.slots[slot as usize].as_ref().ok_or_else(|| {
+                        format!("{:?} lane {lane} holds freed slot {slot}", link.id)
+                    })?;
+                    if v.state != Phase::OnLink
+                        || v.current_link() != link.id
+                        || v.lane as usize != lane
+                    {
+                        return Err(format!(
+                            "slot {slot} misplaced on {:?} lane {lane}",
+                            link.id
+                        ));
                     }
                     if !(v.s.is_finite() && v.v.is_finite()) {
                         return Err(format!("slot {slot}: non-finite s/v"));
@@ -1728,7 +1911,11 @@ impl World {
                     }
                     if let Some(ls) = leader {
                         if ls - v.s < JAM_SPACING - 1e-9 {
-                            return Err(format!("{:?} lane {lane}: gap {} < jam spacing", link.id, ls - v.s));
+                            return Err(format!(
+                                "{:?} lane {lane}: gap {} < jam spacing",
+                                link.id,
+                                ls - v.s
+                            ));
                         }
                     }
                     leader = Some(v.s);
@@ -1758,7 +1945,9 @@ enum Crossing {
 
 /// Mean of `(completed − created) × DT`, summed in iteration order.
 fn mean_travel_time<'a>(trips: impl Iterator<Item = &'a CompletedTrip>) -> Option<f64> {
-    let times: Vec<f64> = trips.map(|c| (c.completed_tick - c.created_tick) as f64 * DT).collect();
+    let times: Vec<f64> = trips
+        .map(|c| (c.completed_tick - c.created_tick) as f64 * DT)
+        .collect();
     (!times.is_empty()).then(|| times.iter().sum::<f64>() / times.len() as f64)
 }
 

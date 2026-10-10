@@ -79,7 +79,11 @@ fn main() {
     let mut a = tl.branch(at, budget).unwrap();
     let mut b = tl.branch(at, budget).unwrap();
     for l in c.landmarks.central_bridge {
-        b.schedule(Command { tick: at, kind: CommandKind::CloseLink(l) }).unwrap();
+        b.schedule(Command {
+            tick: at,
+            kind: CommandKind::CloseLink(l),
+        })
+        .unwrap();
     }
     a.step_n(2400);
     b.step_n(2400);
@@ -95,7 +99,11 @@ fn main() {
             m.p95_travel_time_s.unwrap_or(f64::NAN)
         )
     };
-    println!("window {}..{} (20 sim min after the branch):", at, at + 2400);
+    println!(
+        "window {}..{} (20 sim min after the branch):",
+        at,
+        at + 2400
+    );
     println!("  A (open):   {}", show(&ma));
     println!("  B (closed): {}", show(&mb));
 }

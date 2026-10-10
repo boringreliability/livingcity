@@ -123,17 +123,14 @@ export function App() {
   const followingRef = useRef(false);
   /** The user moved the camera (pan, zoom, Follow) since the last fit: a resize then keeps the view. */
   const cameraTouched = useRef(false);
-  /** A fatal error (the simulation stopped): shown until "Restart simulation" makes a new worker. */
+  /** A fatal error (the simulation stopped): shown until the new world's first frame after "Restart simulation". */
   const [fatal, setFatal] = useState<string | null>(null);
+  const fatalRef = useRef<string | null>(null);
+  fatalRef.current = fatal;
+  /** Restart clicked: the new worker is being made (the alert stays, its button waits). */
+  const [restarting, setRestarting] = useState(false);
   /** Bumped by a restart: the client effect makes a new worker (and renderer). */
   const [generation, setGeneration] = useState(0);
-  const restart = useCallback(() => {
-    setFatal(null);
-    setError(null);
-    setReady(null);
-    setFrame(null);
-    setGeneration((g) => g + 1);
-  }, []);
   /** Demo guide: hidden by the viewer, and the steps done so far (from frames only). */
   const [guideHidden, setGuideHidden] = useState(readGuideHidden);
   const guideRef = useRef<GuideProgress>(initialGuideProgress());
@@ -372,6 +369,12 @@ export function App() {
       applyFrame(f);
     });
     function applyFrame(f: FrameMessage) {
+      if (fatalRef.current !== null) {
+        // the new world shows its first frame: the stopped one's alert can go now (k3)
+        fatalRef.current = null;
+        setFatal(null);
+        setRestarting(false);
+      }
       const g = advanceGuide(guideRef.current, f, readyRef.current?.landmarks.central_bridge ?? []);
       if (g !== guideRef.current) {
         guideRef.current = g;
@@ -579,6 +582,39 @@ export function App() {
     return () => cancelAnimationFrame(raf);
   }, [camera]);
 
+  /** A new world (k2): nothing of the dead one carries over: inspection, Follow, a pending seek or
+   *  confirmation, the held pair, the comparison, guide progress. The alert stays until the first frame (k3). */
+  const restart = useCallback(() => {
+    setRestarting(true);
+    setError(null);
+    selectedRef.current = null;
+    selectedSideRef.current = 'A';
+    hoveredRef.current = null;
+    setSelected(null);
+    setSelectedSide('A');
+    setLinkDetail(null);
+    trackedRef.current = null;
+    setTracked(null);
+    setGone(null);
+    followingRef.current = false;
+    setFollowing(false);
+    pendingSeekRef.current = null;
+    setPendingSeek(null);
+    setConfirmReplace(null);
+    setMainPending(null);
+    pendingPairA.current = null;
+    bFrameRef.current = null;
+    bRecordsRef.current = null;
+    comparisonRef.current = null;
+    setComparison(null);
+    viewedRef.current = 0;
+    guideRef.current = initialGuideProgress();
+    setGuide(guideRef.current);
+    setReady(null);
+    setFrame(null);
+    setGeneration((g) => g + 1);
+  }, []);
+
   const toggleRunning = useCallback(() => client.current?.setRunning(!(frameRef.current?.clock.running ?? false)), []);
   const changeSpeed = useCallback((s: number) => {
     speedRef.current = s;
@@ -701,8 +737,9 @@ export function App() {
           hideGuide(true);
           document.querySelector<HTMLElement>('button.guide-toggle')?.focus();
         } else if (confirmRef.current) {
+          // closes from anywhere; only focus inside the panel (which goes away) moves to the slider (g1)
+          if (inPanel('section.confirm')) focusTimeline();
           setConfirmReplace(null);
-          focusTimeline();
         } else if (trackedRef.current || goneRef.current) {
           if (inPanel('section.vehicle')) focusTimeline(); // the panel holding focus goes away
           clearVehicle();
@@ -1078,8 +1115,8 @@ export function App() {
       {fatal && (
         <div role="alert" className="panel error fatal">
           <span>The simulation stopped: {fatal}</span>
-          <button type="button" onClick={restart}>
-            Restart simulation
+          <button type="button" onClick={restart} disabled={restarting}>
+            {restarting ? 'Restarting…' : 'Restart simulation'}
           </button>
         </div>
       )}
@@ -1103,6 +1140,7 @@ export function App() {
         guideShown={!guideHidden && !comparingNow}
         onToggleGuide={() => hideGuide(!guideHidden)}
         {...(comparingNow ? { guideDisabledReason: 'The demo guide steps aside while comparing' } : {})}
+        {...(fatal !== null ? { haltedReason: 'The simulation stopped: restart it to continue' } : {})}
       />
       {scenarioPanels}
       {error && (

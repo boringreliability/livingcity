@@ -21,6 +21,6 @@ pub use demand::{DemandError, DemandModel, OdFlow, Profile, TripRequest};
 pub use network::{Link, LinkId, Network, NetworkBuilder, NetworkError, Node, NodeId};
 pub use timeline::{Snapshot, Timeline, TimelineError, WindowInfo, SNAPSHOT_INTERVAL_TICKS};
 pub use world::{
-    CompletedTrip, Counts, GeneratedTrip, LinkStats, Metrics, RerouteStats, Scenario, SpawnError, TripOutcome, VehicleId,
-    VehicleInfo, VehicleState, VehicleView, WindowMetrics, World,
+    CompletedTrip, Counts, GeneratedTrip, LinkStats, Metrics, RerouteStats, Scenario, SpawnError,
+    TripOutcome, VehicleId, VehicleInfo, VehicleState, VehicleView, WindowMetrics, World,
 };

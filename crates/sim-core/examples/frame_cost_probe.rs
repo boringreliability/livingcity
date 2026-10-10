@@ -23,7 +23,11 @@ fn mean(v: &[f64]) -> f64 {
 }
 
 fn load() -> String {
-    Proc::new("sysctl").args(["-n", "vm.loadavg"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    Proc::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
 }
 
 struct Scale {
@@ -54,9 +58,14 @@ fn measure(scale: f64, full_scan: bool) -> Scale {
         }
     }
     let m = w.metrics();
-    Scale { step_ms: mean(&step), metrics_ms: mean(&met), full_scan_ms: full_scan.then(|| mean(&full)), active: m.active, on_network: m.on_network }
+    Scale {
+        step_ms: mean(&step),
+        metrics_ms: mean(&met),
+        full_scan_ms: full_scan.then(|| mean(&full)),
+        active: m.active,
+        on_network: m.on_network,
+    }
 }
-
 
 fn full_scan_ms(w: &World) -> f64 {
     let t = Instant::now();
@@ -94,7 +103,10 @@ fn main() {
     let load_before = load();
     let scales = [("x1", 1.0), ("x3", 3.0), ("x5", 5.0)];
     if baseline {
-        let rows: Vec<String> = scales.iter().map(|(k, s)| format!("    \"{k}\": {}", json(&measure(*s, false)))).collect();
+        let rows: Vec<String> = scales
+            .iter()
+            .map(|(k, s)| format!("    \"{k}\": {}", json(&measure(*s, false))))
+            .collect();
         let b = branch_ms();
         let text = format!(
             "{{\n  \"note\": \"code before polish-005 (sim-core as at commit 4e5d5c1); native release; River City seed 2026/7, after 1 sim h, mean of {MEASURE_TICKS} ticks\",\n  \"loadAvg\": \"{load_before} / {}\",\n{},\n  \"branchMs\": {b:.3}\n}}\n",
@@ -105,23 +117,47 @@ fn main() {
         print!("{text}");
         return;
     }
-    let base = fs::read_to_string(format!("{out}frame-cost-baseline.json")).expect("run with `baseline` on the old code first");
+    let base = fs::read_to_string(format!("{out}frame-cost-baseline.json"))
+        .expect("run with `baseline` on the old code first");
     let pick = |key: &str, field: &str| -> f64 {
         let i = base.find(&format!("\"{key}\"")).unwrap();
         let j = base[i..].find(&format!("\"{field}\": ")).unwrap() + i + field.len() + 4;
-        base[j..].split([',', '}']).next().unwrap().trim().parse().unwrap()
+        base[j..]
+            .split([',', '}'])
+            .next()
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
     };
     let mut before = Vec::new();
     let mut after = Vec::new();
     let mut baseline_rows = Vec::new();
     for (k, s) in scales {
         let m = measure(s, true);
-        before.push(format!("    \"{k}\": {{\"stepMs\": {:.4}, \"metricsMs\": {:.4}}}", pick(k, "stepMs"), m.full_scan_ms.unwrap()));
+        before.push(format!(
+            "    \"{k}\": {{\"stepMs\": {:.4}, \"metricsMs\": {:.4}}}",
+            pick(k, "stepMs"),
+            m.full_scan_ms.unwrap()
+        ));
         after.push(format!("    \"{k}\": {}", json(&m)));
-        baseline_rows.push(format!("    \"{k}\": {{\"stepMs\": {:.4}, \"metricsMs\": {:.4}}}", pick(k, "stepMs"), pick(k, "metricsMs")));
+        baseline_rows.push(format!(
+            "    \"{k}\": {{\"stepMs\": {:.4}, \"metricsMs\": {:.4}}}",
+            pick(k, "stepMs"),
+            pick(k, "metricsMs")
+        ));
     }
     let b_after = branch_ms();
-    let b_before: f64 = base.split("\"branchMs\": ").nth(1).unwrap().split(['\n', '}']).next().unwrap().trim().parse().unwrap();
+    let b_before: f64 = base
+        .split("\"branchMs\": ")
+        .nth(1)
+        .unwrap()
+        .split(['\n', '}'])
+        .next()
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     let text = format!(
         "{{\n  \"note\": \"native release; River City seed 2026/7, after 1 sim h, mean of {MEASURE_TICKS} ticks. before.metricsMs = metrics_full_scan() now; before.stepMs = baseline (code at 4e5d5c1)\",\n  \"loadAvg\": \"{load_before} / {}\",\n  \"baseline\": {{\n{}\n  }},\n  \"before\": {{\n{}\n  }},\n  \"after\": {{\n{}\n  }},\n  \"branchMs\": {{\"before\": {b_before:.3}, \"after\": {b_after:.3}}}\n}}\n",
         load(),

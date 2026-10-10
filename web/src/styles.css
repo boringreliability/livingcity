@@ -780,6 +780,16 @@ button.bridge.closed {
   outline-offset: -2px;
 }
 
+/* A pressed toggle keeps its inner pressed outline; keyboard focus adds a separate outer ring (a gap,
+   then the accent), so focus shows as a shape, not only a colour (j3). */
+.guide-toggle[aria-pressed='true']:focus-visible,
+.diag-toggle[aria-expanded='true']:focus-visible,
+.scenarios button[aria-pressed='true']:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--accent);
+}
+
 /* A fatal error (ward polish-005): centred over the city, not dismissible; "Restart simulation" helps. */
 .error.fatal {
   position: absolute;

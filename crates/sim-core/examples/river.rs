@@ -21,8 +21,16 @@ fn main() {
     let mut w = World::from_scenario(city.scenario.clone()).expect("valid city");
     let (close_at, reopen_at) = (20 * MIN, 50 * MIN);
     for l in lm.central_bridge {
-        w.schedule(Command { tick: close_at, kind: CommandKind::CloseLink(l) }).expect("valid");
-        w.schedule(Command { tick: reopen_at, kind: CommandKind::OpenLink(l) }).expect("valid");
+        w.schedule(Command {
+            tick: close_at,
+            kind: CommandKind::CloseLink(l),
+        })
+        .expect("valid");
+        w.schedule(Command {
+            tick: reopen_at,
+            kind: CommandKind::OpenLink(l),
+        })
+        .expect("valid");
     }
     let bridges = [lm.central_bridge[0], lm.north_bridge[0], lm.south_bridge[0]];
     // street links ending at a bridge's west end (the approaches)
@@ -48,17 +56,28 @@ fn main() {
         let now = bridges.map(|l| w.link_exit_count(l));
         let ex = [now[0] - last[0], now[1] - last[1], now[2] - last[2]];
         last = now;
-        let trips: BTreeMap<u64, (NodeId, NodeId)> =
-            w.generated_trips().iter().map(|g| (g.trip_id, (g.origin, g.dest))).collect();
+        let trips: BTreeMap<u64, (NodeId, NodeId)> = w
+            .generated_trips()
+            .iter()
+            .map(|g| (g.trip_id, (g.origin, g.dest)))
+            .collect();
         let from = (t + 1).saturating_sub(5 * MIN);
         let tts: Vec<f64> = w
             .completed_log()
             .iter()
             .filter(|c| c.completed_tick >= from)
-            .filter(|c| trips.get(&c.trip_id).is_some_and(|&(o, d)| x(o) < west && x(d) > east))
+            .filter(|c| {
+                trips
+                    .get(&c.trip_id)
+                    .is_some_and(|&(o, d)| x(o) < west && x(d) > east)
+            })
             .map(|c| (c.completed_tick - c.created_tick) as f64 * DT)
             .collect();
-        let tt = if tts.is_empty() { f64::NAN } else { tts.iter().sum::<f64>() / tts.len() as f64 };
+        let tt = if tts.is_empty() {
+            f64::NAN
+        } else {
+            tts.iter().sum::<f64>() / tts.len() as f64
+        };
         let (fill, link) = approaches
             .iter()
             .map(|&l| (w.link_count(l) as f64 / net.capacity(l) as f64, l))

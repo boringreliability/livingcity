@@ -29,6 +29,8 @@ interface Props {
   onToggleGuide(): void;
   /** When set, the Guide toggle is disabled with this reason (while comparing the guide steps aside). */
   guideDisabledReason?: string;
+  /** The simulation stopped (a fatal error): the run controls are disabled with this reason (k3). */
+  haltedReason?: string;
 }
 
 export function ControlPanel(p: Props) {
@@ -36,10 +38,11 @@ export function ControlPanel(p: Props) {
   const behind = !!p.clock?.behind;
   const pointerPick = useRef(false);
   const closedShown = p.mainBridgeClosed && !p.bridgeStateHidden;
+  const halted = p.haltedReason !== undefined;
   return (
     <section className="panel controls" aria-label="Simulation controls">
       <div className="row">
-        <button type="button" className="primary" onClick={p.onToggleRunning} disabled={p.disabled}>
+        <button type="button" className="primary" onClick={p.onToggleRunning} disabled={p.disabled || halted} title={p.haltedReason}>
           {p.running ? 'Pause' : 'Play'}
         </button>
         <select
@@ -53,7 +56,8 @@ export function ControlPanel(p: Props) {
             if (pointerPick.current) e.currentTarget.blur();
             pointerPick.current = false;
           }}
-          disabled={p.disabled}
+          disabled={p.disabled || halted}
+          title={p.haltedReason}
         >
           {SPEEDS.map((s) => (
             <option key={s} value={s}>
@@ -101,8 +105,8 @@ export function ControlPanel(p: Props) {
         aria-label="Close the main bridge"
         aria-pressed={p.bridgeStateHidden ? undefined : p.mainBridgeClosed}
         onClick={p.onToggleMainBridge}
-        disabled={p.disabled || !!p.bridgeDisabledReason}
-        title={p.bridgeDisabledReason}
+        disabled={p.disabled || halted || !!p.bridgeDisabledReason}
+        title={p.haltedReason ?? p.bridgeDisabledReason}
       >
         <span aria-hidden="true" className="barrier-icon" />
         {closedShown ? 'Main bridge closed — reopen' : 'Close the main bridge'}
