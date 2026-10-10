@@ -126,17 +126,19 @@ describe('polish-006', () => {
     expect([againB.tick, againB.count], 'the same B frame again (so the stale buffer would fit)').toEqual([pairTick, pairCount]);
     expect(againB.vehicles === staleB, 'B pool cleared when compare was left').toBe(false);
     // a re-init: buffers returned before it never come back, even for a frame of the same size
+    // (a warm-up, so the first frame after init carries vehicles: the stale buffer is not empty)
     h.handle({ type: 'compare', on: false });
-    h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23 });
-    n = frames().length;
-    iterate(1);
-    const first = frames().slice(n)[0]!;
+    const firstFrameAfterInit = () => {
+      const k = frames().length;
+      h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23, warmupS: 600 });
+      for (let i = 0; i < 2000 && frames().length === k; i++) iterate(1);
+      return frames()[k]!;
+    };
+    const first = firstFrameAfterInit();
     expect(first, 'the first frame after init').toBeDefined();
+    expect(first.count, 'the first frame after a warm-up carries vehicles').toBeGreaterThan(0);
     const staleA = giveBack(first);
-    h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23 });
-    n = frames().length;
-    iterate(1);
-    const again = frames().slice(n)[0]!;
+    const again = firstFrameAfterInit();
     expect([again.tick, again.count], 'the same frame again').toEqual([first.tick, first.count]);
     expect(again.vehicles === staleA, 'pools cleared on init').toBe(false);
   });

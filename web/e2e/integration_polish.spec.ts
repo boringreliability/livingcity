@@ -170,6 +170,8 @@ test('restart_is_clean', async ({ page }) => {
   await page.getByRole('button', { name: 'A: original' }).click();
   await expect.poll(async () => (await snap(page)).scenario).toBe('A');
   await expect.poll(steps).toEqual([true, false, true, true, false]);
+  // rewind first: a seek is a jump and drops the tracked vehicle itself, so it must come before tracking
+  await stepBack(page);
   const box = (await page.locator('canvas.city').first().boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await expect.poll(async () => { if ((await snap(page)).camera.zoom >= 1.2) return true; await page.mouse.wheel(0, -100); return false; }, { intervals: [100], timeout: 30_000 }).toBe(true);
@@ -194,10 +196,14 @@ test('restart_is_clean', async ({ page }) => {
   await expect.poll(async () => (await snap(page)).trackedTrip).not.toBeNull();
   await page.getByRole('region', { name: 'Selected vehicle' }).getByRole('button', { name: /^Follow/ }).click();
   await expect.poll(async () => (await snap(page)).following).toBe(true);
-  await stepBack(page);
   await page.keyboard.press('b');
   const confirm = page.getByRole('region', { name: 'Confirm replacing the branch' });
   await expect(confirm).toBeVisible();
+  // everything Restart must clear is set right before the trap
+  const pre = await snap(page);
+  expect(pre.selectedLink, 'a selected road before the trap').not.toBeNull();
+  expect(pre.trackedTrip, 'a tracked vehicle before the trap').not.toBeNull();
+  expect(pre.following, 'Follow on before the trap').toBe(true);
   await trapAndRestart(page);
   let s = await snap(page);
   expect(s.branchTick).toBeNull();
