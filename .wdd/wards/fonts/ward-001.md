@@ -3,12 +3,12 @@ ward: 1
 revision: null
 name: "Bundled fonts and a fit-based bottom band"
 epic: "fonts"
-status: "gold"
+status: "complete"
 dependencies: []
 layer: "typescript"
 estimated_tests: 6
 created: "2026-10-11"
-completed: null
+completed: "2026-10-11"
 ---
 # Ward fonts-001: Bundled fonts and a fit-based bottom band
 
@@ -77,7 +77,7 @@ This ward implements contracts F1–F3 of epic `fonts` and is its integration wa
 ### Setup
 `pnpm -C web install && pnpm -C web build:wasm && pnpm -C web dev`
 ### Steps
-1. Open the app at 1280×800. The text renders in Inter, and the diagnostics' monospace numbers render in JetBrains Mono. The legend and metrics do not overlap.
+1. Open the app at 1280×800. The text renders in Inter, and the sim clock, timeline labels and comparison time render in JetBrains Mono. The legend and metrics do not overlap.
 2. Resize from 1600 → 1024 → 1600. The legend moves above the metrics and back beside them, without flicker at the border.
 3. Block woff2 in DevTools and reload. The layout is still clean.
 4. Check that the GitHub Actions run for the final commit is green.

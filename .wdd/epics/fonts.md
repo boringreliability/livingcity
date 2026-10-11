@@ -31,7 +31,7 @@ The legend shares the bottom band with the metrics only at ≥ 1260 px (`styles.
 ## Wards
 | Ward | Content |
 |---|---|
-| fonts-001 | F1–F3 (single ward, also the integration ward) |
+| fonts-001 | complete |
 
 ## Completion criteria
 - All suites green locally and on GitHub Actions (the CI run is linked in the Gold review).

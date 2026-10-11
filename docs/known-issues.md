@@ -103,3 +103,9 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - **k9:** a B buffer returned after compare was left goes into B's just-cleared pool — limitation: bounded (one buffer), reused or cleared at the next change.
 - **k10:** the fatal alert reads "The simulation stopped: simulation halted: …" — limitation: wording only.
 - **k11:** the post-switch WebGL tasks grow with more app tabs open (2.9 s seen with three tabs), and compareOn's median reached 280 ms of the 300 ms at load 19 — limitation: SwiftShader GPU contention; making the spare only when idle would help.
+
+## From epic fonts (fonts-001 Gold review minors)
+- Expanding a collapsed legend near the beside/stacked border can show one frame of overlap before it moves up (the measurement commits after paint) — limitation: one frame; `flushSync` or keeping it stacked while collapsed would remove it.
+- Every Fontsource subset is emitted (336 KB in `dist/assets`, including JetBrains Mono `.woff` duplicates); the browser fetches only the latin subsets (~69 KB) — limitation: disk size only.
+- At 1280 px with Inter the legend's gap is 26 px against the 24 px unstack threshold — limitation: the placement is measured, so a narrower margin only changes where it stacks, never causes an overlap.
+
