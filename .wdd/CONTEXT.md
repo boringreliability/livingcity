@@ -4,7 +4,7 @@
 2026-10-10: **Epic polish complete, approved by the user ("godkendt").** All planned v1 epics (core, city, timeline, polish) are approved.
 
 ## Current State
-- Branch `worktree-epic-sim-core` (worktree `.claude/worktrees/epic-sim-core`). No git remote. `main` holds only the initial commit.
+- Remote `origin` = https://github.com/boringreliability/livingcity (public). Work on branch `public-main` (tracks `origin/main`; history rewritten to `dennis@schmock.eu`, never use the KMD mail). `worktree-epic-sim-core` is the old pre-rewrite branch (backup). Live: https://livingcity.pages.dev/.
 - **Epic core: complete, approved 2026-10-07.** sim-core (network, world, routing, demand, closures, commands, `state_hash`, frame), thin `sim-wasm`, worker host + `SimClock`, WebGL2 renderer, React UI.
 - **Epic city: complete, approved 2026-10-08** (`.wdd/epics/city.md`, C1–C5): per-link sat flow + gridlock relief, River City (3 bridges, 22 zones, calibrated), inspect/follow, miniature look, 900 s warm-up, diagnostics (`D`), `unserved`, `?demand=` stress, `docs/performance.md`. Core G4 superseded by city.e2e test 15 (user). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-08-city-005.md`.
 - **Epic timeline: complete, approved 2026-10-09** (`.wdd/epics/timeline.md`, T1–T5): snapshots every 120 ticks within 48 MiB per scenario, seek = restore + replay, branch B from A's past (A never edited), lockstep compare with linked cameras and cohort metrics incl. incomplete, acceptance e2e, docs (`README.md`, `docs/`). Details: `.wdd/memory/snapshots/CONTEXT-2026-10-09-timeline-004-final.md` and the ward files.
