@@ -67,6 +67,22 @@ gold → complete (`wdd complete <id>`), then update CONTEXT.md and continue to 
 - Every verdict is logged in `.wdd/reviews/<ward-id>-{red,gold}-<n>.md`.
 - Still in force: never change test expectations to make them pass. Every ward still needs a real Manual Smoke Test section, which is executed by the Gold reviewer.
 
+**Frozen tests and contracts: unlocking (supersession)**
+A frozen test or WDD contract pins a *requirement*, not an implementation. If it preserves unwanted behaviour, "a frozen test requires it" is no reason to keep that behaviour once the user authorizes revising it.
+- **Who may unlock.** Only the user, explicitly, and scoped to named behaviours or tests. Example: the 2026-10-11 authorization for motion, paused frames and buffer pools (`.wdd/memory/task-2026-10-11-motion-paused-consequences.md`). Without such an authorization, frozen tests stay untouched; regressions go in new files.
+- **How to supersede.** Preserve the valid intent and replace implementation-specific assertions with tests of the desired observable behaviour.
+  - Supersede a whole test file or test case: never weaken an assertion in place, and never delete a failing test to get a green suite.
+  - The replacing tests go through a normal Red gate. The Red reviewer checks that the intent is kept and that the replacement is not weaker for any behaviour that is still wanted.
+- **How to record it.** Every supersession goes in `.wdd/memory/supersessions.md`, with:
+  - the frozen file and test (and its hash at the time);
+  - the behaviour it pinned;
+  - why that behaviour is unwanted;
+  - the user's authorization (date and source);
+  - the replacing test(s).
+
+  The ward spec and the epic gate list the supersessions too.
+- **Never superseded.** Determinism, replay correctness (restore ≡ uninterrupted run, golden `state_hash` values), branch independence, identical external demand, and meaningful comparison metrics (incl. incomplete/unserved trips). These stay pinned unless the user names them explicitly.
+
 **Epic gate (human)**: present a working demo with copy-pasteable run commands, what has been built, test results, review log (including rejections and how they were resolved), deviations from the brief, and known issues.
 
 **Stop before the epic gate only on** a genuine blocker, reviewer deadlock (3 rejections), or a spec ambiguity with large consequences for the architecture.
