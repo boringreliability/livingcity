@@ -73,7 +73,8 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
   },
 ];
 
-export function Legend() {
+/** `stacked`: the legend sits above the metrics (they do not fit side by side: `ui/bottomBand.ts`). */
+export function Legend({ stacked = false }: { stacked?: boolean }) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const toggle = () => {
     setCollapsed((c) => {
@@ -82,7 +83,7 @@ export function Legend() {
     });
   };
   return (
-    <section className="panel legend" aria-label="Legend">
+    <section className={`panel legend${stacked ? ' stacked' : ''}`} aria-label="Legend">
       <button type="button" className="legend-toggle" aria-expanded={!collapsed} onClick={toggle}>
         Legend
       </button>

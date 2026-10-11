@@ -70,6 +70,10 @@ pnpm -C web build:wasm && pnpm -C web build
 npx wrangler pages deploy web/dist --project-name livingcity --branch main
 ```
 
+## Credits
+
+The fonts are bundled with the app (no CDN): **Inter** (Rasmus Andersson) and **JetBrains Mono** (JetBrains), both under the SIL Open Font License 1.1 (OFL), via the Fontsource packages `@fontsource-variable/inter` and `@fontsource/jetbrains-mono`.
+
 ## Documentation
 - [`docs/architecture.md`](docs/architecture.md): layers, data flow, determinism, the timeline, the sim/render boundary, and deviations from the brief.
 - [`docs/traffic-model.md`](docs/traffic-model.md): the deliberately simplified traffic model and what the metrics mean.

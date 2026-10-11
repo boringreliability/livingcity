@@ -5,7 +5,8 @@
   --text: #e3e7ec;
   --muted: #8d97a4;
   --accent: #f2c230;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* bundled with the app (fonts-001): the same glyphs and widths on every OS */
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--text);
   background: var(--bg);
 }
@@ -274,7 +275,7 @@ button.bridge.closed {
 }
 
 .mono {
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 /* Right column: road and vehicle panels stack instead of overlapping. */
@@ -651,12 +652,10 @@ button.bridge.closed {
   clip: rect(0 0 0 0);
 }
 
-/* The legend and the metrics share the bottom band only when both fit (≥ 1260 px): narrower, the legend
-   sits just above the metrics, still inside the bottom inset band. */
-@media (max-width: 1259px) {
-  .legend {
-    bottom: 112px;
-  }
+/* The legend and the metrics share the bottom band only when both fit, as measured (fonts-001,
+   `ui/bottomBand.ts`); otherwise the legend sits just above the metrics, still inside the bottom band. */
+.legend.stacked {
+  bottom: 112px;
 }
 
 /* Comparing at ≥ 1000 px: the road panel moves to A's bottom-left corner, above the side label and
@@ -701,6 +700,10 @@ button.bridge.closed {
   }
 
   .legend {
+    bottom: 76px;
+  }
+
+  .legend.stacked {
     bottom: 138px;
   }
 }

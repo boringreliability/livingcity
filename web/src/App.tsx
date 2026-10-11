@@ -32,6 +32,7 @@ import { DiagnosticsPanel, type RenderStats } from './ui/DiagnosticsPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
 import { Legend } from './ui/Legend';
+import { nextStacked } from './ui/bottomBand';
 import { ConfirmReplace, ScenarioPanel } from './ui/ScenarioPanel';
 import { DemoGuide } from './ui/DemoGuide';
 import { advanceGuide, guideHint, initialGuideProgress, type GuideProgress } from './ui/guideProgress';
@@ -512,6 +513,33 @@ export function App() {
   }, [camera, pushLinkState, generation]);
 
   const comparingNow = frame?.timeline.compare === 1;
+
+  // The bottom band (fonts-001): the legend sits beside the metrics only when they fit, measured from
+  // the panels (re-checked on any size change of either, a window resize, and once the fonts load).
+  const [legendStacked, setLegendStacked] = useState(false);
+  useLayoutEffect(() => {
+    if (comparingNow) return;
+    const legend = document.querySelector<HTMLElement>('section.panel.legend');
+    const metrics = document.querySelector<HTMLElement>('section.panel.metrics');
+    if (!legend || !metrics) return;
+    let live = true;
+    const check = () => {
+      if (!live) return;
+      const gap = legend.getBoundingClientRect().left - metrics.getBoundingClientRect().right;
+      setLegendStacked((s) => nextStacked(s, gap));
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(legend);
+    ro.observe(metrics);
+    window.addEventListener('resize', check);
+    void document.fonts?.ready.then(check);
+    return () => {
+      live = false;
+      ro.disconnect();
+      window.removeEventListener('resize', check);
+    };
+  }, [comparingNow]);
   useLayoutEffect(() => {
     if (comparingNow === compareViewRef.current) return;
     const g = geometry.current;
@@ -1272,7 +1300,7 @@ export function App() {
         )}
       </div>
       {!comparingNow && <MetricsStrip simTimeS={frame?.simTimeS ?? 0} metrics={frame?.metrics ?? {}} />}
-      {!comparingNow && <Legend />}
+      {!comparingNow && <Legend stacked={legendStacked} />}
       {comparingNow && comparison && <ComparisonPanel comparison={comparison} />}
       {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} />}
     </main>
