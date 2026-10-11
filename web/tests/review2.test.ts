@@ -104,7 +104,9 @@ function host() {
 }
 
 describe('core-004 review r2: host', () => {
-  test('G4 frames keep coming while paused (tick unchanged); a close issued while paused applies at the first resumed tick', () => {
+  // SUPERSEDED (motion-001, S1 in .wdd/memory/supersessions.md): pinned full frames every 16 ms while paused;
+  // its valid intent (closure timing, unchanged tick) is motion001.test.ts tests 1, 2 and 4.
+  test.skip('G4 frames keep coming while paused (tick unchanged); a close issued while paused applies at the first resumed tick', () => {
     // Given a running host, When paused
     const w = host();
     w.h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23 });
@@ -148,7 +150,9 @@ describe('core-004 review r2: host', () => {
   });
 });
 
-test('G8 a returned buffer that does not fit the next frame is dropped, never kept for later frames', () => {
+// SUPERSEDED (motion-001, S3 in .wdd/memory/supersessions.md): pinned dropping the whole pool on every post;
+// its valid intent (a bounded pool) is motion001.test.ts tests 6 and 7.
+test.skip('G8 a returned buffer that does not fit the next frame is dropped, never kept for later frames', () => {
   // Given the frame sizes of an unpooled twin (same seeds, same fake time)
   const start = (w: ReturnType<typeof host>) => {
     w.h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23 });

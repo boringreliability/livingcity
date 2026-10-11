@@ -104,7 +104,9 @@ describe('core-004 review r3: host', () => {
     expect(after).toBeGreaterThan(1200 / FRAME_INTERVAL_MS - 5);
   });
 
-  test('G4b paused frames show the unchanged state: a close issued while paused is not in `closed` until resumed', () => {
+  // SUPERSEDED (motion-001, S2 in .wdd/memory/supersessions.md): pinned ≥ 9 frames in 10 paused iterations;
+  // its valid intent (no paused frame shows a closure) is motion001.test.ts test 4.
+  test.skip('G4b paused frames show the unchanged state: a close issued while paused is not in `closed` until resumed', () => {
     const w = timedHost();
     w.h.handle({ type: 'init', demandSeed: 17, behaviorSeed: 23 });
     const ready = w.posted.find((p) => p.msg.type === 'ready')!.msg as ReadyMessage;

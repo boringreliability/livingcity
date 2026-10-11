@@ -1,0 +1,40 @@
+{
+  "label": "before motion-001 (commit 19e9fbf)",
+  "timestamp": "2026-10-11T22:13:04.813Z",
+  "loadBefore": [
+    10.09716796875,
+    9.17138671875,
+    9.72802734375
+  ],
+  "runs": [
+    {
+      "url": "http://localhost:5391/",
+      "compare": false,
+      "seconds": 5,
+      "framesPerS": 50,
+      "bytesPerS": 1650041,
+      "bytesPerFrame": 33016
+    },
+    {
+      "url": "http://localhost:5391/?demand=5",
+      "compare": false,
+      "seconds": 5,
+      "framesPerS": 49.8,
+      "bytesPerS": 5030074,
+      "bytesPerFrame": 101056
+    },
+    {
+      "url": "http://localhost:5391/",
+      "compare": true,
+      "seconds": 5,
+      "framesPerS": 100.3,
+      "bytesPerS": 3295021,
+      "bytesPerFrame": 32836
+    }
+  ],
+  "loadAfter": [
+    14.1748046875,
+    10.201171875,
+    10.08203125
+  ]
+}
