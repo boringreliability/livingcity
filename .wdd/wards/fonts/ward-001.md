@@ -6,7 +6,7 @@ epic: "fonts"
 status: "red"
 dependencies: []
 layer: "typescript"
-estimated_tests: 5
+estimated_tests: 6
 created: "2026-10-11"
 completed: null
 ---
@@ -58,8 +58,9 @@ This ward implements contracts F1–F3 of epic `fonts` and is its integration wa
 | # | Test Name | Verifies |
 |---|-----------|----------|
 | 1 | `fonts_are_bundled` (vitest, static + production build) | `web/package.json` lists both packages at exact versions. The app entry imports them. `styles.css` root stack starts with `'Inter Variable'`, and `.mono` starts with `'JetBrains Mono'`. After `vite build`, `dist/assets` has ≥ 1 woff2 per family, and the built CSS has `@font-face` rules for both families whose `src` URLs are all relative/same-origin (no `http`). README names the fonts and OFL. |
-| 2 | `fonts_load_in_the_browser` (e2e) | After ready: `document.fonts.check` is true for `13px "Inter Variable"` and `12px "JetBrains Mono"`. The `FontFace` entries for both families include a `loaded` one. The metrics' text resolves to the bundled family: a rendered sample's width equals the same text in an explicit `"Inter Variable"` span and differs from a `monospace` reference. No request leaves the page's origin. |
+| 2 | `fonts_load_in_the_browser` (e2e) | After ready: the `FontFace` entries for both families include one with status `loaded` (`document.fonts.check` alone is not used: it is true for families with no face). The metrics' text resolves to the bundled family: a rendered sample's width equals the same text in an explicit `"Inter Variable"` span and differs from a `monospace` reference. No request leaves the page's origin. |
 | 3 | `legend_stacks_when_it_does_not_fit` (e2e) | Simulates a wide font with an injected style: `section.panel` text `letter-spacing: 0.12em`, which widens the metrics and legend panels. At 1280×800 and 1440×900 (single view): no pairwise panel overlap and nothing outside the viewport. The legend is above the metrics (legend bottom ≤ metrics top + 1). Also checked after a resize from 1600 to 1280 with the style in place. |
+| 3b | `placement_follows_the_panels_not_the_window` (e2e) | At a fixed 1600×900 (no resize): beside with normal text. After injecting `letter-spacing: 0.35em` the legend is stacked with no layout problems. After collapse + expand it is still stacked. With the style removed it is beside again. A fixed breakpoint cannot pass this; it also covers the re-check when the panels' widths change. |
 | 4 | `legend_beside_when_it_fits` (e2e) | Without the injected style, at 1600×900 the legend shares the bottom band (its bottom within 2 px of the metrics' bottom), with no overlap. At 1024×768 it is stacked. Collapsing the legend at a stacked size, then expanding it, gives the same placement with no overlap. |
 | 5 | `fonts_blocked_still_lays_out` (e2e) | Font requests (`**/*.woff2`) aborted. The app falls back to system fonts, and at 1280×800 and 1024×768 `layoutProblems` (own copy of the frozen helper) is `[]`. |
 

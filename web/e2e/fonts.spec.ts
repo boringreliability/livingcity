@@ -118,6 +118,37 @@ test('legend_stacks_when_it_does_not_fit', async ({ page }) => {
   expect(await layoutProblems(page)).toEqual([]);
 });
 
+// 3b (Red r1 M1): at one fixed window size the placement follows the panels' own widths, so no
+// fixed breakpoint can pass: beside → (wider text, no resize) stacked → (collapse + expand) stacked → beside
+test('placement_follows_the_panels_not_the_window', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await ready(page);
+  await settle(page);
+  let b = await boxes(page);
+  expect(beside(b.legend, b.metrics), '1600, normal text: beside').toBe(true);
+  const wide = await page.addStyleTag({ content: 'section.panel, section.panel * { letter-spacing: 0.35em !important; }' });
+  await settle(page);
+  b = await boxes(page);
+  expect(stacked(b.legend, b.metrics), '1600, wider text, same window: stacked').toBe(true);
+  expect(await layoutProblems(page), '1600 with wide text').toEqual([]);
+  const toggle = page.getByRole('region', { name: 'Legend' }).getByRole('button').first();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await settle(page);
+  expect(await layoutProblems(page), 'collapsed').toEqual([]);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await settle(page);
+  b = await boxes(page);
+  expect(stacked(b.legend, b.metrics), 'expanded again with wide text: stacked').toBe(true);
+  expect(await layoutProblems(page)).toEqual([]);
+  await wide.evaluate((el) => (el as Element).remove());
+  await settle(page);
+  b = await boxes(page);
+  expect(beside(b.legend, b.metrics), 'normal text again: beside').toBe(true);
+  expect(await layoutProblems(page)).toEqual([]);
+});
+
 // 4
 test('legend_beside_when_it_fits', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });

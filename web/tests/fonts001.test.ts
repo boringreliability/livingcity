@@ -54,7 +54,7 @@ describe('fonts-001', () => {
     }
 
     const readme = read(join(ROOT, 'README.md'));
-    expect(readme).toMatch(/Inter/);
+    expect(readme).toMatch(/\bInter\b/);
     expect(readme).toMatch(/JetBrains Mono/);
     expect(readme).toMatch(/OFL|SIL Open Font License/);
   }, 120_000);
