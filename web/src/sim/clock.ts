@@ -5,7 +5,8 @@ export const MAX_BACKLOG_S = 1;
 /** Wall-clock budget per worker iteration (ms). */
 export const ITERATION_BUDGET_MS = 8;
 /** Window for the achieved rate, the sticky cap event and the grace period (ms). */
-const WINDOW_MS = 1000;
+/** The achieved-rate window (ms). */
+export const WINDOW_MS = 1000;
 /** Below this share of the target, a sustained shortfall counts as behind. */
 const BEHIND_RATIO = 0.9;
 /** Batch limit before the first ms/tick measurement (e.g. a first plan after a stall). */
@@ -130,7 +131,20 @@ export class SimClock {
       this.msPerTick =
         this.msPerTick === undefined ? sample : this.msPerTick + MS_PER_TICK_EMA * (sample - this.msPerTick);
     }
-    this.reports.push({ t: this.now(), ticks });
+    const t = this.now();
+    this.reports.push({ t, ticks });
+    // trimmed here too: without frames (a quiet pause) nobody calls status(), and the window stays bounded
+    while (this.reports.length > 0 && this.reports[0]!.t <= t - WINDOW_MS) this.reports.shift();
+  }
+
+  /** Whether the clock is running (the host settles the shown speed after a pause). */
+  get isRunning(): boolean {
+    return this.running;
+  }
+
+  /** Reports inside the achieved-rate window (bounded: one per iteration over the last second). */
+  windowSize(): number {
+    return this.reports.length;
   }
 
   status(): ClockStatus {

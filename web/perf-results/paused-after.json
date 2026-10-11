@@ -1,0 +1,40 @@
+{
+  "label": "after motion-001",
+  "timestamp": "2026-10-11T23:32:06.248Z",
+  "loadBefore": [
+    24.212890625,
+    21.36083984375,
+    19.1884765625
+  ],
+  "runs": [
+    {
+      "url": "http://localhost:5391/",
+      "compare": false,
+      "seconds": 5,
+      "framesPerS": 0,
+      "bytesPerS": 0,
+      "bytesPerFrame": 0
+    },
+    {
+      "url": "http://localhost:5391/?demand=5",
+      "compare": false,
+      "seconds": 5,
+      "framesPerS": 0,
+      "bytesPerS": 0,
+      "bytesPerFrame": 0
+    },
+    {
+      "url": "http://localhost:5391/",
+      "compare": true,
+      "seconds": 5,
+      "framesPerS": 0,
+      "bytesPerS": 0,
+      "bytesPerFrame": 0
+    }
+  ],
+  "loadAfter": [
+    23.7490234375,
+    21.552734375,
+    19.32470703125
+  ]
+}

@@ -6,8 +6,8 @@ Every item collected in the polish backlog (`.wdd/memory/polish-backlog.md`) and
 
 Deviations for the human gate of epic `polish` (details in `docs/architecture.md` § Deviations, "From epic polish"):
 
-- e2 — paused frames keep their 16 ms rate (frozen host tests G4/G4b).
-- e3 — frame pools are per side only; wider reuse is pinned by F2/G8.
+- e2 — paused frames kept their 16 ms rate (frozen host tests G4/G4b). Resolved since in epic motion (motion-001, supersessions S1/S2).
+- e3 — frame pools were per side only, with wider reuse pinned by G8. Resolved since in epic motion (motion-001, supersession S3).
 - i1 — at 1× a moving car can stop at the end of the junction curve for up to a tick, then move on ~7 m (polish-003 test 4: extrapolation never passes the link end).
 - i2 — cars held at a stop line are drawn at the next link's start, so they can stack inside busy junctions (polish-003 tests 3(a)/4/7).
 - i3 — the hover keeps its grey halo under the dashed stroke (gold5 G1).
@@ -45,8 +45,8 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 
 ## (e) Performance
 - **e1:** `metrics()` cost under stress — resolved (polish-005): incremental counters.
-- **e2:** paused frames — deviation: pinned by the frozen host tests G4/G4b (see Epic gate).
-- **e3:** frame-buffer reuse — deviation: per-side pools only, pinned by F2/G8 (see Epic gate).
+- **e2:** paused frames — resolved (motion-001): a paused host posts only when something changed, plus one settling frame (G4/G4b superseded, S1/S2).
+- **e3:** frame-buffer reuse — resolved (motion-001): a LIFO pool of up to 4 exact-size buffers per side, never across a replaced world (G8 superseded, S3).
 - **e4:** `Timeline::branch` cloned all snapshots — resolved (polish-005): shared `Arc` snapshots.
 - **e5:** a seek copies the head-log prefix — limitation: 1.72 ms at 3 sim h, well within budget.
 - **e6:** `apply_commands` scans the command log — limitation: measured as negligible.
@@ -100,7 +100,7 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 ## (k) From polish-006 (Gold review minors)
 - **k7:** while halted, keyboard shortcuts still act: `+`/`-` change the disabled speed (carried into the new world), Space goes to the stopped worker; the timeline, Compare and Discard stay enabled — limitation: no effect on a stopped simulation besides the remembered speed; left for a follow-up.
 - **k8:** the test hook's `snapshot()` settles pending B-context releases (a microtask) — limitation: it only brings forward a release the app makes anyway right after the next draw.
-- **k9:** a B buffer returned after compare was left goes into B's just-cleared pool — limitation: bounded (one buffer), reused or cleared at the next change.
+- **k9:** a B buffer returned after compare was left goes into B's just-cleared pool — resolved (motion-001): pools are capped at 4 per side, and buffers of a replaced world are dropped.
 - **k10:** the fatal alert reads "The simulation stopped: simulation halted: …" — limitation: wording only.
 - **k11:** the post-switch WebGL tasks grow with more app tabs open (2.9 s seen with three tabs), and compareOn's median reached 280 ms of the 300 ms at load 19 — limitation: SwiftShader GPU contention; making the spare only when idle would help.
 

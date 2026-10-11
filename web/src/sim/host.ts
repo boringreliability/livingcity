@@ -1,4 +1,4 @@
-import { SimClock } from './clock';
+import { SimClock, WINDOW_MS } from './clock';
 import { TickWindow } from './perf';
 import {
   DT,
@@ -88,6 +88,8 @@ export interface SimHost {
 
 /** Minimum wall time between frames (ms). */
 export const FRAME_INTERVAL_MS = 16;
+/** Returned buffers kept per side (motion-001). */
+const POOL_MAX = 4;
 /** No warm-up batch may block message handling longer than this (ms of `now`). */
 const WARMUP_BATCH_MAX_MS = 100;
 /**
@@ -139,8 +141,15 @@ export function createSimHost(deps: HostDeps): SimHost {
   /** A and B advance in lockstep and are posted as (A, B) frame pairs (ward timeline-004). */
   let comparing = false;
   let lastComparison = Number.NEGATIVE_INFINITY;
-  /** Returned buffers; one is reused only if it fits the next frame exactly. */
+  /** Returned buffers per side (motion-001): LIFO, at most POOL_MAX, reused only at the exact size. */
   const pools: [ArrayBuffer[], ArrayBuffer[]] = [[], []];
+  /** Each side's world generation; buffers returned for an older one are dropped. */
+  const worlds: [number, number] = [0, 0];
+  /** A handled message (other than `returnBuffer`) is answered by a frame from the next iteration. */
+  let dirty = false;
+  /** While paused nothing is posted, except one settling frame once the achieved-rate window is empty. */
+  let wasRunning = false;
+  let settleAt: number | null = null;
   // Per-tick ms over the newest 1,000 ticks, one sample per batch (perf clock). Browsers coarsen
   // performance.now() (often to 0.1 ms): `timerResolutionMs` says how far the numbers can be trusted.
   let tickWindow = new TickWindow();
@@ -171,6 +180,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     scenarios = [];
     pools[0] = []; // buffers of the old world are not reused for the new one (k5)
     pools[1] = [];
+    worlds[0]++;
+    worlds[1]++;
     try {
       sim = deps.createSim(demandSeed, behaviorSeed, city, demandScale);
     } catch (e) {
@@ -417,6 +428,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     scenarios[1]?.free?.();
     scenarios = [a];
     pools[1] = [];
+    worlds[1]++;
     let b: SimLike;
     try {
       b = a.branch(fromTick);
@@ -459,6 +471,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     scenarios[1]!.free?.();
     scenarios = [scenarios[0]!];
     pools[1] = [];
+    worlds[1]++;
     viewed = 0;
     branchTick = -1;
     sim = scenarios[0]!;
@@ -526,9 +539,15 @@ export function createSimHost(deps: HostDeps): SimHost {
     const count = s.encode_frame();
     const words = count * VEHICLE_RECORD_WORDS;
     const bytes = words * 4;
-    // each side has its own pool: A's post does not throw away B's returned buffers (ward polish-005)
-    const reuse = pools[side].find((b) => b.byteLength === bytes);
-    pools[side] = [];
+    // each side has its own pool (polish-005); the newest returned buffer of the exact size is taken out
+    const pool = pools[side];
+    let reuse: ArrayBuffer | undefined;
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (pool[i]!.byteLength === bytes) {
+        reuse = pool.splice(i, 1)[0];
+        break;
+      }
+    }
     const vehicles = reuse ?? new ArrayBuffer(bytes);
     new Uint32Array(vehicles).set(new Uint32Array(deps.memory().buffer, s.frame_ptr(), words));
     encodeMs = perfNow() - e0;
@@ -550,6 +569,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       clock: clock.status(),
       perf: perf(t),
       scenario: side,
+      world: worlds[side],
       timeline: timelineStatus(s),
       // no vehicle tracking and no host link detail while comparing (ward timeline-004)
       ...(vehicleInspectionUsed ? { tracked: comparing ? null : tracked(s), trackedSeq: inspectSeq } : {}),
@@ -560,6 +580,9 @@ export function createSimHost(deps: HostDeps): SimHost {
 
   return {
     handle(msg: ToWorker): void {
+      // every handled message (also an ignored or failing one) gets a frame from the next iteration;
+      // a returned buffer is not a change (and must not ping-pong frames)
+      if (msg.type !== 'returnBuffer') dirty = true;
       try {
         switch (msg.type) {
           case 'init':
@@ -576,9 +599,15 @@ export function createSimHost(deps: HostDeps): SimHost {
           case 'command':
             command(msg.kind, msg.link);
             break;
-          case 'returnBuffer':
-            pools[msg.scenario === 1 || msg.scenario === 0 ? msg.scenario : viewed].push(msg.buffer);
+          case 'returnBuffer': {
+            const side = msg.scenario === 1 || msg.scenario === 0 ? msg.scenario : viewed;
+            // never a detached/empty buffer, never one of a replaced world (a missing tag = current)
+            if (msg.buffer.byteLength > 0 && (msg.world === undefined || msg.world === worlds[side])) {
+              pools[side].push(msg.buffer);
+              if (pools[side].length > POOL_MAX) pools[side].shift(); // the oldest goes first
+            }
             break;
+          }
           case 'debugTrap':
             trapNext = true;
             break;
@@ -644,7 +673,16 @@ export function createSimHost(deps: HostDeps): SimHost {
         }
         clock.report(n, ms);
         const t = deps.now();
-        if (t - lastPost >= FRAME_INTERVAL_MS) {
+        const running = clock.isRunning;
+        if (wasRunning && !running) settleAt = t + WINDOW_MS + FRAME_INTERVAL_MS;
+        if (running) settleAt = null;
+        wasRunning = running;
+        const settle = settleAt !== null && t >= settleAt;
+        // running: as before, at most every 16 ms; paused: only when something changed, plus one
+        // settling frame (the shown achieved speed reads 0) — no identical frames over and over (motion-001)
+        if (dirty || settle || (running && t - lastPost >= FRAME_INTERVAL_MS)) {
+          dirty = false;
+          if (settle) settleAt = null;
           if (comparing) {
             postPair(t);
             if (n > 0 && t - lastComparison >= COMPARISON_INTERVAL_MS) postComparison(t);

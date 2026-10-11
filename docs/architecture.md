@@ -70,8 +70,8 @@ The simulation owns *where a vehicle is along the road* (link id, metres from th
 - **Performance:** seek, branch, snapshot memory and the lockstep cost are measured in `web/perf-results/timeline.json` and reported in `docs/performance.md` § Timeline.
 
 ### From epic polish
-- **e2: paused frames.** While paused, the host still builds a frame about every 16 ms. A slower heartbeat was planned (P5) but the frozen host tests G4/G4b pin the paused frame rate.
-- **e3: frame pools.** Each side has its own pool, so A's frames no longer discard B's returned buffers. Wider reuse was not done because the frozen tests F2/G8 pin the pool rule (a pool is emptied by each post).
+- **e2: paused frames.** Resolved in epic motion (motion-001): a paused host posts a frame only after a handled message, plus one settling frame; G4/G4b were superseded (`.wdd/memory/supersessions.md`).
+- **e3: frame pools.** Resolved in epic motion (motion-001): each side keeps a LIFO pool of up to 4 exact-size buffers, tagged with a world generation so a replaced world's buffers are never reused; G8 was superseded.
 - **i1: a car stops at the end of the junction curve.** At 1× a moving car waits up to a tick at the curve's end, then moves on (~7 m). Extrapolation never passes the link end (pinned by polish-003 test 4). Interpolating between frames by trip id would remove it.
 - **i2: held cars stack in junctions.** A car held at a stop line is drawn at the next link's start, so cars from several approaches can overlap inside a busy junction (pinned by polish-003 tests 3(a)/4/7).
 - **i3: the hover halo stays.** Hover keeps its light-grey halo and adds a dashed centre stroke; the frozen gold5 G1 pins the halo.

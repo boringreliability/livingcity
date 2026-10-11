@@ -55,7 +55,8 @@ export type ToWorker =
   | { type: 'setSpeed'; multiplier: number }
   | { type: 'command'; kind: 'close' | 'open'; link: number }
   /** `scenario`: the side of the frame the buffer came from (each side has its own pool; default: the viewed one). */
-  | { type: 'returnBuffer'; buffer: ArrayBuffer; scenario?: 0 | 1 | undefined }
+  /** `world`: the generation of the frame the buffer came from (motion-001); stale worlds are dropped. */
+  | { type: 'returnBuffer'; buffer: ArrayBuffer; scenario?: 0 | 1 | undefined; world?: number | undefined }
   /** Test hook (ward polish-005): make the next iteration trap inside wasm. */
   | { type: 'debugTrap' }
   /** Track the vehicle at `record` of the frame encoded at `frameTick` (resolved in the worker). */
@@ -190,6 +191,9 @@ export interface FrameMessage {
   perf: PerfStats;
   /** The viewed scenario: 0 = A (original), 1 = B (branch). */
   scenario: 0 | 1;
+  /** The side's world generation (motion-001): new on init (both sides), and for B on a branch or
+   *  discard. Buffers come back tagged with it; a stale world's buffers are never reused. */
+  world: number;
   timeline: TimelineStatus;
   /**
    * The inspected vehicle, its one-time `gone` notice, or null. At runtime the key is omitted

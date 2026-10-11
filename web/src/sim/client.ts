@@ -35,21 +35,33 @@ export function createSimClient(
   demandSeed: number,
   behaviorSeed: number,
   city?: CityName,
-  opts: { warmupS?: number; demandScale?: number } = {},
+  opts: { warmupS?: number; demandScale?: number; createWorker?: () => Worker } = {},
 ): SimClient {
-  const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+  const worker = opts.createWorker ? opts.createWorker() : new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+  /** The world (generation) of the frame each delivered buffer came from (motion-001): it goes back with
+   *  the buffer, so the worker never reuses a buffer of a world it has since replaced. */
+  const delivered = new WeakMap<ArrayBuffer, number>();
   const ready: ((m: ReadyMessage) => void)[] = [];
   const frame: ((m: FrameMessage) => void)[] = [];
   const errors: ((m: string, fatal: boolean) => void)[] = [];
   const comparisons: ((m: ComparisonMessage) => void)[] = [];
-  const send = (msg: ToWorker, transfer: Transferable[] = []) => worker.postMessage(msg, transfer);
+  const send = (msg: ToWorker, transfer: Transferable[] = []) => {
+    if (msg.type === 'returnBuffer') {
+      const world = delivered.get(msg.buffer);
+      if (world !== undefined) msg = { ...msg, world };
+    }
+    worker.postMessage(msg, transfer);
+  };
 
   worker.onerror = (e: ErrorEvent) => errors.forEach((cb) => cb(`worker error: ${e.message}`, true));
   worker.onmessageerror = () => errors.forEach((cb) => cb('worker message could not be read', true));
   worker.onmessage = (e: MessageEvent<FromWorker>) => {
     const msg = e.data;
     if (msg.type === 'ready') ready.forEach((cb) => cb(msg));
-    else if (msg.type === 'frame') frame.forEach((cb) => cb(msg));
+    else if (msg.type === 'frame') {
+      if (typeof msg.world === 'number') delivered.set(msg.vehicles, msg.world);
+      frame.forEach((cb) => cb(msg));
+    }
     else if (msg.type === 'comparison') comparisons.forEach((cb) => cb(msg));
     else errors.forEach((cb) => cb(msg.message, msg.fatal === true));
   };

@@ -91,9 +91,20 @@ All numbers in this section come from `web/perf-results/frame-cost.json`. The pr
 - The active and on-network counts above are identical before and after.
 - `metrics()` equals the full scan bit for bit (`polish_005_perf.rs`).
 
-**Pinned by frozen tests (deviations).**
-- The host still posts frames while paused (`review2` G4, `review3` G4b).
-- The frame pool keeps its exact-size rule (`host.test.ts` F2, `review2` G8). Only the per-side pools in compare were added.
+**Pinned by frozen tests (deviations, since superseded in `motion-001`).**
+- Paused frames (`review2` G4, `review3` G4b) and the drop-on-post pool rule (`review2` G8): see "Paused work" below. The exact-size rule (`host.test.ts` F6) stays.
+
+## Paused work
+
+Measured by `web/scripts/paused_probe.mjs`. It loads the app (River City, 1280 × 800, SwiftShader), pauses, waits 2 s, then counts for 5 s the frames the UI receives from the worker and their typed-array bytes. Results are in `web/perf-results/paused-before.json` (before ward `motion-001`, load about 10) and `web/perf-results/paused-after.json` (after, load about 25; the counts do not depend on load).
+
+| Paused, after a 2 s settle | Before: frames/s | Before: bytes/s | After: frames/s | After: bytes/s |
+|---|---|---|---|---|
+| Default demand | 50 | 1,650,041 | 0 | 0 |
+| `?demand=5` | 49.8 | 5,030,074 | 0 | 0 |
+| Comparing (A + B) | 100.3 | 3,295,021 | 0 | 0 |
+
+A paused host now posts a frame only after a handled message (a command, an inspection, a seek and so on). It also posts one settling frame about 1 s after the pause, so the shown achieved speed reads 0. Camera, hover and selection work from the last frame and the UI's own animation loop, and the Diagnostics panel refreshes its render numbers from that loop.
 
 ## How to reproduce
 
@@ -101,6 +112,7 @@ All numbers in this section come from `web/perf-results/frame-cost.json`. The pr
 pnpm -C web build:wasm
 pnpm -C web e2e:perf          # rewrites web/perf-results/{baseline-1x,baseline-20x,closure-burst,stress-5x,timeline}.json
 cargo run -p sim-core --release --example frame_cost_probe   # web/perf-results/frame-cost.json (native per-tick costs)
+node web/scripts/paused_probe.mjs http://localhost:5173 web/perf-results/paused-after.json "label"   # paused frames (dev server running)
 ```
 
 Each JSON holds the scenario, the run conditions (browser, renderer, viewport, DPR, headless, launch args, hardware), every statistic above, the coverage (frames, ticks and render samples recorded, wall ms), and the targets with `met`. The harness has been run once for this report, and the Gold review re-runs it and compares.

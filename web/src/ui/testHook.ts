@@ -15,6 +15,8 @@ export interface LivingCitySnapshot {
   selectedLink: number | null;
   /** requestAnimationFrame draws so far (rendering is independent of ticks). */
   renderFrames: number;
+  /** Frames received from the worker, both sides (motion-001: about none while paused). */
+  framesReceived: number;
   /** The tracked vehicle's trip (null if none or gone), its remaining route and state. */
   trackedTrip: number | null;
   trackedRoute: number[];

@@ -178,6 +178,13 @@ export function App() {
   const drawnCams = useRef<{ a: { cx: number; cy: number; zoom: number }; b: { cx: number; cy: number; zoom: number } } | null>(null);
   const labelElsB = useRef<(HTMLSpanElement | null)[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
+  const diagOpenRef = useRef(false);
+  diagOpenRef.current = diagOpen;
+  /** Re-renders the Diagnostics panel when the render stats refresh: while paused no worker frame
+   *  arrives to do it (motion-001), and the panel must keep showing the live render numbers. */
+  const [, setRenderStatsVersion] = useState(0);
+  /** Frames received from the worker (both sides): the test hook's `framesReceived`. */
+  const framesReceived = useRef(0);
   /** The last requested seek target until a frame shows it (keys and interventions use it). */
   const pendingSeekRef = useRef<number | null>(null);
   const [pendingSeek, setPendingSeek] = useState<number | null>(null);
@@ -401,6 +408,7 @@ export function App() {
       };
     };
     c.onFrame((f: FrameMessage) => {
+      framesReceived.current++;
       if (f.timeline.compare === 1) {
         // a pair: hold A until its B partner arrives, then apply and draw both together
         if (f.scenario === 0) {
@@ -658,7 +666,10 @@ export function App() {
       const drawMs = performance.now() - d0;
       drawTimes.current.add(drawMs);
       recordingRef.current?.drawMs.push(drawMs);
-      if (now - renderStatsRef.current.at >= RENDER_STATS_REFRESH_MS) renderStatsRef.current = { at: now, stats: computeRenderStats() };
+      if (now - renderStatsRef.current.at >= RENDER_STATS_REFRESH_MS) {
+        renderStatsRef.current = { at: now, stats: computeRenderStats() };
+        if (diagOpenRef.current) setRenderStatsVersion((v) => v + 1);
+      }
       const cam = labelCam.current;
       const moved =
         cam.labels !== labelsRef.current || cam.cx !== camera.cx || cam.cy !== camera.cy || cam.zoom !== camera.zoom || cam.w !== camera.width || cam.h !== camera.height;
@@ -955,6 +966,7 @@ export function App() {
           city: readyRef.current?.city ?? null,
           selectedLink: selectedRef.current,
           renderFrames: renderFrames.current,
+          framesReceived: framesReceived.current,
           trackedTrip: trackedRef.current?.tripId ?? null,
           trackedRoute: trackedRef.current ? Array.from(trackedRef.current.route) : [],
           trackedState: trackedRef.current?.state ?? null,
