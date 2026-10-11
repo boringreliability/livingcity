@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Bundled fonts and a fit-based bottom band"
 epic: "fonts"
-status: "approved"
+status: "gold"
 dependencies: []
 layer: "typescript"
 estimated_tests: 6
