@@ -3,7 +3,7 @@ ward: 1
 revision: null
 name: "Quiet pause and bounded buffer reuse"
 epic: "motion"
-status: "red"
+status: "approved"
 dependencies: []
 layer: "typescript"
 estimated_tests: 8
