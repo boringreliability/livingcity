@@ -5,6 +5,7 @@ An interactive traffic simulation of a small river town. You can close a bridge 
 - **Simulation core:** Rust, compiled to WebAssembly, running in a Web Worker.
 - **Interface:** a TypeScript/React UI on top of a WebGL2 renderer.
 - **Product brief:** [`livingcity.md`](livingcity.md).
+- **Live demo:** <https://livingcity.pages.dev/> (Cloudflare Pages).
 
 ## Prerequisites
 
@@ -59,6 +60,15 @@ cargo run -p sim-core --release --example timeline_probe     # native snapshot /
 
 - The web tests use the built wasm, so run `pnpm -C web build:wasm` first.
 - The acceptance flow from the brief is `web/e2e/acceptance.spec.ts`: close the bridge, see the consequences, rewind, branch and compare.
+
+## Deploy
+
+The app is fully static (`web/dist`, about 0.5 MB), hosted on Cloudflare Pages as the project `livingcity`. `web/public/_headers` adds cross-origin isolation (a fine-grained timer for the diagnostics), `nosniff` and long caching of the hashed assets.
+
+```bash
+pnpm -C web build:wasm && pnpm -C web build
+npx wrangler pages deploy web/dist --project-name livingcity --branch main
+```
 
 ## Documentation
 - [`docs/architecture.md`](docs/architecture.md): layers, data flow, determinism, the timeline, the sim/render boundary, and deviations from the brief.
