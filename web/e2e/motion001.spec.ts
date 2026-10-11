@@ -48,6 +48,33 @@ test('8 paused_app_is_quiet_and_responsive', async ({ page }) => {
   const r0 = (await snap(page)).renderFrames;
   await expect.poll(async () => (await snap(page)).renderFrames).toBeGreaterThan(r0 + 5);
 
+  // the Diagnostics panel keeps showing the live render numbers while paused (its own timer, not worker
+  // frames): load the main thread (~120 ms per animation frame) for 2.5 s; the panel's render p95 follows
+  await page.keyboard.press('d');
+  const diag = page.getByRole('region', { name: 'Diagnostics' });
+  await expect(diag).toBeVisible();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const end = performance.now() + 2500;
+        const burn = () => {
+          const t = performance.now();
+          while (performance.now() - t < 120) {
+            /* busy */
+          }
+          if (performance.now() < end) requestAnimationFrame(burn);
+          else resolve();
+        };
+        requestAnimationFrame(burn);
+      }),
+  );
+  await page.waitForTimeout(800);
+  const p95 = async () => Number((((await diag.getByTestId('diag-render').textContent()) ?? '').split('/')[1] ?? '').replace(/[^\d.]/g, ''));
+  const hookP95 = await page.evaluate(() => window.__livingcity!.diagnostics().render.intervalP95Ms);
+  expect(hookP95, 'the load shows in the measured render p95').toBeGreaterThanOrEqual(100);
+  expect(Math.abs((await p95()) - hookP95), 'the panel follows the measurement while paused').toBeLessThanOrEqual(Math.max(5, 0.25 * hookP95));
+  await page.keyboard.press('d');
+
   // resume: frames flow again
   await page.mouse.move(3, 3);
   const c = await snap(page);
