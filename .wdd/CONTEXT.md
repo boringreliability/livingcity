@@ -58,5 +58,5 @@
 - e2e under heavy machine load: some older specs (e.g. `brief_acceptance_flow`, `labels_never_half_cut`) are load-sensitive; log `uptime`, re-run alone.
 
 ## What Comes Next
-- **Epic `fonts` built** (fonts-001 complete: bundled Inter/JetBrains Mono 5.3.0, measured legend placement `ui/bottomBand.ts`; CI 38175241539 green on Ubuntu): **awaiting its human epic gate**, then a re-deploy (needs the user's OK).
+- **Epic `fonts` complete, approved 2026-10-12** (bundled Inter/JetBrains Mono 5.3.0, measured legend placement `ui/bottomBand.ts`; CI green on Ubuntu); re-deployed and verified live under COEP.
 - **Next (queued by the user 2026-10-11):** motion (interpolation by identity, held cars before the stop line), paused work, consequences UI, city character: `.wdd/memory/task-2026-10-11-motion-paused-consequences.md`. It carries an explicit authorization to supersede frozen tests for those behaviours (rules: CLAUDE.md § "Frozen tests and contracts: unlocking"; log in `.wdd/memory/supersessions.md`).

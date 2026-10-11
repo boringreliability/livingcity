@@ -1,7 +1,7 @@
 ---
 epic: "fonts"
 name: "Portable typography"
-status: "active"
+status: "complete"
 created: "2026-10-11"
 ---
 # Epic: Portable typography
