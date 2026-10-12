@@ -1,0 +1,238 @@
+{
+  "ward": "motion-002",
+  "what": "Interleaved before/after runs of the @perf harness (perf.spec.ts perf_baseline_recorded / perf_stress_recorded) on the same machine within one hour: \"before\" = commit 6f223ad (polish-003 extrapolation in the vertex shader), \"after\" = the motion-002 Gold code (CPU presenter, poses uploaded per animation frame). Draw CPU now includes the presenter (advance + poses for every car + upload).",
+  "machineLoad1min": "17\u201332 during the runs (shared machine)",
+  "runs": [
+    {
+      "build": "before",
+      "run": "baseline-1x",
+      "scenario": "baseline 1\u00d7",
+      "timestamp": "2026-10-12T22:01:24.270Z",
+      "multiplier": 1,
+      "url": "/",
+      "durationS": 60,
+      "onNetworkMedian": 1778,
+      "onNetworkMax": 1800,
+      "renderIntervalMedianMs": 66.59999999999854,
+      "renderIntervalP95Ms": 116.59999999999854,
+      "drawMedianMs": 0,
+      "drawP95Ms": 0.10000002384185791,
+      "tickMsMean": 0.0883333370089531,
+      "frameBytes": 32220,
+      "achievedSpeed": 0.9998883458015841,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    },
+    {
+      "build": "after",
+      "run": "baseline-1x",
+      "scenario": "baseline 1\u00d7",
+      "timestamp": "2026-10-12T22:03:39.108Z",
+      "multiplier": 1,
+      "url": "/",
+      "durationS": 60,
+      "onNetworkMedian": 1774,
+      "onNetworkMax": 1800,
+      "renderIntervalMedianMs": 50,
+      "renderIntervalP95Ms": 99.90000000000146,
+      "drawMedianMs": 0.30000001192092896,
+      "drawP95Ms": 0.40000003576278687,
+      "tickMsMean": 0.08499999890724817,
+      "frameBytes": 39446,
+      "achievedSpeed": 0.9999016763345644,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    },
+    {
+      "build": "before",
+      "run": "baseline-20x",
+      "scenario": "baseline 20\u00d7",
+      "timestamp": "2026-10-12T22:02:30.581Z",
+      "multiplier": 20,
+      "url": "/",
+      "durationS": 60,
+      "onNetworkMedian": 1655,
+      "onNetworkMax": 1805,
+      "renderIntervalMedianMs": 50.10000000000218,
+      "renderIntervalP95Ms": 100.10000000000218,
+      "drawMedianMs": 0,
+      "drawP95Ms": 0.10000002384185791,
+      "tickMsMean": 0.08254893746588539,
+      "frameBytes": 30564,
+      "achievedSpeed": 20.001966040802397,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    },
+    {
+      "build": "after",
+      "run": "baseline-20x",
+      "scenario": "baseline 20\u00d7",
+      "timestamp": "2026-10-12T22:04:44.761Z",
+      "multiplier": 20,
+      "url": "/",
+      "durationS": 60,
+      "onNetworkMedian": 1655,
+      "onNetworkMax": 1805,
+      "renderIntervalMedianMs": 50,
+      "renderIntervalP95Ms": 83.30000000000291,
+      "drawMedianMs": 0.30000001192092896,
+      "drawP95Ms": 0.3999999761581421,
+      "tickMsMean": 0.08054166714350383,
+      "frameBytes": 37532,
+      "achievedSpeed": 19.99833347221065,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    },
+    {
+      "build": "before",
+      "run": "stress-5x (1st)",
+      "scenario": "stress",
+      "timestamp": "2026-10-12T21:57:04.714Z",
+      "multiplier": 5,
+      "url": "/?demand=5",
+      "durationS": 60,
+      "onNetworkMedian": 5698,
+      "onNetworkMax": 5907,
+      "renderIntervalMedianMs": 116.70000000001164,
+      "renderIntervalP95Ms": 200,
+      "drawMedianMs": 0,
+      "drawP95Ms": 0.10000002384185791,
+      "tickMsMean": 0.2534999989469846,
+      "frameBytes": 106362,
+      "achievedSpeed": 4.998933560839361,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    },
+    {
+      "build": "after",
+      "run": "stress-5x",
+      "scenario": "stress",
+      "timestamp": "2026-10-12T21:58:34.523Z",
+      "multiplier": 5,
+      "url": "/?demand=5",
+      "durationS": 60,
+      "onNetworkMedian": 5699,
+      "onNetworkMax": 5909,
+      "renderIntervalMedianMs": 116.69999999999709,
+      "renderIntervalP95Ms": 200,
+      "drawMedianMs": 0.699999988079071,
+      "drawP95Ms": 0.800000011920929,
+      "tickMsMean": 0.2561666679382324,
+      "frameBytes": 129910,
+      "achievedSpeed": 4.999516713388346,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    },
+    {
+      "build": "before",
+      "run": "stress-5x (2nd)",
+      "scenario": "stress",
+      "timestamp": "2026-10-12T22:00:01.026Z",
+      "multiplier": 5,
+      "url": "/?demand=5",
+      "durationS": 60,
+      "onNetworkMedian": 5702,
+      "onNetworkMax": 5913,
+      "renderIntervalMedianMs": 133.3000000000029,
+      "renderIntervalP95Ms": 733.3000000000029,
+      "drawMedianMs": 0.09999996423721313,
+      "drawP95Ms": 0.10000002384185791,
+      "tickMsMean": 0.24453376180872657,
+      "frameBytes": 106110,
+      "achievedSpeed": 5.18260776824269,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+      "browser": "chromium 153.0.8010.12",
+      "hardware": "Mac16,7 \u00b7 Apple M4 Pro",
+      "conditions": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "devicePixelRatio": 1,
+        "headless": true,
+        "launchArgs": [
+          "--use-angle=swiftshader",
+          "--enable-unsafe-swiftshader"
+        ]
+      }
+    }
+  ]
+}

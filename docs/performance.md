@@ -106,6 +106,21 @@ Measured by `web/scripts/paused_probe.mjs`. It loads the app (River City, 1280 �
 
 A paused host now posts a frame only after a handled message (a command, an inspection, a seek and so on). It also posts one settling frame about 1 s after the pause, so the shown achieved speed reads 0. Camera, hover and selection work from the last frame and the UI's own animation loop, and the Diagnostics panel refreshes its render numbers from that loop.
 
+## Interpolated motion (`motion-002`)
+
+The renderer no longer extrapolates in the vertex shader. Instead, the CPU presenter interpolates every car by trip id and uploads its pose once per animation frame. Every number below comes from `web/perf-results/motion002-before-after.json`. It holds interleaved `@perf` harness runs of the code before the change (commit `6f223ad`) and after it, on the same machine within one hour (SwiftShader, 1280 × 800). The 1-minute load average was 17–32 during these runs, higher than for the tables above, so compare the before and after columns with each other.
+
+| Scenario | Render interval ms median / p95, before → after | Draw CPU ms median / p95, before → after | Frame bytes, before → after |
+|---|---|---|---|
+| Baseline 1× (≈ 1,775 on the network) | 66.6 / 116.6 → 50.0 / 99.9 | 0.0 / 0.1 → 0.3 / 0.4 | 32,220 → 39,446 |
+| Baseline 20× (≈ 1,655) | 50.1 / 100.1 → 50.0 / 83.3 | 0.0 / 0.1 → 0.3 / 0.4 | 30,564 → 37,532 |
+| Stress `?demand=5` at 5× (≈ 5,700) | 116.7 / 200.0 (a 2nd before run: 133.3 / 733.3) → 116.7 / 200.0 | 0.0 / 0.1 → 0.7 / 0.8 | 106,362 → 129,910 |
+
+- **Draw CPU** now includes the presenter: advancing the presentation time, a pose for every car, and the upload. The cost is 0.3 ms at about 1,700 cars and 0.7 ms at about 5,700. In node, the presenter alone took 0.95 ms median (1.89 ms p95) per animation frame for 6,887 cars on one side.
+- **Render interval** did not get worse. The software rasteriser and the machine's load set it, as before.
+- **Payload:** the trip ids add 4 bytes per vehicle (plus 2 bytes of next link and 16 bytes of record, as before).
+- **Presentation latency:** the picture trails the newest frame by a measured median of 281 ms at 1× and 37 ms at 20× (`motion002.spec` test 8; bounds 600 ms and 120 ms). The Diagnostics heading shows it live.
+
 ## How to reproduce
 
 ```bash
