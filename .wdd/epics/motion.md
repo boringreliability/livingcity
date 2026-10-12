@@ -80,7 +80,7 @@ It must not break any frozen visual test that pins valid behaviour.
 ## Wards
 | Ward | Content |
 |---|---|
-| motion-001 | M1: quiet pause and bounded buffer reuse |
+| motion-001 | complete |
 | motion-002 | M2: interpolated motion by identity |
 | motion-003 | M3: consequences of an intervention |
 | motion-004 | M4: city character |

@@ -109,3 +109,8 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - Every Fontsource subset is emitted (336 KB in `dist/assets`, including JetBrains Mono `.woff` duplicates); the browser fetches only the latin subsets (~69 KB) — limitation: disk size only.
 - At 1280 px with Inter the legend's gap is 26 px against the 24 px unstack threshold — limitation: the placement is measured, so a narrower margin only changes where it stacks, never causes an overlap.
 
+## From epic motion (motion-001 Gold review minors)
+- A re-init of a host that was running can send one extra settling frame about 1 s after `ready` — limitation: harmless (one frame).
+- While paused the Diagnostics "frames/s" reads 1 for a second (the settling frame) — limitation: cosmetic.
+- With the Diagnostics panel open, the App re-renders about twice a second to refresh the render numbers — limitation: only while the panel is open.
+

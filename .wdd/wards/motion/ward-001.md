@@ -3,12 +3,12 @@ ward: 1
 revision: null
 name: "Quiet pause and bounded buffer reuse"
 epic: "motion"
-status: "gold"
+status: "complete"
 dependencies: []
 layer: "typescript"
 estimated_tests: 8
 created: "2026-10-12"
-completed: null
+completed: "2026-10-12"
 ---
 # Ward motion-001: Quiet pause and bounded buffer reuse
 
@@ -50,7 +50,7 @@ Contract **M1** of epic `motion`. While paused the engine stops doing unnecessar
   - **Never reused:**
     - a buffer with `byteLength` 0 (detached or empty), or of a wrong size;
     - any buffer returned with a stale world.
-  - **World generations.** Every frame carries `world`, a generation number per side. It changes on init, when B is branched or replaced, and when B is discarded. The client remembers, for each buffer it delivered, its frame's `world` and `scenario`. It sends both back with `returnBuffer`, and App's calls stay unchanged.
+  - **World generations.** Every frame carries `world`, a generation number per side. It changes on init, when B is branched or replaced, and when B is discarded. The client remembers, for each buffer it delivered, its frame's `world`, and adds it to `returnBuffer` (App already passes each frame's `scenario`), so App's calls stay unchanged.
   - **Pool clears.** A pool is cleared when its side's world changes, and B's pool when compare is left. A `returnBuffer` with no `world` (older tests, fakes) counts as the current world.
 - **Testable client.** `createSimClient` accepts an optional worker factory.
 - **Diagnostics while paused.** The Diagnostics panel's render rows (interval and draw) refresh from the UI's own timer (≈ 2/s, the existing `RENDER_STATS_REFRESH_MS`), not only when a worker frame arrives. Without that, the frozen `city.e2e.spec.ts` `diagnostics_panel_toggle` (lines 126–135: the paused render row follows the hook) would break once paused frames stop.
