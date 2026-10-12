@@ -81,7 +81,7 @@ It must not break any frozen visual test that pins valid behaviour.
 | Ward | Content |
 |---|---|
 | motion-001 | complete |
-| motion-002 | M2: interpolated motion by identity |
+| motion-002 | complete |
 | motion-003 | M3: consequences of an intervention |
 | motion-004 | M4: city character |
 | motion-005 | M5: integration (browser flows, measurements, docs) |

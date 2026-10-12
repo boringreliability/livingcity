@@ -14,6 +14,12 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - i5 — the closure sign is a ring around the hatch, not a solid core (look.spec midpoint hatch).
 - New in polish-006: under SwiftShader at `?demand=5`, the WebGL work that a compare switch needs (releasing B's old context, preparing a spare one) runs as main-thread tasks just *after* the switch is drawn: 0.1–0.8 s with one app tab, and up to 2.9 s was seen with two more app tabs open (Gold review). The switch itself shows within 300 ms; input in that moment waits. On a hardware GPU these calls take a few milliseconds.
 
+## Epic motion (open notes)
+
+- motion-002: a car's queued shape (square, brake band) comes from the newest frame, while its drawn position trails it by up to 4 ticks, so a car can look queued shortly before it visibly stops.
+- motion-002: the presentation latency (281–311 ms at 1×, 37–38 ms at 20×) is measured by `motion002.spec` test 8 and logged by it; it is not written to a `web/perf-results` file.
+- motion-002: if B's renderer cannot be created while comparing (only after a WebGL failure), B's presenter is never advanced; its history then starts over every 128 frames, which moves the shared presentation time forward in a step.
+
 ## (a) Accessibility and keyboard
 - **a1:** Esc closes "Replace the branch?" — resolved (polish-001).
 - **a2:** Space and B after a pointer pick in Speed — resolved (polish-001).

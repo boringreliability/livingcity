@@ -322,7 +322,7 @@ const PATH_SAMPLES = 48;
  * Frames kept at most. `advance` (once per animation frame) trims the history; without animation frames
  * (a hidden tab) pushes would pile up, so beyond this the history starts over at the newest frame. The
  * presentation never needs that many: it trails by ≤ 4·DT, plus a catch-up after a stall (Red r6 modelled
- * ≤ 48 frames at 60× after a 1 s worker stall). 128 frames hold ≈ 10 MB at 6,000 cars.
+ * ≤ 48 frames at 60× after a 1 s worker stall). 128 frames hold ≈ 35 MB at 6,000 cars (Gold r2 measured 34.4 MB).
  */
 const MAX_KEPT = 128;
 

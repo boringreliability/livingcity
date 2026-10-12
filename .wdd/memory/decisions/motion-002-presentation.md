@@ -1,0 +1,7 @@
+# motion-002: presentation model (2026-10-12/13)
+
+- **Interpolate, never extrapolate.** The picture shows a presentation time P that trails the newest frame by D = max(DT, last new-tick advance) ≤ 4·DT and never passes it. P steers to its target at most 1.5 × rate; while paused it glides to the newest frame. One `PresentationClock` is shared by A and B in compare; B leaves it outside compare.
+- **Identity by trip id.** Frames carry `tripIds` (4 B per vehicle, from `Sim.trip_ids()`, the same table as `trip_at_record`) and a per-side `epoch` that the host bumps on every jump; the presenter resets its history on a new epoch, scenario, world, compare state or a lower tick.
+- **Junction clearance: option A (user's choice after Red r3).** Per link, render-only: the smallest clearance (0.25 m grid) keeping a 4.5 × 2 m car clear of every other road at that node, at both ends. Held cars wait at the stop line; both end zones are drawn at half length so queues never overlap; turns follow a cubic Bézier from the stop line to the next link's entry point. Lane changes at a junction are blended along the path (Red r4 F1: 43 % of transitions change lane).
+- **CPU rule, GPU draws it.** Poses are computed on the CPU and uploaded per animation frame (0.3–0.7 ms draw CPU at 1,700–5,700 cars); render interval unchanged in interleaved before/after runs.
+- **Bounded history.** At most 128 frames (a hidden tab does not accumulate; Gold r1 M1).

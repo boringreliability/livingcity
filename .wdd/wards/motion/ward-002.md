@@ -3,12 +3,12 @@ ward: 2
 revision: null
 name: "Interpolated motion by identity"
 epic: "motion"
-status: "gold"
+status: "complete"
 dependencies: ["motion-001"]
 layer: "fullstack"
 estimated_tests: 16
 created: "2026-10-12"
-completed: null
+completed: "2026-10-13"
 ---
 # Ward motion-002: Interpolated motion by identity
 
