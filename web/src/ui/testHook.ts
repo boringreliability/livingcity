@@ -1,5 +1,5 @@
 import type { Landmarks, PerfStats, TimelineStatus } from '../sim/protocol';
-import type { RenderStats } from './DiagnosticsPanel';
+import type { PresentationStats, RenderStats } from './DiagnosticsPanel';
 
 /** Read-only state exposed for end-to-end tests (`window.__livingcity`). */
 export interface LivingCitySnapshot {
@@ -52,6 +52,8 @@ interface LivingCityDiagnostics {
   targetTicksPerS: number;
   /** The app's own WebGL RENDERER string. */
   renderer: string;
+  /** Presentation latency (ward motion-002). */
+  presentation: PresentationStats;
 }
 
 /** Everything between `startPerfRecording` and `stopPerfRecording` (per frame / per rAF). */
@@ -74,9 +76,10 @@ interface LivingCityHook {
   linkScreenCenter(link: number): [number, number] | null;
   /** Page coordinates of the point at fraction t along a link's drawn centreline (also off-screen); null for an unknown link. */
   linkScreenPoint(link: number, t: number): [number, number] | null;
-  /** Page coordinates where record `record` of the latest frame is drawn now (curve and extrapolation), or null. */
+  /** Page coordinates where record `record` of the latest frame is drawn now (as presented), or null. */
   vehicleScreenCenter(record: number): [number, number] | null;
-  /** A record as drawn now (ward polish-003): its CPU draw position, and where the straight rule would put it. */
+  /** A record as presented now (motion-002): (link, ŝ, lane, next), its pose, where the straight rule would
+   *  put it, the link's sim length and its stop line ŝ. */
   vehicleDraw(record: number): {
     link: number;
     s: number;
@@ -86,8 +89,10 @@ interface LivingCityHook {
     world: [number, number];
     page: [number, number];
     straightPage: [number, number];
+    length: number;
+    stop: number;
   } | null;
-  /** The tracked vehicle as drawn now: link, s after extrapolation, lane, next and its predicted lane. */
+  /** The tracked vehicle as presented now: link, ŝ, lane, next and the lane it enters next on. */
   trackedDraw(): {
     link: number;
     s: number;
@@ -100,7 +105,7 @@ interface LivingCityHook {
   } | null;
   /** Test hook (ward polish-005): make the simulation trap inside wasm. */
   debugTrap(): void;
-  /** The pure draw rule (motion.ts vehicleDrawPosition) in world metres. */
+  /** The pure draw rule (presentation.ts visualPose) in world metres. */
   drawAt(link: number, s: number, lane: number, next: number): [number, number];
   /** Page coordinates where the tracked vehicle is drawn now (as Follow uses), or null. */
   trackedScreenCenter(): [number, number] | null;
@@ -114,8 +119,10 @@ interface LivingCityHook {
   approachLinks(link: number): number[];
   /** Measured performance (diagnostics panel values). */
   diagnostics(): LivingCityDiagnostics;
-  /** Record `record` of the latest frame, or null. */
-  frameVehicle(record: number): { link: number; s: number; queued: boolean } | null;
+  /** Record `record` of the latest frame (its next link or NO_NEXT), or null. */
+  frameVehicle(record: number): { link: number; s: number; queued: boolean; lane: number; next: number } | null;
+  /** A link's sim length and lanes, or null for an unknown link. */
+  linkInfo(link: number): { length: number; lanes: number } | null;
   /** The latest comparison (plain arrays), or null outside the comparison. */
   comparison(): { tick: number; fromTick: number; a: number[]; b: number[] } | null;
   /** Like `linkScreenPoint`, on B's canvas (null when not comparing). */

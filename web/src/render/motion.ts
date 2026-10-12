@@ -1,10 +1,8 @@
 /**
- * Where a vehicle is drawn, and how far ahead of its frame (ward polish-003, contract P3).
- *
- * One placement rule for the CPU (tracked car, ring, Follow, picking, test hook) and the vehicle
- * vertex shader (`VEH_VS` in renderer.ts mirrors `vehicleDrawPosition` exactly). Through a junction,
- * the last `B = min(BLEND_M, length / 2)` of a link curve (quadratic Bézier) onto the next link's
- * start, so a car never jumps between the right-shifted drawn centrelines of two links.
+ * The polish-003 placement rule (contract P3): extrapolation ahead of the frame and a quadratic junction
+ * curve onto the next link's start. Superseded for drawing by presentation.ts (ward motion-002: no
+ * extrapolation, interpolation by trip id, stop lines clear of the junction); kept for `pickVehicle` and
+ * the frozen motion.test test 2. `NO_NEXT` and `DrawPose` are shared by both.
  */
 import { DT } from '../sim/protocol';
 import { vehiclePosition, type LinkGeom } from './geometry';
@@ -31,12 +29,6 @@ const dirOf = (l: LinkGeom): [number, number] => {
 
 /** Length of the blend zone of `l`. */
 const blendLength = (l: LinkGeom): number => Math.min(BLEND_M, l.length / 2);
-
-/** Whether a vehicle at `s` on `link` with `next` is drawn on the junction curve. */
-export function inBlend(links: readonly LinkGeom[], link: number, s: number, next: number): boolean {
-  const l = links[link];
-  return !!l && next !== NO_NEXT && !!links[next] && s > l.length - blendLength(l);
-}
 
 /**
  * The control point of the junction curve from `p0` (heading `d`) to `p2` (heading `e`): where the two

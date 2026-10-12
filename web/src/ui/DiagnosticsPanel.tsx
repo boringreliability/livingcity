@@ -8,6 +8,15 @@ export interface RenderStats {
   samples: number;
 }
 
+/** Presentation latency (ward motion-002): the sim tick each side last drew with (B: null outside the
+ *  comparison) and how far A's picture trails its newest frame, in sim s and wall ms (0 while paused). */
+export interface PresentationStats {
+  tickA: number;
+  tickB: number | null;
+  lagS: number;
+  lagMs: number;
+}
+
 interface Props {
   perf: PerfStats | null;
   render: RenderStats;
@@ -17,10 +26,11 @@ interface Props {
   clock: ClockStatus | null;
   /** Lockstep A + B: the tick cost is the pair's; the frame rows are A's. */
   comparing?: boolean;
+  presentation?: PresentationStats;
 }
 
 /** Measured performance counters (contract C5): sim tick time and render time are shown separately. */
-export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, clock, comparing = false }: Props) {
+export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, clock, comparing = false, presentation }: Props) {
   const row = (label: string, testId: string, value: string, title?: string) => (
     <div className="diag-row" title={title}>
       <dt>{label}</dt>
@@ -41,6 +51,9 @@ export function DiagnosticsPanel({ perf, render, onNetwork, active, frameBytes, 
         {row('render interval (median / p95)', 'diag-render', `${render.intervalMedianMs.toFixed(1)} / ${render.intervalP95Ms.toFixed(1)} ms`,
           `Time between drawn pictures over the last ${render.samples} frames`)}
         {row('draw CPU (median / p95)', 'diag-draw', `${render.drawMedianMs.toFixed(1)} / ${render.drawP95Ms.toFixed(1)} ms`)}
+        {presentation &&
+          row('picture lag', 'diag-lag', `${presentation.lagS.toFixed(2)} sim s · ${presentation.lagMs.toFixed(0)} ms`,
+            'How far the drawn picture trails the newest simulation frame: cars move smoothly between frames and are never drawn ahead of one')}
         {row(comparing ? 'vehicles in A (on network / active)' : 'vehicles (on network / active)', 'diag-vehicles', `${onNetwork} / ${active}`, 'Active also counts trips still waiting at their origin')}
         {row(comparing ? 'frame size (A)' : 'frame size', 'diag-bytes', `${frameBytes} B`)}
         {row('speed', 'diag-speed', `${achieved.toFixed(1)}× of ${clock?.multiplier ?? 0}×`, 'Achieved vs. requested simulation speed')}

@@ -73,3 +73,27 @@ export function pickVehicle(
   }
   return best;
 }
+
+/**
+ * The presented car (motion-002) whose drawn centre is nearest to screen point (sx, sy), within
+ * `tolerancePx`; ties → lower record. Returns its record index in the newest frame.
+ */
+export function pickPresentedVehicle(
+  presented: readonly { record: number; pose: { x: number; y: number } }[],
+  camera: Camera,
+  sx: number,
+  sy: number,
+  tolerancePx = 8,
+): number | null {
+  let best: number | null = null;
+  let bestPx = Infinity;
+  for (const v of presented) {
+    const [px, py] = camera.worldToScreen(v.pose.x, v.pose.y);
+    const d = Math.hypot(px - sx, py - sy);
+    if (d <= tolerancePx && (d < bestPx || (d === bestPx && best !== null && v.record < best))) {
+      best = v.record;
+      bestPx = d;
+    }
+  }
+  return best;
+}

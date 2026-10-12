@@ -3,8 +3,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Camera } from './render/camera';
 import { cityDecor, type CityDecor, type CityLabel } from './render/cities';
 import { buildRoadGeometry, vehiclePosition, type RoadGeometry } from './render/geometry';
-import { NO_NEXT, inBlend, vehicleDrawPosition } from './render/motion';
-import { pickLink, pickVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
+import { NO_NEXT } from './render/motion';
+import { pickLink, pickPresentedVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
+import { clearances, PresentationClock, Presenter, stopLine, visualPose, type Clearances, type PresentFrame } from './render/presentation';
 import { COMPARE_FIT_INSETS, FIT_INSETS } from './render/layout';
 import { CityRenderer, linkCapacity } from './render/renderer';
 import { createSimClient, type SimClient } from './sim/client';
@@ -28,7 +29,7 @@ import {
 } from './sim/protocol';
 import { ControlPanel, SPEEDS } from './ui/ControlPanel';
 import { ComparisonPanel } from './ui/ComparisonPanel';
-import { DiagnosticsPanel, type RenderStats } from './ui/DiagnosticsPanel';
+import { DiagnosticsPanel, type PresentationStats, type RenderStats } from './ui/DiagnosticsPanel';
 import { MetricsStrip } from './ui/MetricsStrip';
 import { SelectionPanel } from './ui/SelectionPanel';
 import { Legend } from './ui/Legend';
@@ -162,7 +163,10 @@ export function App() {
   const decorRef = useRef<CityDecor | null>(null);
   /** B's latest frame view, and a copy of its records (replayed into a renderer created later). */
   const bFrameRef = useRef<FrameView | null>(null);
-  const bRecordsRef = useRef<{ words: Uint32Array; next: Uint16Array; count: number; tick: number; running: boolean; multiplier: number } | null>(null);
+  const bRecordsRef = useRef<{ words: Uint32Array; count: number } | null>(null);
+  /** Where cars are drawn (ward motion-002): A's and B's presenters share one presentation clock, so
+   *  both sides show the same sim time while comparing; B's leaves the clock outside the comparison. */
+  const presentRef = useRef<{ C: Clearances; a: Presenter; b: Presenter } | null>(null);
   /** An A frame waiting for its B partner (pairs are applied and drawn together). */
   const pendingPairA = useRef<FrameMessage | null>(null);
   /** The comparison layout is applied (canvases laid out, camera refitted): the hook's `compare`. */
@@ -200,6 +204,19 @@ export function App() {
   /** Render stats as shown: refreshed twice a second (readable; the panel and the hook show the same values). */
   const [renderStatsRef] = useState(() => ({ current: { at: Number.NEGATIVE_INFINITY, stats: computeRenderStats() } }));
   const renderStats = () => renderStatsRef.current.stats;
+  /** Presentation latency (motion-002): the sim time each side last drew with, and how far A's trails
+   *  its newest frame, in sim s and in wall ms at the current rate (0 while paused). */
+  const presentationStats = (): PresentationStats => {
+    const P = presentRef.current;
+    const lagS = P?.a.lagS() ?? 0;
+    const rate = simPerMsRef.current;
+    return {
+      tickA: P ? P.a.time() / DT : 0,
+      tickB: P && rendererB.current ? P.b.time() / DT : null,
+      lagS,
+      lagMs: rate > 0 ? lagS / rate : 0,
+    };
+  };
 
   const [ready, setReady] = useState<ReadyMessage | null>(null);
   const [frame, setFrame] = useState<FrameView | null>(null);
@@ -378,17 +395,36 @@ export function App() {
       labelsRef.current = decor.labels;
       setLabels(decor.labels);
       renderer.current!.setNetwork(g, decor);
+      const C = clearances(g.links, r.network.linkFrom, r.network.linkTo);
+      const clock = new PresentationClock();
+      presentRef.current = {
+        C,
+        a: new Presenter(g.links, r.network.linkFrom, r.network.linkTo, clock, C),
+        b: new Presenter(g.links, r.network.linkFrom, r.network.linkTo, clock, C),
+      };
+      renderer.current!.setPresenter(presentRef.current.a);
       camera.fitInsets(g.bounds, FIT_INSETS);
       cameraTouched.current = false;
       setReady(r);
       c.setSpeed(speedRef.current);
       c.setRunning(true);
     });
+    /** The frame as the presenter needs it (it copies what it keeps: the buffer may go back afterwards). */
+    const presentFrame = (f: FrameMessage): PresentFrame => ({
+      tick: f.tick,
+      scenario: f.scenario,
+      world: f.world,
+      epoch: f.epoch,
+      compare: f.timeline.compare === 1,
+      vehicles: decodeVehicles(f.vehicles, f.count),
+      tripIds: f.tripIds,
+    });
     /** B's half of a pair: its renderer (if already created) and its view. */
     const applyFrameB = (f: FrameMessage) => {
       const words = new Uint32Array(f.vehicles);
-      bRecordsRef.current = { words: words.slice(0, f.count * 4), next: f.nextLinks, count: f.count, tick: f.tick, running: f.clock.running, multiplier: f.clock.multiplier };
-      rendererB.current?.setFrame(words, f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier, f.nextLinks);
+      bRecordsRef.current = { words: words.slice(0, f.count * 4), count: f.count };
+      rendererB.current?.setFrame(words, f.count);
+      presentRef.current?.b.push(presentFrame(f), performance.now(), f.clock);
       c.returnBuffer(f.vehicles, f.scenario);
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
@@ -402,7 +438,7 @@ export function App() {
         metrics,
         clock: f.clock,
         perf: f.perf,
-        frameBytes: f.vehicles.byteLength + f.nextLinks.byteLength,
+        frameBytes: f.vehicles.byteLength + f.nextLinks.byteLength + f.tripIds.byteLength,
         scenario: f.scenario,
         timeline: f.timeline,
       };
@@ -433,6 +469,7 @@ export function App() {
       }
       bFrameRef.current = null;
       bRecordsRef.current = null;
+      presentRef.current?.b.release(); // outside the comparison B does not hold the shared clock
       comparisonRef.current = null;
       viewedRef.current = f.scenario;
       applyFrame(f);
@@ -449,8 +486,9 @@ export function App() {
         guideRef.current = g;
         setGuide(g);
       }
-      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count, performance.now(), f.tick, f.clock.running, f.clock.multiplier, f.nextLinks);
-      // keep a copy for picking before the buffer goes back to the worker
+      renderer.current?.setFrame(new Uint32Array(f.vehicles), f.count);
+      presentRef.current?.a.push(presentFrame(f), performance.now(), f.clock);
+      // keep a copy for the hooks before the buffer goes back to the worker
       recordsRef.current = { tick: f.tick, vehicles: decodeVehicles(f.vehicles.slice(0), f.count), next: f.nextLinks };
       if (f.trackedSeq !== undefined && f.trackedSeq < inspectSeqRef.current) {
         // built before the worker saw our latest pick/clear: its tracking data is stale
@@ -475,7 +513,7 @@ export function App() {
         setFollowing(false);
       }
       setLinkDetail(f.linkDetail ?? null);
-      const frameBytes = f.vehicles.byteLength + f.nextLinks.byteLength; // records + next links
+      const frameBytes = f.vehicles.byteLength + f.nextLinks.byteLength + f.tripIds.byteLength; // records + next links + trip ids
       c.returnBuffer(f.vehicles, f.scenario); // uploaded: give the buffer back to its side's pool
       const names = readyRef.current?.metricNames ?? [];
       const metrics: Record<string, number> = {};
@@ -562,7 +600,8 @@ export function App() {
       canvasBRef.current = rb.element;
       rendererB.current = rb;
       const b = bRecordsRef.current;
-      if (b) rb.setFrame(b.words, b.count, performance.now(), b.tick, b.running, b.multiplier, b.next);
+      if (b) rb.setFrame(b.words, b.count);
+      rb.setPresenter(presentRef.current?.b ?? null);
     } else {
       const rb = rendererB.current;
       rendererB.current = null;
@@ -651,15 +690,19 @@ export function App() {
       const simPerMs =
         f && f.clock.running ? Math.min(f.clock.behind ? f.clock.achievedTicksPerS * DT : f.clock.multiplier, f.clock.multiplier) / 1000 : 0;
       simPerMsRef.current = simPerMs;
+      const d0 = performance.now();
+      // one presentation time for the picture (shared by A and B while comparing), then Follow and the
+      // ring read the same presented state
+      renderer.current?.advance(now);
+      rendererB.current?.advance(now);
       if (followingRef.current) {
-        const at = renderer.current?.trackedWorldPosition(now, simPerMs);
+        const at = renderer.current?.trackedWorldPosition();
         if (at) [camera.cx, camera.cy] = at;
       }
-      const d0 = performance.now();
-      renderer.current?.draw(camera, now, simPerMs);
+      renderer.current?.draw(camera);
       const camA = { cx: camera.cx, cy: camera.cy, zoom: camera.zoom };
       if (rendererB.current) {
-        rendererB.current.draw(camera, now, simPerMs);
+        rendererB.current.draw(camera);
         drawnCams.current = { a: camA, b: { cx: camera.cx, cy: camera.cy, zoom: camera.zoom } };
       } else drawnCams.current = null;
       shownCompare.current = compareViewRef.current && rendererB.current !== null;
@@ -801,10 +844,9 @@ export function App() {
   /** Canvas-local CSS px → the record a click would pick (only when zoomed in enough), else null. */
   const pickVehicleAt = useCallback(
     (x: number, y: number): number | null => {
-      const r = recordsRef.current;
-      const g = geometry.current;
-      if (!r || !g || camera.zoom < VEHICLE_PICK_MIN_ZOOM || compareViewRef.current) return null;
-      return pickVehicle(r.vehicles, g.links, camera, x, y, 8, renderer.current?.extrapolationS(performance.now(), simPerMsRef.current) ?? 0, r.next);
+      const p = presentRef.current?.a;
+      if (!p || !recordsRef.current || camera.zoom < VEHICLE_PICK_MIN_ZOOM || compareViewRef.current) return null;
+      return pickPresentedVehicle(p.vehicles(), camera, x, y, 8);
     },
     [camera],
   );
@@ -1010,12 +1052,18 @@ export function App() {
           achievedTicksPerS: f?.clock.achievedTicksPerS ?? 0,
           targetTicksPerS: f?.clock.targetTicksPerS ?? 0,
           renderer: renderer.current?.rendererName() ?? 'none',
+          presentation: presentationStats(),
         };
       },
       frameVehicle: (record: number) => {
         const r = recordsRef.current;
         if (!r || !Number.isInteger(record) || record < 0 || record >= r.vehicles.count) return null;
-        return { link: r.vehicles.link(record), s: r.vehicles.s(record), queued: (r.vehicles.flags(record) & FLAG_QUEUED) !== 0 };
+        const v = r.vehicles;
+        return { link: v.link(record), s: v.s(record), queued: (v.flags(record) & FLAG_QUEUED) !== 0, lane: v.lane(record), next: r.next[record] ?? NO_NEXT };
+      },
+      linkInfo: (link: number) => {
+        const l = geometry.current?.links[link];
+        return l ? { length: l.length, lanes: l.lanes } : null;
       },
       startPerfRecording: () => {
         recordingRef.current = { ticks: [], renderIntervals: [], drawMs: [], onNetwork: [], active: [], waitingAtOrigin: [], frames: 0, startMs: performance.now() };
@@ -1036,36 +1084,40 @@ export function App() {
         return [r.left + sx, r.top + sy];
       },
       vehicleScreenCenter: (record: number) => {
-        // where the record is drawn now (the junction curve and the extrapolation included)
-        const r = recordsRef.current;
-        if (!r || record < 0 || record >= r.vehicles.count) return null;
-        const v = r.vehicles;
-        const p = renderer.current?.drawPose(v.link(record), v.s(record), v.v(record), v.lane(record), r.next[record] ?? NO_NEXT, performance.now(), simPerMsRef.current);
-        return p ? toPage(p.x, p.y) : null;
+        // where the record is drawn now (as presented: interpolated by trip, junction curve included)
+        const v = renderer.current?.presented(record);
+        return v ? toPage(v.pose.x, v.pose.y) : null;
       },
       vehicleDraw: (record: number) => {
-        const r = recordsRef.current;
         const g = geometry.current;
+        const P = presentRef.current;
         const canvas = canvasRef.current;
-        if (!r || !g || !canvas || record < 0 || record >= r.vehicles.count) return null;
-        const v = r.vehicles;
-        const [link, lane, next] = [v.link(record), v.lane(record), r.next[record] ?? NO_NEXT];
-        const now = performance.now();
-        const dt = renderer.current?.extrapolationS(now, simPerMsRef.current) ?? 0;
-        const l = g.links[link];
-        if (!l) return null;
-        const s = Math.min(v.s(record) + v.v(record) * dt, l.length);
-        const pose = vehicleDrawPosition(g.links, link, s, lane, next);
-        const straight = vehiclePosition(l, s, lane);
+        const v = renderer.current?.presented(record);
+        const l = v ? g?.links[v.link] : undefined;
+        if (!v || !l || !P || !canvas) return null;
+        const { link, s, lane, next, pose } = v;
+        const stop = stopLine(l, P.C);
+        const straight = vehiclePosition(l, Math.min(s, l.length), Math.min(lane, l.lanes - 1));
         const rect = canvas.getBoundingClientRect();
         const page = (x: number, y: number): [number, number] => {
           const [sx, sy] = camera.worldToScreen(x, y);
           return [rect.left + sx, rect.top + sy];
         };
-        return { link, s, lane, next, inBlend: inBlend(g.links, link, s, next), world: [pose.x, pose.y] as [number, number], page: page(pose.x, pose.y), straightPage: page(...straight) };
+        return {
+          link,
+          s,
+          lane,
+          next,
+          inBlend: next !== NO_NEXT && s > stop,
+          world: [pose.x, pose.y] as [number, number],
+          page: page(pose.x, pose.y),
+          straightPage: page(...straight),
+          length: l.length,
+          stop,
+        };
       },
       trackedDraw: () => {
-        const d = renderer.current?.trackedDraw(performance.now(), simPerMsRef.current);
+        const d = renderer.current?.trackedDraw();
         const canvas = canvasRef.current;
         if (!d || !canvas) return null;
         const rect = canvas.getBoundingClientRect();
@@ -1075,12 +1127,13 @@ export function App() {
       debugTrap: () => client.current?.debugTrap(),
       drawAt: (link: number, s: number, lane: number, next: number) => {
         const g = geometry.current;
-        if (!g || !g.links[link]) return [NaN, NaN] as [number, number];
-        const p = vehicleDrawPosition(g.links, link, s, lane, next);
+        const P = presentRef.current;
+        if (!g || !P || !g.links[link]) return [NaN, NaN] as [number, number];
+        const p = visualPose(g.links, P.C, link, s, lane, next);
         return [p.x, p.y] as [number, number];
       },
       trackedScreenCenter: () => {
-        const at = renderer.current?.trackedWorldPosition(performance.now(), simPerMsRef.current);
+        const at = renderer.current?.trackedWorldPosition();
         return at ? toPage(at[0], at[1]) : null;
       },
       setDebug: (opts: { hideVehicles?: boolean }) => {
@@ -1275,6 +1328,7 @@ export function App() {
           active={frame?.metrics['active'] ?? 0}
           frameBytes={frame?.frameBytes ?? 0}
           clock={frame?.clock ?? null}
+          presentation={presentationStats()}
         />
       )}
       </div>

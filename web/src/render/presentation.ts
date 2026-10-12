@@ -377,6 +377,20 @@ export class Presenter {
     return this.P;
   }
 
+  /** The presentation time `P` the last `advance` returned (sim seconds). */
+  time(): number {
+    return this.P;
+  }
+
+  /** Forget every frame and leave the shared clock (this side shows nothing until its next frame). */
+  release(): void {
+    this.frames = [];
+    this.key = null;
+    this.pair = [-1, -1];
+    this.paths.clear();
+    this.clock.drop(this);
+  }
+
   /** How far `P` trails the newest frame (sim seconds). */
   lagS(): number {
     const newest = this.frames.at(-1);

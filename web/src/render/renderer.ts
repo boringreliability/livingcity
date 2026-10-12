@@ -1,8 +1,9 @@
 import { VEHICLE_RECORD_BYTES, type TrackedVehicle } from '../sim/protocol';
 import type { Camera } from './camera';
 import type { CityDecor } from './cities';
-import { LANE_WIDTH_M, type RoadGeometry } from './geometry';
-import { BLEND_M, ExtrapolationClock, NO_NEXT, extrapolate, inBlend, vehicleDrawPosition, type DrawPose } from './motion';
+import { LANE_WIDTH_M, vehiclePosition, type RoadGeometry } from './geometry';
+import { NO_NEXT } from './motion';
+import { visualS, type PresentedVehicle, type Presenter } from './presentation';
 import { LINK_TEX_WIDTH, LINK_TEXEL_GLSL, linkRows, linkTexel } from './linkTable';
 
 /*
@@ -229,66 +230,22 @@ void main() {
   o = vec4(c, 1.0);
 }`;
 
-// Vehicles: instanced quads from the AoS frame buffer (stride 16 bytes).
+// Vehicles: instanced quads. Per instance the pose the presenter computed on the CPU (x, y, hx, hy:
+// presentation.ts's visualPose of the presented car, ward motion-002) and the record's flags (the
+// frame's AoS buffer, stride 16 bytes): the GPU draws exactly where the CPU rule says.
 const VEH_VS = `#version 300 es
 layout(location = 0) in vec2 a_corner;
-layout(location = 1) in uint a_link;
-layout(location = 2) in float a_s;
-layout(location = 3) in float a_v;
+layout(location = 1) in vec4 a_pose;
 layout(location = 4) in uint a_flags;
-layout(location = 5) in uint a_next; // next link or 65535 (FrameMessage.nextLinks)
 uniform vec2 u_center;
 uniform vec2 u_scale;
 uniform float u_pxPerM;
-uniform float u_dtSim;
-uniform int u_linkRows;
-uniform sampler2D u_links;
 out vec2 v_local;
 flat out uint v_flags;
 flat out float v_band; // brake band length as a share of the vehicle (at least ~1.25 px)
-${LINK_TEXEL_GLSL}
-// motion.ts's vehicleDrawPosition, exactly: the lane point, and through a junction a quadratic curve
-vec2 lanePoint(int l, float s, float lane) {
-  vec4 e = texelFetch(u_links, linkTexel(l, 0), 0);
-  vec4 g = texelFetch(u_links, linkTexel(l, 1), 0);
-  float len = texelFetch(u_links, linkTexel(l, 2), 0).x;
-  return mix(e.xy, e.zw, clamp(s / len, 0.0, 1.0)) + g.xy * (((g.w - 1.0) * 0.5 - lane) * ${LANE_WIDTH_M.toFixed(1)});
-}
-vec2 linkDir(int l) {
-  vec4 e = texelFetch(u_links, linkTexel(l, 0), 0);
-  vec2 d = e.zw - e.xy;
-  float m = length(d);
-  return m > 0.0 ? d / m : vec2(1.0, 0.0);
-}
 void main() {
-  int l = int(a_link);
-  vec4 geo = texelFetch(u_links, linkTexel(l, 1), 0);   // nx, ny, width, lanes
-  float len = texelFetch(u_links, linkTexel(l, 2), 0).x;
-  float s = min(a_s + a_v * u_dtSim, len);
-  float lane = float((a_flags >> 8u) & 255u);
-  vec2 dir = linkDir(l);
-  vec2 p = lanePoint(l, s, lane);
-  float blend = min(${BLEND_M.toFixed(1)}, len * 0.5);
-  if (a_next != 65535u && s > len - blend) {
-    int nx = int(a_next);
-    float nLanes = texelFetch(u_links, linkTexel(nx, 1), 0).w;
-    vec2 p0 = lanePoint(l, len - blend, lane);
-    vec2 p2 = lanePoint(nx, 0.0, min(lane, nLanes - 1.0));
-    vec2 e = linkDir(nx);
-    vec2 r = p2 - p0;
-    float chord = length(r);
-    vec2 c = p2 - e * chord * 0.5;
-    float den = dir.x * e.y - dir.y * e.x;
-    if (abs(den) > 1e-9) {
-      float t = (r.x * e.y - r.y * e.x) / den;
-      float u2 = (r.x * dir.y - r.y * dir.x) / den;
-      if (t > 0.0 && u2 < 0.0 && t <= chord && -u2 <= chord) c = p0 + t * dir;
-    }
-    float u = clamp((s - (len - blend)) / blend, 0.0, 1.0);
-    p = (1.0 - u) * (1.0 - u) * p0 + 2.0 * u * (1.0 - u) * c + u * u * p2;
-    vec2 tg = 2.0 * (1.0 - u) * (c - p0) + 2.0 * u * (p2 - c);
-    dir = length(tg) < 1e-9 ? e : normalize(tg);
-  }
+  vec2 p = a_pose.xy;
+  vec2 dir = length(a_pose.zw) > 0.0 ? normalize(a_pose.zw) : vec2(1.0, 0.0);
   vec2 n = vec2(dir.y, -dir.x); // right-hand normal of the heading
   bool queued = (a_flags & 1u) != 0u;
   // queued: short and square; moving: long and slim — in metres when zoomed in, in CSS px when zoomed out
@@ -462,9 +419,13 @@ export class CityRenderer {
   private stateTex: WebGLTexture;
   private stateBytes = new Uint8Array(0);
   private geometry: RoadGeometry | null = null;
-  /** How far the picture runs ahead of the last frame (ward polish-003). */
-  private readonly clock = new ExtrapolationClock();
-  private nextBuf: WebGLBuffer;
+  /** Presented poses (x, y, hx, hy per record of the newest frame), uploaded once per animation frame. */
+  private poseBuf: WebGLBuffer;
+  private poses = new Float32Array(0);
+  /** Records in the last frame; the drawn count is the presenter's (the same frame). */
+  private frameCount = 0;
+  /** Where cars are drawn (ward motion-002): interpolation by trip id at the presentation time. */
+  private presenter: Presenter | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
@@ -475,7 +436,7 @@ export class CityRenderer {
     this.veh = compile(gl, VEH_VS, VEH_FS);
     this.uSolid = uniforms(gl, this.solid, ['u_center', 'u_scale', 'u_color']);
     this.uRoad = uniforms(gl, this.road, ['u_center', 'u_scale', 'u_pxPerM', 'u_pass', 'u_state', 'u_links', 'u_linkRows']);
-    this.uVeh = uniforms(gl, this.veh, ['u_center', 'u_scale', 'u_pxPerM', 'u_dtSim', 'u_links', 'u_linkRows']);
+    this.uVeh = uniforms(gl, this.veh, ['u_center', 'u_scale', 'u_pxPerM']);
     this.barProg = compile(gl, BAR_VS, BAR_FS);
     this.uBar = uniforms(gl, this.barProg, ['u_center', 'u_scale', 'u_pxPerM']);
     this.deckProg = compile(gl, DECK_VS, DECK_FS);
@@ -488,7 +449,7 @@ export class CityRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     }
 
-    // Vehicle VAO: a unit quad (per vertex) + the frame records (per instance).
+    // Vehicle VAO: a unit quad (per vertex) + the presented poses and the records' flags (per instance).
     this.vehVao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vehVao);
     const quad = gl.createBuffer()!;
@@ -497,22 +458,15 @@ export class CityRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -0.5, 1, -0.5, 1, 0.5, 0, -0.5, 1, 0.5, 0, 0.5]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    this.poseBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.poseBuf);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 16, 0);
     this.vehBuf = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vehBuf);
-    const stride = VEHICLE_RECORD_BYTES;
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_INT, stride, 0);
-    gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, stride, 4);
-    gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 8);
     gl.enableVertexAttribArray(4);
-    gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, stride, 12);
-    this.nextBuf = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nextBuf);
-    gl.enableVertexAttribArray(5);
-    gl.vertexAttribIPointer(5, 1, gl.UNSIGNED_SHORT, 0, 0);
-    for (const loc of [1, 2, 3, 4, 5]) gl.vertexAttribDivisor(loc, 1);
+    gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, VEHICLE_RECORD_BYTES, 12);
+    for (const loc of [1, 4]) gl.vertexAttribDivisor(loc, 1);
     gl.bindVertexArray(null);
 
     this.routeProg = compile(gl, ROUTE_VS, ROUTE_FS);
@@ -573,6 +527,7 @@ export class CityRenderer {
     this.outlines = this.roads = this.bars = null;
     gl.deleteVertexArray(this.vehVao);
     gl.deleteBuffer(this.vehBuf);
+    gl.deleteBuffer(this.poseBuf);
     gl.deleteBuffer(this.vehQuad);
     gl.deleteTexture(this.linkTex);
     gl.deleteTexture(this.stateTex);
@@ -666,19 +621,39 @@ export class CityRenderer {
   }
 
   /**
-   * Upload one frame's records (the AoS buffer as is) and their next links. The caller may then
-   * return the buffer. Extrapolation restarts on a new tick and on resume (ExtrapolationClock).
+   * Upload one frame's records (the AoS buffer as is: the shader reads their flags). The caller pushes the
+   * same frame to the presenter and may then return the buffer.
    */
-  setFrame(words: Uint32Array, count: number, receivedAtMs: number, tick?: number, running = true, multiplier?: number, nextLinks?: Uint16Array): void {
-    void multiplier; // a speed change re-bases the clock at the next draw (continuous, no backward step)
+  setFrame(words: Uint32Array, count: number): void {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vehBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(words.buffer, words.byteOffset, count * VEHICLE_RECORD_BYTES), gl.STREAM_DRAW);
-    const next = nextLinks && nextLinks.length >= count ? nextLinks.subarray(0, count) : new Uint16Array(count).fill(NO_NEXT);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nextBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, next, gl.STREAM_DRAW);
-    this.vehCount = count;
-    this.clock.frame(receivedAtMs, tick, running);
+    this.frameCount = count;
+  }
+
+  /** The presenter cars are drawn with (null: none drawn). */
+  setPresenter(p: Presenter | null): void {
+    this.presenter = p;
+    this.vehCount = 0;
+  }
+
+  /**
+   * Advance the presentation to `nowMs` and upload every car's presented pose; Follow, the ring and the
+   * hooks then read the same state until the next call.
+   */
+  advance(nowMs: number): void {
+    const p = this.presenter;
+    if (!p || this.frameCount === 0) {
+      this.vehCount = 0;
+      return;
+    }
+    p.advance(nowMs);
+    if (this.poses.length < this.frameCount * 4) this.poses = new Float32Array(Math.max(this.frameCount * 4, this.poses.length * 2));
+    const n = Math.min(p.writePoses(this.poses), this.frameCount);
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.poseBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this.poses.subarray(0, n * 4), gl.STREAM_DRAW);
+    this.vehCount = n;
   }
 
   /** `linkCounts`: vehicles per link; congestion is drawn by occupancy (vehicles ÷ capacity). */
@@ -755,44 +730,33 @@ export class CityRenderer {
     this.route = { vao, buf, count: v.length / 6 };
   }
 
-  /** Sim seconds the drawn picture is ahead of the last frame (0 while paused). */
-  extrapolationS(nowMs: number, simSecondsPerMs: number): number {
-    return this.clock.at(nowMs, simSecondsPerMs);
+  /** Record `record` of the newest frame as presented now (motion-002), or null. */
+  presented(record: number): PresentedVehicle | null {
+    return this.presenter?.record(record) ?? null;
   }
 
-  /** Where a record (link, s, v, lane, next) is drawn at `nowMs`: the vertex shader's rule, on the CPU. */
-  drawPose(link: number, s: number, v: number, lane: number, next: number, nowMs: number, simSecondsPerMs: number): DrawPose | null {
-    const links = this.geometry?.links;
-    if (!links || !links[link]) return null;
-    const e = extrapolate(links, link, s, v, this.extrapolationS(nowMs, simSecondsPerMs), next);
-    return vehicleDrawPosition(links, link, e.s, lane, next);
-  }
-
-  /** The tracked vehicle as drawn at `nowMs` (link, s after extrapolation, lane, next and its predicted lane, world m). */
-  trackedDraw(nowMs: number, simSecondsPerMs: number): { link: number; s: number; length: number; lane: number; next: number; nextLane: number; world: [number, number] } | null {
+  /** The tracked vehicle as presented now (link, ŝ, lane, next and the lane it enters next on, world m). */
+  trackedDraw(): { link: number; s: number; length: number; lane: number; next: number; nextLane: number; world: [number, number] } | null {
     const t = this.tracked;
     const links = this.geometry?.links;
-    const l = t && t.link >= 0 ? links?.[t.link] : undefined;
-    if (!t || !l || !links) return null;
-    const next = t.state === 'stranded' ? NO_NEXT : (t.route[1] ?? NO_NEXT);
-    const nl = next !== NO_NEXT ? links[next] : undefined;
-    const e = extrapolate(links, t.link, t.s, t.v, this.extrapolationS(nowMs, simSecondsPerMs), nl ? next : NO_NEXT);
-    const pose = vehicleDrawPosition(links, t.link, e.s, t.lane, nl ? next : NO_NEXT);
-    return { link: t.link, s: e.s, length: l.length, lane: t.lane, next: nl ? next : NO_NEXT, nextLane: nl ? Math.min(t.lane, nl.lanes - 1) : t.lane, world: [pose.x, pose.y] };
+    const p = this.presenter;
+    if (!t || !links || !p || t.link < 0) return null;
+    const v = p.vehicle(t.tripId);
+    if (v) {
+      const nl = v.next !== NO_NEXT ? links[v.next] : undefined;
+      return { link: v.link, s: v.s, length: links[v.link]!.length, lane: v.lane, next: v.next, nextLane: nl ? Math.min(v.lane, nl.lanes - 1) : v.lane, world: [v.pose.x, v.pose.y] };
+    }
+    // not in the presented frames (yet): its frame position by the same visual rule
+    const l = links[t.link];
+    if (!l) return null;
+    const s = visualS(l, p.clearances(), t.s);
+    const [x, y] = vehiclePosition(l, Math.min(s, l.length), Math.min(t.lane, l.lanes - 1));
+    return { link: t.link, s, length: l.length, lane: t.lane, next: NO_NEXT, nextLane: t.lane, world: [x, y] };
   }
 
-  /**
-   * Where the tracked vehicle is drawn at `nowMs` (world m): its frame position extrapolated and placed
-   * like every vehicle in the vertex shader, so Follow and the ring agree with the picture.
-   */
-  trackedWorldPosition(nowMs: number, simSecondsPerMs: number): [number, number] | null {
-    return this.trackedDraw(nowMs, simSecondsPerMs)?.world ?? null;
-  }
-
-  /** Whether (link, s, next) is on a junction curve (for the test hook). */
-  inBlend(link: number, s: number, next: number): boolean {
-    const links = this.geometry?.links;
-    return !!links && inBlend(links, link, s, next);
+  /** Where the tracked vehicle is drawn now (world m): Follow and the ring agree with the picture. */
+  trackedWorldPosition(): [number, number] | null {
+    return this.trackedDraw()?.world ?? null;
   }
 
   private uploadState(): void {
@@ -885,8 +849,8 @@ export class CityRenderer {
     }
   }
 
-  /** Draw one picture. `simSecondsPerMs` is 0 while paused (nothing moves). */
-  draw(camera: Camera, nowMs: number, simSecondsPerMs: number): void {
+  /** Draw one picture (cars where the last `advance` presented them). */
+  draw(camera: Camera): void {
     const gl = this.gl;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     const bg = COLORS.background;
@@ -975,16 +939,11 @@ export class CityRenderer {
       gl.uniform2f(uV['u_center']!, camera.cx, camera.cy);
       gl.uniform2f(uV['u_scale']!, ...scale);
       gl.uniform1f(uV['u_pxPerM']!, camera.zoom);
-      const dtSim = this.extrapolationS(nowMs, simSecondsPerMs);
-      gl.uniform1f(uV['u_dtSim']!, dtSim);
-      gl.uniform1i(uV['u_linkRows']!, this.linkRowsN);
-      gl.bindTexture(gl.TEXTURE_2D, this.linkTex);
-      gl.uniform1i(uV['u_links']!, 0);
       gl.bindVertexArray(this.vehVao);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.vehCount);
     }
 
-    const at = this.trackedWorldPosition(nowMs, simSecondsPerMs);
+    const at = this.trackedWorldPosition();
     if (at) {
       const uRg = this.uRing;
       gl.useProgram(this.ringProg);
