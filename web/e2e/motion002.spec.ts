@@ -184,56 +184,75 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
     expect(c.d.s, 'at or behind the stop line').toBeLessThanOrEqual(c.d.stop + 0.01);
     expect(c.d.next, 'not moving on while held').toBe(0xffff);
   }
-  // held head cars (frame s = length) with a single-lane next link and no follower within 9.5 m: the old
-  // rule drew them exactly at the next link's start (that link's centreline start, one lane)
-  const headsOf = (cs: typeof cars) =>
-    cs.filter(
-      (c) =>
-        c.f.queued &&
-        c.f.s >= c.d.length - 1e-3 &&
-        c.f.next !== undefined &&
-        c.f.next !== 0xffff &&
-        !cs.some((o) => o !== c && o.f.link === c.f.link && o.f.lane === c.f.lane && o.f.s < c.f.s && o.f.s >= c.f.s - 9.5),
-    );
-  const heads = headsOf(cars);
-  expect(heads.length, 'held head cars without a close follower').toBeGreaterThanOrEqual(6);
-  let best = heads[0]!;
-  let n = 0;
+  // held head cars (frame s = length, nobody ahead on the link) with a single-lane next link: the old rule
+  // drew them exactly at the next link's start (that link's centreline start, one lane). A follower sits
+  // behind the head car on its own link, so it cannot cover that point. (Gold amendment: at ?demand=3 only
+  // 2–8 such cars without a follower within 9.5 m exist city-wide, so the cars are visited one by one.)
+  const heads = held.filter((c) => c.f.next !== undefined && c.f.next !== 0xffff);
+  const single: typeof heads = [];
   for (const c of heads) {
-    const k = heads.filter((e) => Math.hypot(e.d.page[0] - c.d.page[0], e.d.page[1] - c.d.page[1]) < 40).length;
-    if (k > n) [best, n] = [c, k];
+    const lanes = await page.evaluate((next) => (window.__livingcity as unknown as Hook).linkInfo(next)?.lanes ?? 0, c.f.next!);
+    if (lanes === 1) single.push(c);
   }
+  expect(single.length, 'held head cars with a single-lane next link').toBeGreaterThanOrEqual(8);
   const box = (await page.locator('canvas.city').first().boundingBox())!;
   const centre: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
-  await page.mouse.move(best.d.page[0], best.d.page[1]);
-  await page.mouse.down();
-  await page.mouse.move(centre[0], centre[1], { steps: 12 });
-  await page.mouse.up();
-  await sleep(300);
   await wheelZoom(page, centre, (z) => z >= 4);
   const inView = (p: [number, number] | null) => !!p && p[0] > box.x + 30 && p[1] > box.y + 30 && p[0] < box.x + box.width - 30 && p[1] < box.y + box.height - 30;
-  const nowHeads = headsOf(await all()).filter((c) => inView(c.d.page));
-  // the old point: the next link's start; single-lane next links only, so its centreline is the lane
-  const withOld: { page: [number, number]; old: [number, number] }[] = [];
-  for (const c of nowHeads) {
-    const info = await page.evaluate((next) => {
-      const h = window.__livingcity as unknown as Hook;
-      return { start: h.linkScreenPoint(next, 0), lanes: h.linkInfo(next)?.lanes ?? 0 };
-    }, c.f.next!);
-    if (info.lanes === 1 && info.start && inView(info.start)) withOld.push({ page: c.d.page, old: info.start });
+  /** The record of the car of frame position (link, s, lane), as presented now (records do not change while paused). */
+  const drawnOf = (c: (typeof heads)[number]) =>
+    page.evaluate(
+      ([link, lane]) => {
+        const h = window.__livingcity as unknown as Hook;
+        for (let i = 0; i < h.snapshot().frameRecords; i++) {
+          const f = h.frameVehicle(i);
+          const d = h.vehicleDraw(i);
+          if (f && d && f.link === link && f.lane === lane && f.queued && f.s >= d.length - 1e-3) return d;
+        }
+        return null;
+      },
+      [c.f.link, c.f.lane ?? 0] as const,
+    );
+  /** Pan (map drags from the canvas centre, each within the canvas) until `p` is near the centre. */
+  const panTo = async (c: (typeof heads)[number]) => {
+    for (let k = 0; k < 40; k++) {
+      const d = await drawnOf(c);
+      if (!d) return null;
+      const dx = centre[0] - d.page[0];
+      const dy = centre[1] - d.page[1];
+      if (Math.abs(dx) < box.width / 4 && Math.abs(dy) < box.height / 4) return d;
+      const mx = Math.max(-box.width / 2 + 40, Math.min(box.width / 2 - 40, dx));
+      const my = Math.max(-box.height / 2 + 40, Math.min(box.height / 2 - 40, dy));
+      await page.mouse.move(centre[0], centre[1]);
+      await page.mouse.down();
+      await page.mouse.move(centre[0] + mx, centre[1] + my, { steps: 8 });
+      await page.mouse.up();
+      await sleep(150);
+    }
+    return null;
+  };
+  const pts: { page: [number, number]; old: [number, number]; emptyOld: boolean }[] = [];
+  for (const c of single.slice(0, 16)) {
+    if (pts.length >= 8) break;
+    const d = await panTo(c);
+    if (!d || !inView(d.page)) continue;
+    const old = await page.evaluate((next) => (window.__livingcity as unknown as Hook).linkScreenPoint(next, 0), c.f.next!);
+    if (!old || !inView(old)) continue;
+    // the old point: the next link's start; single-lane next links only, so its centreline is the lane
+    const shown = await lum(page, d.page);
+    const oldShown = await lum(page, old);
+    await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: true }));
+    await sleep(300);
+    const hidden = await lum(page, d.page);
+    const oldHidden = await lum(page, old);
+    await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: false }));
+    await sleep(300);
+    expect(Math.abs(shown - hidden), `held head car ${pts.length} drawn at its presented point`).toBeGreaterThanOrEqual(30);
+    pts.push({ page: d.page, old, emptyOld: Math.abs(oldShown - oldHidden) < 30 });
   }
-  const pts = withOld.slice(0, 12);
-  expect(pts.length, 'held head cars in view with their old points').toBeGreaterThanOrEqual(6);
-  const shown = await Promise.all(pts.map((x) => lum(page, x.page)));
-  const oldShown = await Promise.all(pts.map((x) => lum(page, x.old)));
-  await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: true }));
-  await sleep(300);
-  const hidden = await Promise.all(pts.map((x) => lum(page, x.page)));
-  const oldHidden = await Promise.all(pts.map((x) => lum(page, x.old)));
-  for (let i = 0; i < pts.length; i++) expect(Math.abs(shown[i]! - hidden[i]!), `held head car ${i} drawn at its presented point`).toBeGreaterThanOrEqual(30);
-  const emptyOld = pts.filter((_, i) => Math.abs(oldShown[i]! - oldHidden[i]!) < 30).length;
+  expect(pts.length, 'held head cars visited with their old points in view').toBeGreaterThanOrEqual(6);
+  const emptyOld = pts.filter((p) => p.emptyOld).length;
   expect(emptyOld, 'the old points (the next link’s start, inside the junction) are mostly empty').toBeGreaterThanOrEqual(Math.ceil(pts.length / 2));
-  await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: false }));
 
   // running at 20×: a car its newest frame shows held is never presented past its stop line
   await speed(page, 20);

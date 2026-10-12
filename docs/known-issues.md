@@ -8,8 +8,8 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 
 - e2 — paused frames kept their 16 ms rate (frozen host tests G4/G4b). Resolved since in epic motion (motion-001, supersessions S1/S2).
 - e3 — frame pools were per side only, with wider reuse pinned by G8. Resolved since in epic motion (motion-001, supersession S3).
-- i1 — at 1× a moving car can stop at the end of the junction curve for up to a tick, then move on ~7 m (polish-003 test 4: extrapolation never passes the link end).
-- i2 — cars held at a stop line are drawn at the next link's start, so they can stack inside busy junctions (polish-003 tests 3(a)/4/7).
+- i1 — at 1× a moving car could stop at the end of the junction curve for up to a tick, then move on ~7 m (polish-003 test 4). Resolved since in epic motion (motion-002: interpolation by trip id, supersessions S4–S8).
+- i2 — cars held at a stop line were drawn at the next link's start, so they could stack inside busy junctions (polish-003 tests 3(a)/4/7). Resolved since in epic motion (motion-002: stop lines clear of every other road, supersessions S4/S8).
 - i3 — the hover keeps its grey halo under the dashed stroke (gold5 G1).
 - i5 — the closure sign is a ring around the hatch, not a solid core (look.spec midpoint hatch).
 - New in polish-006: under SwiftShader at `?demand=5`, the WebGL work that a compare switch needs (releasing B's old context, preparing a spare one) runs as main-thread tasks just *after* the switch is drawn: 0.1–0.8 s with one app tab, and up to 2.9 s was seen with two more app tabs open (Gold review). The switch itself shows within 300 ms; input in that moment waits. On a hardware GPU these calls take a few milliseconds.
@@ -31,7 +31,7 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - **b7:** scenario and road panels near 900 px — resolved (polish-002).
 
 ## (c) Renderer
-- **c1:** cars stepping at junctions — resolved (polish-003): junction curves; see i1 for what remains.
+- **c1:** cars stepping at junctions — resolved (polish-003): junction curves; the rest (i1) in motion-002.
 - **c2:** a speed change made cars step back — resolved (polish-003).
 - **c3:** a worker stall extrapolated at full speed — resolved (polish-003): the cap is 1.5 × the expected sim advance.
 - **c4:** hover halo close to a congested road — resolved (polish-003): a dashed stroke; see i3.
@@ -76,10 +76,10 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - **g9:** short timeline track between 960 and ~1100 px — limitation: still usable (111–175 px), keyboard steps unaffected.
 - **g10:** speed readout wraps with the `?demand=6` badge — limitation: stress mode only.
 - **g11:** compare panels over map edges at sizes outside the pinned ones — limitation: the pinned sizes (1280×800, 1100×800, 1024×768) are clear.
-- **i1:** a car stops at the curve end, then moves on — deviation: pinned by polish-003 test 4 (see Epic gate).
-- **i2:** held cars stack in junctions — deviation: pinned by polish-003 tests 3(a)/4/7 (see Epic gate).
+- **i1:** a car stops at the curve end, then moves on — resolved (motion-002): cars are interpolated between frames by trip id.
+- **i2:** held cars stack in junctions — resolved (motion-002): a held car waits at a stop line clear of every other road.
 - **i3:** the hover keeps its halo — deviation: pinned by gold5 G1 (see Epic gate).
-- **i4:** small backward steps at a steady 20× — limitation: 0.15–0.74 m; fixing it needs the rate from measured frame intervals.
+- **i4:** small backward steps at a steady 20× — resolved (motion-002): no extrapolation; the presentation time never runs ahead of the newest frame.
 - **i5:** the closure sign is a ring — deviation: pinned by look.spec (see Epic gate).
 - **i6:** architecture docs on the cap and `nextLinks` — resolved (polish-006).
 - **j1:** the first control row overflows with `?demand=6` — limitation: stress mode only.
