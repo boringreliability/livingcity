@@ -643,11 +643,11 @@ export class CityRenderer {
    */
   advance(nowMs: number): void {
     const p = this.presenter;
+    p?.advance(nowMs); // also with no cars: advancing trims the presenter's history
     if (!p || this.frameCount === 0) {
       this.vehCount = 0;
       return;
     }
-    p.advance(nowMs);
     if (this.poses.length < this.frameCount * 4) this.poses = new Float32Array(Math.max(this.frameCount * 4, this.poses.length * 2));
     const n = Math.min(p.writePoses(this.poses), this.frameCount);
     const gl = this.gl;

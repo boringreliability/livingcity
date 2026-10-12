@@ -318,6 +318,12 @@ interface Path {
 }
 
 const PATH_SAMPLES = 48;
+/**
+ * Frames kept at most. `advance` (once per animation frame) trims the history; without animation frames
+ * (a hidden tab) pushes would pile up, so beyond this the history starts over at the newest frame. The
+ * presentation never needs that many: it trails by ≤ 4·DT, plus a catch-up after a stall.
+ */
+const MAX_KEPT = 48;
 
 export class Presenter {
   private readonly clock: PresentationClock;
@@ -350,7 +356,7 @@ export class Presenter {
     const newest = this.frames.at(-1);
     const reset =
       !k || !newest || k.scenario !== frame.scenario || k.world !== frame.world || k.epoch !== frame.epoch || k.compare !== frame.compare || frame.tick < newest.tick;
-    if (reset) {
+    if (reset || this.frames.length >= MAX_KEPT) {
       this.key = { scenario: frame.scenario, world: frame.world, epoch: frame.epoch, compare: frame.compare };
       this.frames = [this.keep(frame)];
       this.clock.reset(this, frame.tick, nowMs, clock);
@@ -397,9 +403,9 @@ export class Presenter {
     return newest ? Math.max(0, newest.T - this.P) : 0;
   }
 
-  /** The frame records are presented against: the newest one (record indices refer to it). */
-  newestTick(): number | null {
-    return this.frames.at(-1)?.tick ?? null;
+  /** How many frames the presenter holds (bounded by MAX_KEPT). */
+  retainedFrames(): number {
+    return this.frames.length;
   }
 
   /** Every car drawn at the current `P`. */

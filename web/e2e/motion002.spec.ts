@@ -68,7 +68,7 @@ async function rgb(page: Page, c: [number, number]): Promise<[number, number, nu
     g.drawImage(img, 0, 0);
     const d = g.getImageData(0, 0, img.width, img.height).data;
     const m: [number, number, number] = [0, 0, 0];
-    for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) m[k] += d[i + k]! / (d.length / 4);
+    for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) m[k] = m[k]! + d[i + k]! / (d.length / 4);
     return m;
   }, buf.toString('base64'));
 }
