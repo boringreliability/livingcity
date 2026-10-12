@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Snap = { tick: number; running: boolean; camera: { zoom: number }; frameRecords: number; trackedTrip: number | null; compare: boolean; scenario: 'A' | 'B'; timeline: { positionTick: number } };
 type Presentation = { tickA: number; tickB: number | null; lagS: number; lagMs: number };
-type VehicleDraw = { link: number; s: number; length: number; lane: number; next: number; page: [number, number] };
+type VehicleDraw = { link: number; s: number; length: number; stop: number; lane: number; next: number; page: [number, number] };
 type TrackedDraw = { link: number; s: number; page: [number, number] };
 type Hook = {
   snapshot(): Snap;
@@ -22,7 +22,6 @@ type Hook = {
 };
 const snap = (page: Page): Promise<Snap> => page.evaluate(() => (window.__livingcity as unknown as Hook).snapshot());
 const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-const stopLine = (length: number) => length - Math.min(6, length / 2);
 
 async function ready(page: Page, url = '/') {
   await page.goto(url);
@@ -177,11 +176,11 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
     });
   // every held car (at its link's end in the sim) is drawn at or behind its stop line, on its own link
   const cars = await all();
-  const held = cars.filter((c) => c.f.queued && c.f.s >= stopLine(c.d.length));
+  const held = cars.filter((c) => c.f.queued && c.f.s >= c.d.length - 1e-3); // held at the link end in the sim
   expect(held.length, 'held cars at junctions').toBeGreaterThanOrEqual(10);
   for (const c of held) {
     expect(c.d.link, 'drawn on its own link').toBe(c.f.link);
-    expect(c.d.s, 'at or behind the stop line').toBeLessThanOrEqual(stopLine(c.d.length) + 0.01);
+    expect(c.d.s, 'at or behind the stop line').toBeLessThanOrEqual(c.d.stop + 0.01);
     expect(c.d.next, 'not moving on while held').toBe(0xffff);
   }
   // held head cars (frame s = length) with a single-lane next link and no follower within 9.5 m: the old
@@ -249,9 +248,9 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
         const f = h.frameVehicle(i);
         const d = h.vehicleDraw(i);
         if (!f || !d || !f.queued || d.link !== f.link) continue;
-        if (f.s < d.length - Math.min(6, d.length / 2)) continue;
+        if (f.s < d.length - 1e-3) continue; // held at the link end in the newest frame
         n++;
-        if (d.s > d.length - Math.min(6, d.length / 2) + 0.01) out.push(`record ${i} on link ${d.link}: ${d.s} > stop line`);
+        if (d.s > d.stop + 0.01) out.push(`record ${i} on link ${d.link}: ${d.s} > stop line ${d.stop}`);
       }
       return { out, n };
     });

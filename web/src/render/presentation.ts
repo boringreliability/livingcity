@@ -4,8 +4,9 @@
  * Authoritative state is the frame (link, s, v, lane, flags + trip ids). The picture shows a
  * presentation time `P` a little behind the newest frame, never ahead of it, and each car is
  * interpolated between the two retained frames around `P`, matched by trip id. A car on the same link
- * in both frames is drawn at most at the link's visual stop line; the junction curve is used only
- * while it moves onto the link it is on in the newer frame.
+ * in both frames is drawn at most at the link's stop line (clear of the junction); the junction curve
+ * (stop line → the next link's entry point) is used only while it moves onto the link it is on in the
+ * newer frame.
  *
  * RED STUB: the API only; every function throws until the ward's Gold phase implements it.
  */
@@ -13,18 +14,32 @@ import type { DecodedVehicles } from '../sim/frame';
 import type { LinkGeom } from './geometry';
 import type { DrawPose } from './motion';
 
-/** The visual stop line sits this far before a link's end (at most half the link). */
-export const STOP_M = 6;
-
-/** Along-link coordinate (m) of `l`'s visual stop line. */
-export function stopLine(l: LinkGeom): number {
-  return l.length - Math.min(STOP_M, l.length / 2);
+/** Per link: how far from its end (`end`) and its start (`start`) a 4.5 × 2.0 m car must stay to be clear of
+ *  every other road at that junction (render-only, from the drawn geometry; option A, 2026-10-12). */
+export interface Clearances {
+  end: Float64Array;
+  start: Float64Array;
 }
 
-/** The visual coordinate of sim position `s` on a link of `length`: the last 2·STOP_M are drawn in STOP_M,
- *  so a held car (s = length) sits at the stop line and a queue does not overlap. */
-export function visualS(length: number, s: number): number {
-  void length;
+export function clearances(links: readonly LinkGeom[], linkFrom: ArrayLike<number>, linkTo: ArrayLike<number>): Clearances {
+  void links;
+  void linkFrom;
+  void linkTo;
+  throw new Error('presentation: not implemented (motion-002 red)');
+}
+
+/** Along-link coordinate (m) of `l`'s visual stop line. */
+export function stopLine(l: LinkGeom, c: Clearances): number {
+  void l;
+  void c;
+  throw new Error('presentation: not implemented (motion-002 red)');
+}
+
+/** The visual coordinate of sim position `s` on `l`: both end zones drawn in half their length, so a held car
+ *  (s = length) sits at the stop line, an entering car (s = 0) at the entry point, and a queue does not overlap. */
+export function visualS(l: LinkGeom, c: Clearances, s: number): number {
+  void l;
+  void c;
   void s;
   throw new Error('presentation: not implemented (motion-002 red)');
 }
@@ -112,9 +127,10 @@ export class Presenter {
   }
 }
 
-/** The visual rule: a car at `s` on `link`, moving onto `next` (or NO_NEXT: not moving on). */
-export function visualPose(links: readonly LinkGeom[], link: number, s: number, lane: number, next: number): DrawPose {
+/** The visual rule: a car at visual coordinate `s` on `link`, moving onto `next` (or NO_NEXT: not moving on). */
+export function visualPose(links: readonly LinkGeom[], c: Clearances, link: number, s: number, lane: number, next: number): DrawPose {
   void links;
+  void c;
   void link;
   void s;
   void lane;
