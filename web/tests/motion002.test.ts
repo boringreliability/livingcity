@@ -53,8 +53,8 @@ function host() {
     });
   const posted: FromWorker[] = [];
   const h = createSimHost({
-    createSim: (d, b) => {
-      const s = Sim.three_bridges(d, b);
+    createSim: (d, b, city) => {
+      const s = city === 'river_city' ? Sim.river_city(d, b) : Sim.three_bridges(d, b);
       sims.push(s);
       return wrap(s);
     },
@@ -74,19 +74,22 @@ function host() {
   return { h, send, frames, iterate, ready, sims };
 }
 
-let NET: { links: LinkGeom[]; from: Uint32Array; to: Uint32Array } | null = null;
-function network() {
-  if (NET) return NET;
+type City = 'three_bridges' | 'river_city';
+const NETS = new Map<City, { links: LinkGeom[]; from: Uint32Array; to: Uint32Array }>();
+function network(city: City = 'three_bridges') {
+  const cached = NETS.get(city);
+  if (cached) return cached;
   const w = host();
-  w.send({ type: 'init', demandSeed: 17, behaviorSeed: 23 });
+  w.send({ type: 'init', demandSeed: 17, behaviorSeed: 23, city });
   const r = w.ready();
-  NET = { links: buildRoadGeometry(r.network).links, from: Uint32Array.from(r.network.linkFrom), to: Uint32Array.from(r.network.linkTo) };
-  return NET;
+  const net = { links: buildRoadGeometry(r.network).links, from: Uint32Array.from(r.network.linkFrom), to: Uint32Array.from(r.network.linkTo) };
+  NETS.set(city, net);
+  return net;
 }
 
 /** Junction pairs a → b (b leaves a's end node, not a's reverse). */
-function junctionPairs(minLen = 0): [number, number][] {
-  const { links, from, to } = network();
+function junctionPairs(minLen = 0, city: City = 'three_bridges'): [number, number][] {
+  const { links, from, to } = network(city);
   const out: [number, number][] = [];
   for (let a = 0; a < links.length; a++)
     for (let b = 0; b < links.length; b++)
@@ -206,6 +209,7 @@ describe('motion-002', () => {
     let r = epochAfter({ type: 'seek', tick: at });
     expect(r.after.epoch, 'seek').not.toBe(r.before.epoch);
     expect(r.after.tripIds!.length).toBe(r.after.count);
+    for (let i = 0; i < r.after.count; i++) expect(w.sims[0]!.trip_at_record(r.after.tick, i), `after a seek, record ${i}`).toBe(r.after.tripIds![i]);
     r = epochAfter({ type: 'branch', fromTick: at - 20, then: [] });
     expect(r.after.scenario).toBe(1);
     expect(r.after.epoch === r.before.epoch && r.after.scenario === r.before.scenario, 'branch').toBe(false);
@@ -257,6 +261,42 @@ describe('motion-002', () => {
     expect(n).toBeGreaterThan(100);
   });
 
+  test('2c interpolation_is_linear_in_the_visual_coordinate', () => {
+    const net = network();
+    const [a] = pick().straight;
+    const A = net.links[a]!;
+    for (const [mult, msPerTick] of [
+      [1, 500],
+      [20, 25],
+    ] as const) {
+      const p = new Presenter(net.links, net.from, net.to);
+      const s1 = [10, 17, 24, 31];
+      const s2 = [A.length - 10, A.length - 6, A.length - 2, A.length];
+      const sched = s1.map((x, k) => ({
+        at: k * msPerTick,
+        c: run(mult),
+        f: frame(600 + k, [
+          { trip: 1, link: a, s: x, v: 14 },
+          { trip: 2, link: a, s: s2[k]!, v: 8 },
+        ]),
+      }));
+      let n = 0;
+      drive(p, sched, 4 * msPerTick, msPerTick / 50, (_now, P) => {
+        const k = Math.floor(P / DT + 1e-9) - 600;
+        if (k < 0 || k >= 3) return;
+        const alpha = P / DT - (600 + k);
+        const v1 = p.vehicle(1)!;
+        const v2 = p.vehicle(2)!;
+        const e1 = vS(A, s1[k]!) + alpha * (vS(A, s1[k + 1]!) - vS(A, s1[k]!));
+        const e2 = vS(A, s2[k]!) + alpha * (vS(A, s2[k + 1]!) - vS(A, s2[k]!));
+        expect(v1.s, `${mult}×: linear between frames (trip 1, α ${alpha.toFixed(3)})`).toBeCloseTo(e1, 6);
+        expect(v2.s, `${mult}×: linear in the compressed zone (trip 2)`).toBeCloseTo(e2, 6);
+        n++;
+      });
+      expect(n, `${mult}×: samples between frames`).toBeGreaterThan(40);
+    }
+  });
+
   test('2b release_from_a_held_state_is_continuous', () => {
     const net = network();
     const pr = pick();
@@ -288,34 +328,49 @@ describe('motion-002', () => {
   });
 
   test('3 junction_transition_is_continuous', () => {
-    const net = network();
     const pr = pick();
     expect(pr.turnAngle, 'the sharpest turn is a real turn').toBeGreaterThanOrEqual(85);
-    for (const [a, b] of [pr.straight, pr.turn]) {
+    const cases: [City, number, number][] = [];
+    for (const [x, y] of junctionPairs(20)) cases.push(['three_bridges', x, y]);
+    junctionPairs(20, 'river_city').forEach(([x, y], i) => {
+      if (i % 8 === 0) cases.push(['river_city', x, y]);
+    });
+    expect(cases.length, 'many junction pairs').toBeGreaterThanOrEqual(120);
+    let turns = 0;
+    for (const [city, a, b] of cases) {
+      const net = network(city);
       const A = net.links[a]!;
       const B = net.links[b]!;
+      const [ax, ay] = dirOf(A);
+      const [bx, by] = dirOf(B);
+      if (ax * bx + ay * by < Math.cos((85 * Math.PI) / 180)) turns++;
       const p = new Presenter(net.links, net.from, net.to);
       const sched = [
+        { at: -500, c: run(1), f: frame(199, [{ trip: 5, link: a, s: A.length - 19, v: 8 }]) }, // priming
         { at: 0, c: run(1), f: frame(200, [{ trip: 5, link: a, s: A.length - 12, v: 8 }]) },
         { at: 500, c: run(1), f: frame(201, [{ trip: 5, link: b, s: 3, v: 8 }]) },
         { at: 1000, c: run(1), f: frame(202, [{ trip: 5, link: b, s: 7, v: 8 }]) },
       ];
-      const poses: { x: number; y: number; hx: number; hy: number }[] = [];
+      const poses: { x: number; y: number; hx: number; hy: number; P: number }[] = [];
       drive(p, sched, 1800, 2, (_n, P) => {
-        if (P >= 200 * DT - 1e-9 && P <= 201 * DT + 1e-9) poses.push(p.vehicle(5)!.pose);
+        if (P >= 200 * DT - 1e-9 && P <= 201 * DT + 1e-9) poses.push({ ...p.vehicle(5)!.pose, P });
       });
-      expect(poses.length).toBeGreaterThan(20);
-      expect(near(poses[0]!, vehiclePosition(A, vS(A, A.length - 12), 0), 0.05), 'starts at A').toBe(true);
-      expect(near(poses.at(-1)!, vehiclePosition(B, vS(B, 3), 0), 0.05), 'ends at B').toBe(true);
+      const tag = `${city} ${a}→${b}`;
+      expect(poses.length, tag).toBeGreaterThan(20);
+      expect(near(poses[0]!, vehiclePosition(A, vS(A, A.length - 12), 0), 0.05), `${tag}: starts at A`).toBe(true);
+      expect(near(poses.at(-1)!, vehiclePosition(B, vS(B, 3), 0), 0.05), `${tag}: ends at B`).toBe(true);
       let len = 0;
       for (let i = 1; i < poses.length; i++) len += Math.hypot(poses[i]!.x - poses[i - 1]!.x, poses[i]!.y - poses[i - 1]!.y);
       for (let i = 1; i < poses.length; i++) {
         const step = Math.hypot(poses[i]!.x - poses[i - 1]!.x, poses[i]!.y - poses[i - 1]!.y);
-        expect(step, 'no jump').toBeLessThanOrEqual((1.5 * len) / (poses.length - 1) + 1e-3);
-        expect(poses[i]!.hx * poses[i - 1]!.hx + poses[i]!.hy * poses[i - 1]!.hy, 'heading turns gradually').toBeGreaterThanOrEqual(Math.cos(Math.PI / 6) - 1e-9);
+        const share = (poses[i]!.P - poses[i - 1]!.P) / DT;
+        expect(step, `${tag}: no jump`).toBeLessThanOrEqual(1.5 * share * len + 1e-3);
+        expect(poses[i]!.hx * poses[i - 1]!.hx + poses[i]!.hy * poses[i - 1]!.hy, `${tag}: heading turns gradually`).toBeGreaterThanOrEqual(Math.cos(Math.PI / 6) - 1e-9);
       }
     }
+    expect(turns, 'turns among the cases').toBeGreaterThan(20);
     // a link that does not leave A's end node: placed directly, no fabricated path
+    const net = network();
     const [a] = pr.straight;
     const A = net.links[a]!;
     const C = net.links[pr.unrelated]!;
@@ -340,43 +395,52 @@ describe('motion-002', () => {
         if (v) expect(onLane(A, v.pose.x, v.pose.y) || onLane(C, v.pose.x, v.pose.y), 'only on A or on the new link').toBe(true);
       },
     );
-  });
+  }, 120_000);
 
   test('3b visual_rule_sweep', () => {
-    const { links } = network();
-    const pairs = junctionPairs(0);
-    expect(pairs.length, 'every junction pair of the network').toBeGreaterThan(100);
-    const seenA = new Set<number>();
-    for (const [a, b] of pairs) {
-      const A = links[a]!;
-      const B = links[b]!;
-      for (let lane = 0; lane < A.lanes; lane++) {
-        if (!seenA.has(a * 16 + lane)) {
-          seenA.add(a * 16 + lane);
-          for (let s = 0; s <= A.length + 1e-9; s += 0.5) {
-            const pz = visualPose(links, a, s, lane, NO_NEXT);
-            const [x, y] = vehiclePosition(A, Math.min(s, stopAt(A)), lane);
-            expect(Math.hypot(pz.x - x, pz.y - y), `no next: straight, clamped at the stop line (link ${a}, s ${s})`).toBeLessThan(1e-6);
+    let cases = 0;
+    for (const city of ['river_city', 'three_bridges'] as const) {
+      const { links } = network(city);
+      const pairs = junctionPairs(0, city);
+      expect(pairs.length, `${city}: every junction pair`).toBeGreaterThan(100);
+      const seenA = new Set<number>();
+      for (const [a, b] of pairs) {
+        const A = links[a]!;
+        const B = links[b]!;
+        const [ax, ay] = dirOf(A);
+        for (let lane = 0; lane < A.lanes; lane++) {
+          cases++;
+          if (!seenA.has(a * 16 + lane)) {
+            seenA.add(a * 16 + lane);
+            for (let s = 0; s <= A.length + 1e-9; s += 0.5) {
+              const pz = visualPose(links, a, s, lane, NO_NEXT);
+              const [x, y] = vehiclePosition(A, Math.min(s, stopAt(A)), lane);
+              expect(Math.hypot(pz.x - x, pz.y - y), `${city}: no next: straight, clamped at the stop line (link ${a}, s ${s})`).toBeLessThan(1e-6);
+              expect(pz.hx * ax + pz.hy * ay, 'no next: A’s heading').toBeGreaterThanOrEqual(1 - 1e-9);
+            }
           }
-        }
-        let prev = visualPose(links, a, 0, lane, b);
-        for (let s = 0.1; s <= A.length + 1e-9; s += 0.1) {
-          const pz = visualPose(links, a, s, lane, b);
-          expect(Math.hypot(pz.x - prev.x, pz.y - prev.y), `curve continuous (${a}→${b}, lane ${lane}, s ${s.toFixed(1)})`).toBeLessThanOrEqual(0.75);
-          if (s <= stopAt(A) - 1e-9) {
-            const [x, y] = vehiclePosition(A, s, lane);
-            expect(Math.hypot(pz.x - x, pz.y - y), 'straight before the stop line').toBeLessThan(1e-6);
+          let prev = visualPose(links, a, 0, lane, b);
+          for (let s = 0.1; s <= A.length + 1e-9; s += 0.1) {
+            const pz = visualPose(links, a, s, lane, b);
+            const tag = `${city} ${a}→${b}, lane ${lane}, s ${s.toFixed(1)}`;
+            expect(Math.hypot(pz.x - prev.x, pz.y - prev.y), `${tag}: curve continuous`).toBeLessThanOrEqual(0.75);
+            expect(pz.hx * prev.hx + pz.hy * prev.hy, `${tag}: heading turns ≤ 10° per 0.1 m`).toBeGreaterThanOrEqual(Math.cos((10 * Math.PI) / 180) - 1e-9);
+            if (s <= stopAt(A) - 1e-9) {
+              const [x, y] = vehiclePosition(A, s, lane);
+              expect(Math.hypot(pz.x - x, pz.y - y), `${tag}: straight before the stop line`).toBeLessThan(1e-6);
+            }
+            prev = pz;
           }
-          prev = pz;
+          const end = visualPose(links, a, A.length, lane, b);
+          const [ex, ey] = vehiclePosition(B, 0, Math.min(lane, B.lanes - 1));
+          expect(Math.hypot(end.x - ex, end.y - ey), `${city}: ends at B's start (${a}→${b}, lane ${lane})`).toBeLessThan(1e-6);
+          const [bx, by] = dirOf(B);
+          expect(end.hx * bx + end.hy * by, 'with B’s heading').toBeGreaterThanOrEqual(Math.cos(1e-3));
         }
-        const end = visualPose(links, a, A.length, lane, b);
-        const [ex, ey] = vehiclePosition(B, 0, Math.min(lane, B.lanes - 1));
-        expect(Math.hypot(end.x - ex, end.y - ey), `ends at B's start (${a}→${b}, lane ${lane})`).toBeLessThan(1e-6);
-        const [bx, by] = dirOf(B);
-        expect(end.hx * bx + end.hy * by, 'with B’s heading').toBeGreaterThanOrEqual(Math.cos(1e-3));
       }
     }
-  }, 120_000);
+    expect(cases, 'pair × lane cases (both networks)').toBeGreaterThan(1300);
+  }, 300_000);
 
   test('4 forward_playback_is_smooth', () => {
     // a real run with speed changes 20× → 5× → 60× → 1×
@@ -461,31 +525,47 @@ describe('motion-002', () => {
       t0 = n;
     });
     expect(caughtUp - 1600, 'caught up within 3 s').toBeLessThanOrEqual(3000);
-  });
+  }, 120_000);
 
   test('4b pause_and_resume_have_no_jump', () => {
     const net = network();
     const [a] = pick().straight;
-    const p = new Presenter(net.links, net.from, net.to);
-    const sched: { at: number; f: PresentFrame; c: PresentClockInput }[] = [];
-    for (let k = 0; k < 6; k++) sched.push({ at: k * 500, c: run(1), f: frame(700 + k, [{ trip: 11, link: a, s: 2 + k, v: 2 }]) });
-    for (let k = 0; k < 4; k++) sched.push({ at: 3000 + k * 16, c: PAUSED(1), f: frame(705, [{ trip: 11, link: a, s: 7, v: 2 }]) });
-    for (let k = 0; k < 6; k++) sched.push({ at: 6000 + k * 500, c: run(1), f: frame(706 + k, [{ trip: 11, link: a, s: 8 + k, v: 2 }]) });
-    let last: [number, number] | null = null;
-    let settledAt = Infinity;
-    drive(p, sched, 9000, 4, (n, P) => {
-      if (last) {
-        expect(P, 'monotone').toBeGreaterThanOrEqual(last[0] - 1e-9);
-        expect(P - last[0], 'no jump').toBeLessThanOrEqual(1.5 * (1 / 1000) * (n - last[1]) + 1e-9);
+    for (const [mult, msPerTick] of [
+      [1, 500],
+      [20, 25],
+    ] as const)
+      for (const quiet of [false, true]) {
+        const tag = `${mult}×${quiet ? ', quiet pause' : ''}`;
+        const p = new Presenter(net.links, net.from, net.to);
+        const sched: { at: number; f: PresentFrame; c: PresentClockInput }[] = [];
+        const T = (k: number) => k * msPerTick;
+        for (let k = 0; k < 6; k++) sched.push({ at: T(k), c: run(mult), f: frame(700 + k, [{ trip: 11, link: a, s: 2 + k * 0.5, v: 1 }]) });
+        // the pause lands mid-interval (P still trails the newest frame, tick 705)
+        const pauseAt = T(5) + 0.4 * msPerTick;
+        const paused = quiet ? 1 : 4;
+        for (let k = 0; k < paused; k++) sched.push({ at: pauseAt + k * 16, c: PAUSED(mult), f: frame(705, [{ trip: 11, link: a, s: 4.5, v: 1 }]) });
+        const resumeAt = pauseAt + 3000;
+        for (let k = 0; k < 6; k++) sched.push({ at: resumeAt + T(k), c: run(mult), f: frame(706 + k, [{ trip: 11, link: a, s: 5 + k * 0.5, v: 1 }]) });
+        let last: [number, number] | null = null;
+        let settledAt = Infinity;
+        let glided = false;
+        const rate = mult / 1000;
+        drive(p, sched, resumeAt + T(6), 2, (n, P) => {
+          if (last) {
+            expect(P, `${tag}: monotone`).toBeGreaterThanOrEqual(last[0] - 1e-9);
+            expect(P - last[0], `${tag}: no jump`).toBeLessThanOrEqual(1.5 * rate * (n - last[1]) + 1e-9);
+          }
+          if (n >= pauseAt && n < resumeAt) {
+            expect(P, `${tag}: paused: never past the newest frame`).toBeLessThanOrEqual(705 * DT + 1e-9);
+            if (705 * DT - P > 0.1) glided = true;
+            if (Math.abs(P - 705 * DT) < 1e-9 && settledAt === Infinity) settledAt = n;
+            if (settledAt !== Infinity) expect(P, `${tag}: paused: stays on the newest frame`).toBeCloseTo(705 * DT, 9);
+          }
+          last = [P, n];
+        });
+        expect(glided, `${tag}: glides to the newest frame after the pause (not a snap)`).toBe(true);
+        expect(settledAt, `${tag}: settles on the newest frame while paused`).toBeLessThan(resumeAt);
       }
-      if (n >= 3000 && n < 6000) {
-        expect(P, 'paused: never past the newest frame').toBeLessThanOrEqual(705 * DT + 1e-9);
-        if (Math.abs(P - 705 * DT) < 1e-9 && settledAt === Infinity) settledAt = n;
-        if (settledAt !== Infinity) expect(P, 'paused: stays on the newest frame').toBeCloseTo(705 * DT, 9);
-      }
-      last = [P, n];
-    });
-    expect(settledAt, 'settles on the newest frame while paused').toBeLessThan(6000);
   });
 
   test('5 identity_not_record_index', () => {
@@ -541,17 +621,24 @@ describe('motion-002', () => {
     const pb = new Presenter(net.links, net.from, net.to, clock);
     let k = 0;
     let compared = 0;
+    let newestA = -1;
+    let newestB = -1;
     for (let now = 0; now < 4000; now += 4) {
       if (now >= k * 25) {
         pa.push(frame(900 + k, [{ trip: 1, link: a, s: 1 + k * 0.3, v: 0.6 }], { scenario: 0, compare: true }), now, run(20));
+        newestA = 900 + k;
         k++;
       }
       // B's frame of the same tick arrives 3 ms later
-      if (now >= (k - 1) * 25 + 3 && now < (k - 1) * 25 + 7) pb.push(frame(900 + k - 1, [{ trip: 2, link: a, s: 2 + (k - 1) * 0.3, v: 0.6 }], { scenario: 1, compare: true }), now, run(20));
+      if (now >= (k - 1) * 25 + 3 && now < (k - 1) * 25 + 7) {
+        pb.push(frame(900 + k - 1, [{ trip: 2, link: a, s: 2 + (k - 1) * 0.3, v: 0.6 }], { scenario: 1, compare: true }), now, run(20));
+        newestB = 900 + k - 1;
+      }
       if (now < 100) continue;
       const Pa = pa.advance(now);
       const Pb = pb.advance(now);
       expect(Pa, `one presentation time at ${now} ms`).toBe(Pb);
+      expect(Pa, 'never ahead of either side’s newest frame').toBeLessThanOrEqual(Math.min(newestA, newestB) * DT + 1e-9);
       compared++;
     }
     expect(compared).toBeGreaterThan(500);
