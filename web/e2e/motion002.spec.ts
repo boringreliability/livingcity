@@ -56,7 +56,8 @@ async function wheelZoom(page: Page, at: [number, number], ok: (z: number) => bo
   await page.mouse.move(3, 3);
   await sleep(300);
 }
-async function lum(page: Page, c: [number, number]): Promise<number> {
+/** Mean RGB of the 3×3 pixels around page point `c` (Red r5 F1: a light road under a car can match its luminance). */
+async function rgb(page: Page, c: [number, number]): Promise<[number, number, number]> {
   const buf = await page.screenshot({ clip: { x: Math.round(c[0] - 1.5), y: Math.round(c[1] - 1.5), width: 3, height: 3 }, animations: 'disabled' });
   return page.evaluate(async (b64) => {
     const img = new Image();
@@ -66,11 +67,13 @@ async function lum(page: Page, c: [number, number]): Promise<number> {
     const g = cv.getContext('2d')!;
     g.drawImage(img, 0, 0);
     const d = g.getImageData(0, 0, img.width, img.height).data;
-    let s = 0;
-    for (let i = 0; i < d.length; i += 4) s += 0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!;
-    return s / (d.length / 4);
+    const m: [number, number, number] = [0, 0, 0];
+    for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) m[k] += d[i + k]! / (d.length / 4);
+    return m;
   }, buf.toString('base64'));
 }
+/** The largest per-channel difference between two mean colours. */
+const colourDiff = (a: [number, number, number], b: [number, number, number]) => Math.max(...a.map((x, k) => Math.abs(x - b[k]!)));
 type Sample = 'presentation' | 'lag' | 'tracked' | 'lagCheck';
 /** Samples one fixed reading of the hook on every animation frame for `ms`. */
 function sampleFrames<T>(page: Page, ms: number, what: Sample): Promise<T[]> {
@@ -166,11 +169,11 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
   const all = () =>
     page.evaluate(() => {
       const h = window.__livingcity as unknown as Hook;
-      const out: { f: { link: number; s: number; queued: boolean; lane?: number; next?: number }; d: VehicleDraw }[] = [];
+      const out: { i: number; f: { link: number; s: number; queued: boolean; lane?: number; next?: number }; d: VehicleDraw }[] = [];
       for (let i = 0; i < h.snapshot().frameRecords; i++) {
         const f = h.frameVehicle(i);
         const d = h.vehicleDraw(i);
-        if (f && d) out.push({ f, d });
+        if (f && d) out.push({ i, f, d });
       }
       return out;
     });
@@ -186,9 +189,12 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
   }
   // held head cars (frame s = length, nobody ahead on the link) with a single-lane next link: the old rule
   // drew them exactly at the next link's start (that link's centreline start, one lane). A follower sits
-  // behind the head car on its own link, so it cannot cover that point. (Gold amendment: at ?demand=3 only
+  // behind the head car on its own link, so it cannot cover that old point; it can cover the head car's
+  // presented point under a wrong rule, so ≥ 2 visited cars must have no same-lane car whose frame s lies
+  // within ±2.6 m of their ŝ (Red r5 F2), and those are visited first. (Gold amendment: at ?demand=3 only
   // 2–8 such cars without a follower within 9.5 m exist city-wide, so the cars are visited one by one.)
-  const heads = held.filter((c) => c.f.next !== undefined && c.f.next !== 0xffff);
+  const clearOf = (c: (typeof cars)[number]) => !cars.some((o) => o !== c && o.f.link === c.f.link && o.f.lane === c.f.lane && Math.abs(o.f.s - c.d.s) <= 2.6);
+  const heads = held.filter((c) => c.f.next !== undefined && c.f.next !== 0xffff).sort((a, b) => Number(clearOf(b)) - Number(clearOf(a)) || a.i - b.i);
   const single: typeof heads = [];
   for (const c of heads) {
     const lanes = await page.evaluate((next) => (window.__livingcity as unknown as Hook).linkInfo(next)?.lanes ?? 0, c.f.next!);
@@ -199,20 +205,8 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
   const centre: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
   await wheelZoom(page, centre, (z) => z >= 4);
   const inView = (p: [number, number] | null) => !!p && p[0] > box.x + 30 && p[1] > box.y + 30 && p[0] < box.x + box.width - 30 && p[1] < box.y + box.height - 30;
-  /** The record of the car of frame position (link, s, lane), as presented now (records do not change while paused). */
-  const drawnOf = (c: (typeof heads)[number]) =>
-    page.evaluate(
-      ([link, lane]) => {
-        const h = window.__livingcity as unknown as Hook;
-        for (let i = 0; i < h.snapshot().frameRecords; i++) {
-          const f = h.frameVehicle(i);
-          const d = h.vehicleDraw(i);
-          if (f && d && f.link === link && f.lane === lane && f.queued && f.s >= d.length - 1e-3) return d;
-        }
-        return null;
-      },
-      [c.f.link, c.f.lane ?? 0] as const,
-    );
+  /** The car's record as presented now (records do not change while paused; Red r5 m1). */
+  const drawnOf = (c: (typeof heads)[number]) => page.evaluate((i) => (window.__livingcity as unknown as Hook).vehicleDraw(i), c.i);
   /** Pan (map drags from the canvas centre, each within the canvas) until `p` is near the centre. */
   const panTo = async (c: (typeof heads)[number]) => {
     for (let k = 0; k < 40; k++) {
@@ -231,7 +225,7 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
     }
     return null;
   };
-  const pts: { page: [number, number]; old: [number, number]; emptyOld: boolean }[] = [];
+  const pts: { page: [number, number]; old: [number, number]; emptyOld: boolean; clear: boolean }[] = [];
   for (const c of single.slice(0, 16)) {
     if (pts.length >= 8) break;
     const d = await panTo(c);
@@ -239,18 +233,19 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
     const old = await page.evaluate((next) => (window.__livingcity as unknown as Hook).linkScreenPoint(next, 0), c.f.next!);
     if (!old || !inView(old)) continue;
     // the old point: the next link's start; single-lane next links only, so its centreline is the lane
-    const shown = await lum(page, d.page);
-    const oldShown = await lum(page, old);
+    const shown = await rgb(page, d.page);
+    const oldShown = await rgb(page, old);
     await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: true }));
     await sleep(300);
-    const hidden = await lum(page, d.page);
-    const oldHidden = await lum(page, old);
+    const hidden = await rgb(page, d.page);
+    const oldHidden = await rgb(page, old);
     await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: false }));
     await sleep(300);
-    expect(Math.abs(shown - hidden), `held head car ${pts.length} drawn at its presented point`).toBeGreaterThanOrEqual(30);
-    pts.push({ page: d.page, old, emptyOld: Math.abs(oldShown - oldHidden) < 30 });
+    expect(colourDiff(shown, hidden), `held head car ${pts.length} drawn at its presented point`).toBeGreaterThanOrEqual(30);
+    pts.push({ page: d.page, old, emptyOld: colourDiff(oldShown, oldHidden) < 30, clear: clearOf(c) });
   }
   expect(pts.length, 'held head cars visited with their old points in view').toBeGreaterThanOrEqual(6);
+  expect(pts.filter((p) => p.clear).length, 'visited cars with no other car at their presented point').toBeGreaterThanOrEqual(2);
   const emptyOld = pts.filter((p) => p.emptyOld).length;
   expect(emptyOld, 'the old points (the next link’s start, inside the junction) are mostly empty').toBeGreaterThanOrEqual(Math.ceil(pts.length / 2));
 
