@@ -6,7 +6,7 @@ epic: "motion"
 status: "red"
 dependencies: ["motion-001"]
 layer: "fullstack"
-estimated_tests: 10
+estimated_tests: 16
 created: "2026-10-12"
 completed: null
 ---
@@ -14,122 +14,148 @@ completed: null
 
 ## Scope
 This ward is contract **M2** of epic `motion`: cars that are convincing to watch. It resolves:
-- **i1:** a car stops at the end of the curve, then jumps;
-- **i2:** held cars are drawn inside the junction;
-- **i4:** backward steps during steady playback;
-- the c2/c3 remainder: discontinuities after a speed change or a delayed frame;
-- the motion half of the user's task §1.
+- **i1:** a car stops at the curve end, then jumps.
+- **i2:** held cars are drawn inside the junction.
+- **i4:** backward steps during steady playback.
+- **The c2/c3 remainder:** discontinuities after a speed change or a delayed frame.
+- **The motion half of the user's task §1.**
 
-The facts are in `.wdd/memory/investigation-2026-10-12.md` § Motion. **This ward does not change the sim.** Held cars already stay on their own link at `s = length`, so i2 is a render choice.
+The facts are in `.wdd/memory/investigation-2026-10-12.md` § Motion. **There is no sim change.** Held cars already stay on their own link at `s = length`, so i2 is a render choice.
 
 ## The model
-- **Authoritative state** is the frame records: link, s, v, lane and flags, plus a new parallel `tripIds: Uint32Array`.
-- **Presentation time `P`** is a sim time that never runs ahead of the newest authoritative frame.
-  - It trails it by a small explicit delay: one tick, or the sim advance between two new-tick frames if that is larger.
-  - It advances monotonically at the requested speed. It catches up smoothly if it falls further behind, and it settles on the newest frame when paused.
-  - A and B share one `P` while comparing.
-- **Interpolation.** Each car is drawn by interpolating between the two retained frames around `P`, matched by trip id, never by record index.
-  - A trip that is only in the newer frame appears at its own position.
-  - A trip that is only in the older frame disappears.
-- **Visual path.**
-  - On a link, a car is drawn along its lane up to that link's visual stop line at `length − STOP_M` (`STOP_M` = min(6 m, length / 2)). A car whose interpolated `s` lies beyond the stop line on the *same* link (held, or approaching) is drawn at the stop line.
-  - The junction curve (from A's stop line to the next link's start, as today) is used **only** while a car moves between two frames from link A to the link it is on in the newer frame. Progress along A, then the curve, then the new link follows sim distance.
-  - If the newer link is not entered from A's end node, the car moved more than one link in one frame (possible at high speed). It is then placed directly, without a fabricated path.
-- **History resets.** History is cleared, with no interpolation across the change, when the frame's `scenario`, `world` or compare state changes, or when its tick goes backwards or jumps by a seek. `P` then restarts at the new frame.
-- **Not extrapolated.** `P` never exceeds the newest frame. Nothing is drawn beyond an authoritative position, so nothing is drawn through a closure or into a stationary queue.
+**Authoritative state.** The frame records (link, s, v, lane, flags) plus two new fields:
+- `tripIds: Uint32Array`, one per record;
+- `epoch: number`, a timeline epoch per side. The host increments it on init, seek, branch, view switch, discard and compare on or off: every jump that breaks continuity.
+
+**Presentation time `P`.** A sim time per side that never runs ahead of the newest authoritative frame. It trails that frame by a small, explicit delay `D` = max(DT, the sim advance between the last two new-tick frames), capped at 4·DT.
+- **Rate.** `P` advances at `rate`: the requested speed, or the achieved rate when behind, never faster than requested.
+- **Catch-up.** If it lags by more than 2·D, it catches up at up to 1.5 × rate.
+- **No jumps.** It never jumps: every step is ≤ 1.5 · rate · Δwall, except at a history reset.
+- **Pause.** While paused it glides to the newest frame and stays there. On resume it continues from there.
+- **Sharing.** One `PresentationClock` can be shared by the A and B presenters, so both sides show the same `P`.
+
+**Interpolation.** Each car is drawn between the two retained frames around `P`, matched by trip id and never by record index.
+- A trip found only in the newer frame appears at its own position.
+- A trip found only in the older frame is not drawn.
+
+**Visual coordinate on a link.** The visual coordinate `ŝ = visualS(length, s)` compresses the last 2·STOP_M of a link into STOP_M (`STOP_M` = min(6 m, length / 2)):
+- `ŝ = s` for `s ≤ length − 2·STOP_M`;
+- otherwise `ŝ = length − 2·STOP_M + (s − (length − 2·STOP_M)) / 2`.
+
+A held car at `s = length` therefore sits exactly at the stop line `length − STOP_M`. A queue keeps ≥ 3.75 m between drawn cars up to the stop line, so cars do not overlap.
+
+**Visual rule `visualPose(links, link, ŝ, lane, next)`, which is also the hook's `drawAt`:**
+- **No next link** (`next = NO_NEXT`): the straight lane placement at min(ŝ, stop line).
+- **Moving onto `next`:** the straight placement up to the stop line, then the junction curve from the stop line to `next`'s start, a quadratic Bézier as today with B = STOP_M. It arrives in lane min(lane, next.lanes − 1) with `next`'s heading.
+
+**Transitions.** A car is in a transition only while it is on link A in the older frame and on link B in the newer one, where B starts at A's end node.
+- Its path runs from its pose at `visualS(A, s_old)` along A, through the curve, to `visualS(B, s_new)` on B.
+- It is traversed at a uniform rate along the drawn path, by α.
+- Its presented `(link, s, next)` is `(A, ŝ, B)` on A or the curve, and `(B, ŝ, NO_NEXT)` on B.
+
+If B does not start at A's end node, the car moved more than one link in one frame. It is then placed directly at its new position, with no fabricated path.
+
+**History resets.** History is cleared, with no interpolation across the change, when the frame's `scenario`, `world`, `epoch` or compare state changes, or when its tick decreases. `P` restarts at the new frame.
+
+**No extrapolation.** `P` never exceeds the newest frame. No car is drawn beyond its newest authoritative position, so none drives through a closure or into a stationary queue.
 
 ## Inputs
-- motion-001 (quiet pause, `world` generations, `framesReceived`).
-- `crates/sim-wasm/src/lib.rs` `encode_frame`, which already builds the per-record trip table.
-- `web/src/sim/{host,protocol,frame}.ts` (FrameMessage).
-- `web/src/render/motion.ts` (`vehicleDrawPosition`, `extrapolate`, `ExtrapolationClock`).
-- `web/src/render/renderer.ts` (`VEH_VS`, `setFrame`, `trackedDraw` / `trackedWorldPosition`, the ring and the route).
+- motion-001: quiet pause, `world`, `framesReceived`.
+- `crates/sim-wasm/src/lib.rs` `encode_frame`: its trip table and `trip_at_record`.
+- `web/src/sim/{host,protocol,frame}.ts`.
+- `web/src/render/motion.ts`: `vehicleDrawPosition`, `extrapolate`, `ExtrapolationClock`.
+- `web/src/render/renderer.ts`: `VEH_VS`, `setFrame`, the tracked ring and route.
 - `web/src/render/picking.ts`.
 - `web/src/App.tsx`:
-  - the render loop with its rate, Follow and `drawnCams`;
+  - the render loop: rate, Follow, `drawnCams`;
   - `applyFrame` / `applyFrameB`;
   - the hooks `vehicleScreenCenter`, `vehicleDraw`, `trackedDraw`, `drawAt`, `trackedScreenCenter`, `pickAt` and `frameVehicle`.
 
 ## Outputs
-- **Trip ids in the frame.** A frame carries `tripIds: Uint32Array(count)` in record order: a copy from wasm via `Sim.trip_ids()`, the same trip table `encode_frame` already builds. It adds 4 B per vehicle and leaves the 16 B record untouched.
-- **A pure presentation module, `web/src/render/presentation.ts`, containing:**
-  - the presentation clock (`P`, delay, catch-up, pause, resets);
-  - the frame history (the last ≥ 2 frames per side, keyed by trip id);
-  - `presentVehicle(...)`, which returns link, s, lane, the next link during a transition, and the pose;
-  - the visual path rule (stop line, transition curve, direct placement on a multi-link skip).
+- **Frame fields.**
+  - `tripIds: Uint32Array(count)` in record order: a copy from wasm via a new `Sim.trip_ids()`, the same table `trip_at_record` reads. It adds 4 B per vehicle, and the 16 B record is unchanged.
+  - `epoch: number`, the per-side timeline epoch described above.
+- **`web/src/render/presentation.ts`**, a pure module. It is the single CPU rule and exposes:
+  - `STOP_M`, `stopLine` and `visualS`;
+  - `visualPose`;
+  - `PresentationClock`;
+  - `Presenter`: `push`, `advance`, `lagS`, `vehicles` and `vehicle`.
 
-  It is the single CPU rule.
-- **Renderer.** The GPU draws exactly what the CPU rule says.
-  - The vertex shader gets the matched older and newer states per instance plus a shared α (or the CPU uploads presented poses).
-  - A and B renderers use the same `P` while comparing.
-  - `ExtrapolationClock`, `extrapolate` and `vehicleDrawPosition` are no longer used by the renderer, but stay exported: the frozen `motion.test.ts` imports them, and its kept test 2 must still load.
-- **Same position everywhere.** Picking, Follow, the tracked ring and route, and the hooks `vehicleScreenCenter`, `vehicleDraw`, `trackedDraw`, `drawAt` and `trackedScreenCenter` all use the presented position. Their signatures are kept; `drawAt` becomes the new visual rule for a car at `s` on `link`, moving onto `next`, or not moving on when `next` is NO_NEXT.
-- **Latency is reported.** The presentation delay (sim seconds behind the newest frame, and its wall-time equivalent) appears in Diagnostics and in `diagnostics().presentation` = `{ tickA, tickB (null outside compare), lagS, lagMs }`, where `tickA`/`tickB` are the presented ticks (`P / DT`) of each side.
-- **Hook.** `vehicleDraw(record)` gains `length` (the link's sim length); its `s` and `next` are the presented values.
-- **Docs.** `docs/architecture.md` describes the model. `docs/known-issues.md` marks i1, i2 and i4 resolved. The supersessions are logged.
+  `PresentFrame` carries `epoch`.
+- **Renderer.**
+  - The GPU draws exactly what the CPU rule says: per-instance older and newer states plus α, or the presented poses uploaded from the CPU.
+  - While comparing, the A and B renderers share one `PresentationClock`.
+  - `ExtrapolationClock`, `extrapolate` and `vehicleDrawPosition` are no longer used by the renderer, but stay exported, because the frozen `motion.test.ts` imports them and its kept test 2 must still load.
+- **Presented positions everywhere.** Picking, Follow, the tracked ring and route, and the hooks `vehicleScreenCenter`, `vehicleDraw`, `trackedDraw`, `drawAt` and `trackedScreenCenter` all use the presented position. Their signatures are kept.
+  - `drawAt(link, ŝ, lane, next)` = `visualPose`.
+  - `trackedDraw` and `vehicleDraw` report the presented `(link, ŝ, next)`.
+  - So `trackedDraw().page` equals `drawAt(...)` of the same values. The frozen `motion.spec` test 8 relies on this.
+  - `vehicleDraw(record)` gains `length`, the link's sim length.
+- **Latency.**
+  - `diagnostics().presentation` = `{ tickA, tickB (null outside compare), lagS, lagMs }`. `tickA` and `tickB` are the `P / DT` each side last drew with. `lagMs` = `lagS` / (current rate in sim s per ms), and is 0 while paused.
+  - The Diagnostics panel shows the lag.
+- **Docs.** `docs/architecture.md` describes the model. `docs/known-issues.md` marks i1, i2 and i4 resolved, and the supersessions are logged.
 
 ## Supersessions (authorized 2026-10-11; valid intent kept)
 | Frozen test | Pinned (unwanted) | Valid intent, now carried by |
 |---|---|---|
-| `web/tests/motion.test.ts` test 3 `draw_position_is_continuous_across_junctions` | (a) a car at `s = length` is drawn at the next link's start, so held cars appear inside junctions | (b) a smooth curve and (c) straight placement off the curve → tests 3 and 2 |
-| `web/tests/motion.test.ts` test 4 `extrapolation_stops_at_the_end_on_the_curve` | Extrapolation clamped at the link end, drawn at the next link's start (i1 + i2) | Never drive past an authoritative position → tests 4 and 2 |
-| `web/tests/motion.test.ts` test 5 `speed_change_never_moves_cars_back` | The `ExtrapolationClock` API | No backward step on a speed change → test 4 |
-| `web/tests/motion.test.ts` test 6 `stall_cannot_overshoot` | "> 0.5", i.e. extrapolation must happen | A bounded run-ahead: never ahead of the newest frame → tests 4 and 8 |
-| `web/e2e/motion.spec.ts` test 7 `gpu_draws_cars_where_the_cpu_says` | Held cars drawn on the curve (`vehicleDraw`, with the old rule) | The GPU draws where the CPU rule says → test 9 |
+| `web/tests/motion.test.ts` test 3 | (a) a car at `s = length` is drawn at the next link's start | Its sweep of every junction pair and lane: a smooth curve onto the next link, straight placement off it, and no-next placement → test 3b (a network-wide `visualPose` sweep) and tests 2, 3 and 2b |
+| `web/tests/motion.test.ts` test 4 | Extrapolation clamped at the link end and drawn at the next link's start (i1 + i2) | Never beyond an authoritative position → tests 4 and 2 |
+| `web/tests/motion.test.ts` test 5 | The `ExtrapolationClock` API | No backward step and no jump on a speed change → test 4 |
+| `web/tests/motion.test.ts` test 6 | "> 0.5": extrapolation must happen | A bounded run-ahead: never ahead of the newest frame, bounded catch-up → tests 4 and 8 |
+| `web/e2e/motion.spec.ts` test 7 | Held cars drawn on the curve | The GPU draws where the CPU rule says, and the old points stay empty → test 9 |
 
-These frozen tests are kept and must stay green:
+**Kept, and must stay green:**
 - `motion.test.ts` test 2;
-- `motion.spec.ts` test 8 (the tracked car moves continuously, and the ring equals the car), tests 9 and 10;
+- `motion.spec.ts` tests 8, 9 and 10;
 - `polish_003_next_links.rs`;
 - `gold_city003` (Follow lurch);
-- the inspect/city Follow centring tests;
+- the inspect and city Follow-centring tests;
 - every test that uses the record-index hooks;
 - `core_004_frame.rs` (16 B records);
-- `sim.test` / `host.test` (frame types and sizes);
+- `sim.test` and `host.test`;
 - the determinism, replay and golden-hash tests.
-
-## Specification
-- **Delay.** `D` = max(DT, sim advance between the last two new-tick frames), capped at 4·DT. `P` advances at `rate` = the requested speed, or the achieved rate when behind, but never faster than the requested speed.
-- **Catch-up.** If `P` lags the newest frame by more than 2·D, it catches up at up to 1.5 × rate. If `P` would pass the newest frame, it holds there until the next frame arrives.
-- **Retained frames.** A frame enters the history when it arrives, and at most 8 frames per side are kept.
-- **Lane changes.** A lane change within one link is interpolated along the lane offset.
-- **Measured.** The added latency is measured at 1× and 20× in the browser and reported in `docs/performance.md`.
 
 ## Tests
 | # | Test Name | Verifies |
 |---|-----------|----------|
-| 1 | `frame_carries_trip_ids` (vitest, host on wasm) | `tripIds` is a `Uint32Array` of length `count`, unique within a frame, and equals `trip_at_record(tick, i)` for every record. A vehicle keeps its id across frames: it is found again by id while its record index changes. It is correct after a seek and in B. `vehicles.byteLength` is still `count·16`. |
-| 2 | `held_car_stays_behind_its_stop_line` (vitest, pure) | A trip at `(A, length)` with v = 0 in several consecutive frames, with another link existing after A, is presented at an along-A coordinate ≤ `length − STOP_M` at every `P`. It is never on the curve and never at B's start. A queued car at `s < length − STOP_M` is drawn exactly at its own `s`. Off the junction, the presented pose equals the straight lane placement. |
-| 3 | `junction_transition_is_continuous` (vitest, pure) | A trip at `(A, length − 4)` in frame k and `(B, 3)` in frame k + 1, where B starts at A's end node. Sampling `P` in 50 steps across the interval: the pose starts at A's lane placement of `s` and ends at B's placement of 3. Each step is ≤ 1.5 × path length / 50 + 1 mm, and the heading changes by ≤ 30° per step. The same holds for the sharpest turn in the network (a 90° turn in the grid, ≥ 85°). When B does not start at A's end node, the car is placed directly, with no path through other links. |
-| 4 | `forward_playback_never_steps_back` (vitest, pure) | Simulated playback of a recorded run (≥ 200 frames, real wasm) at 1× and 20×. It has jittered frame arrivals (8–40 ms), varying ticks per frame, one delayed frame (300 ms) and speed changes 20× → 5× → 60× → 1×. Results: `P` is non-decreasing and never exceeds the newest frame. For every trip present in consecutive samples, its along-route progress is non-decreasing. No trip is drawn beyond its newest authoritative position. |
-| 5 | `identity_not_record_index` (vitest, pure) | Two frames whose records are reordered, where one record index is reused by a new trip. Each trip interpolates only between its own states. The new trip is first drawn at its own position, and a trip that disappeared is not drawn. |
-| 6 | `history_resets_on_seek_scenario_and_world` (vitest, pure) | After a frame with a lower tick (seek back), a forward jump of more than 8 ticks (seek), a different `scenario`, a different `world`, or a compare on/off change, the first presented positions equal the new frame's authoritative placement exactly. `P` equals the new frame's time. Nothing is interpolated from the old frames. |
-| 7 | `compare_shares_one_presentation_time` (e2e) | While comparing and running at 20×, sampled every animation frame for 2 s, `diagnostics().presentation` reports the same presented tick for A and B. |
-| 8 | `presentation_latency_is_bounded` (vitest pure + e2e measurement) | **Vitest:** in steady playback the lag of `P` behind the newest frame is ≤ D + one frame interval: ≤ 0.55 sim s at 1×, and ≤ 4·DT at 20×. **E2e:** `diagnostics().presentation.lagMs` (wall) has a median ≤ 600 ms at 1× and ≤ 120 ms at 20×. Both values are logged. |
-| 9 | `gpu_draws_where_presentation_says` (e2e; replaces `motion.spec` test 7) | Main Bridge closed, paused with queues. For ≥ 8 sampled records, the `vehicleDraw(record).page` pixel differs by ≥ 30 luminance with vehicles shown versus hidden. Every held car with `s ≥ length − STOP_M` is drawn at an along-link coordinate ≤ `length − STOP_M`, i.e. none is inside a junction. |
-| 10 | `tracked_car_never_steps_back_in_the_browser` (e2e) | At 1× and at 20×, a tracked car sampled every animation frame for 3 s has non-decreasing route progress (link index in its route plus s, tolerance 0.05 m). The ring stays on the car within 1 px. |
+| 1 | `frame_carries_trip_ids_and_epoch` (vitest, host on wasm) | `tripIds` is a `Uint32Array` of length `count`, unique within the frame, and every entry equals `sim.trip_at_record(tick, i)`. Over two consecutive running frames, ≥ 50 % of ids reappear, each on the same link with `s` not smaller, or on that link's next link. The ids are correct after a seek and in B. `epoch` increments on seek, branch, view switch, discard and compare on or off, and not on plain running frames. `vehicles.byteLength = count·16`. |
+| 2 | `held_car_stays_at_its_stop_line_without_overlap` (vitest, pure) | Frames arrive as time passes. A head car is held at `(A, length)` with v = 0, and a follower sits at `(A, length − 7.5)`. At every `P`, the head car is drawn exactly at the stop-line pose (`ŝ = length − STOP_M`, lateral offset of its lane), with `next = NO_NEXT`, and never at B's start. The follower is drawn at `visualS(length − 7.5)`, and the two are ≥ 3.6 m apart. A car at `s ≤ length − 2·STOP_M` is drawn at exactly its own `s`. |
+| 2b | `release_from_a_held_state_is_continuous` (vitest, pure) | Several frames have the car at `(A, length, v = 0)`, then one at `(B, 2)`, with frames pushed as time passes. Across the release interval: the first pose is the stop-line pose; each step is ≤ 1.5 × path length / steps + 1 mm; the heading changes ≤ 30° per step; it ends at B's placement of 2; and the presented `next` is B while on the curve. |
+| 3 | `junction_transition_is_continuous` (vitest, pure) | Frames are pushed as time passes. A trip at `(A, length − 12)` is then at `(B, 3)`: the poses go from A's placement of `visualS(length − 12)` to B's placement of 3, with steps ≤ 1.5 × mean + 1 mm and a heading change ≤ 30° per step. This holds for a straight continuation and for the sharpest turn (≥ 85°). If B does not leave A's end node, each sample lies on A's or B's lane line only. |
+| 3b | `visual_rule_sweep` (vitest, pure; carries the S4 breadth) | For **every** link A, every lane, and every B that leaves A's end node (not A's reverse), including short links:<br>• `visualPose(A, ŝ, lane, NO_NEXT)` equals the straight placement for ŝ ≤ stop line, and the stop-line pose beyond it;<br>• with `next = B`, sweeping ŝ from 0 to `length` in 0.1 m steps, each step is ≤ 0.75 m, the curve stays off the straight line only past the stop line, and at ŝ = `length` the pose equals B's start in lane min(lane, B.lanes − 1), with B's heading within 1e-3. |
+| 4 | `forward_playback_is_smooth` (vitest, pure, real wasm frames) | Recorded run of ≥ 200 frames at 20×, 5×, 60× and 1×, with jittered arrivals (8–40 ms), varying ticks per frame and one delayed frame (300 ms). Results:<br>• `P` is non-decreasing, never exceeds the newest frame, and every step is ≤ 1.5 · rate · Δwall + 1e-9, where rate is the larger of the last two frames' requested multipliers (sim s per ms).<br>• For every trip, progress on a link is non-decreasing, and a link change goes only to a link the trip holds in a retained frame.<br>• No trip is drawn beyond its newest authoritative position.<br>A separate stall case: steady 20× frames, then a 600 ms gap with no frames, then frames resume ~24 ticks further on. `P` never steps by more than 1.5 · rate · Δwall, and catches up within 3 s. |
+| 4b | `pause_and_resume_have_no_jump` (vitest, pure) | Running frames, then paused frames at the newest tick: `P` keeps rising monotonically at ≤ 1.5 · rate to the newest frame time, then stays there exactly. On resume, the new-tick frames continue from there with no backward step and no jump (each step ≤ 1.5 · rate · Δwall). |
+| 5 | `identity_not_record_index` (vitest, pure) | Frame k: records [trip 10 @ (A, 10), trip 11 @ (A, 25)]. Frame k + 1: [11 @ (A, 29), 12 @ (A2, 5), 10 @ (A, 14)], i.e. swapped and with a new trip. In between, trip 10 ∈ [10, 14] and trip 11 ∈ [25, 29], each on its own trip. Trip 12 is drawn only at its own position. After frame k + 2 without trip 11, trip 11 is not drawn. |
+| 5b | `shared_clock_gives_one_presentation_time` (vitest, pure) | Two presenters share one `PresentationClock`. B's frames carry the same ticks as A's, but arrive 3 ms later. At every sampled wall time, both presenters return the same `P`. |
+| 6 | `history_resets_on_epoch_scenario_world` (vitest, pure) | After a frame with a new `epoch` (seek back or forward), a lower tick, a different `scenario` or `world`, or a compare change, the first presented positions equal the new frame's placement exactly, and `P` equals the new frame's time. A frame 30 ticks ahead with the **same** epoch (a stall) does not reset. |
+| 7 | `compare_shares_one_presentation_time` (e2e) | While comparing at 20×, sampled every animation frame for 2 s: `diagnostics().presentation.tickA === tickB`, and both advance. |
+| 8 | `presentation_latency_is_bounded` (vitest pure + e2e) | **Vitest:** steady lag is ≤ 0.55 sim s at 1× and ≤ 4·DT at 20×. **E2e:** the median `lagMs` is ≤ 600 at 1× and ≤ 120 at 20×; `lagMs` ≈ `lagS` / rate within 25 %; the values are logged. |
+| 9 | `gpu_draws_where_presentation_says` (e2e; replaces `motion.spec` test 7) | Main Bridge closed at `?demand=3`.<br>**Paused:** every held car (frame `s ≥ stop line`, queued) is presented on its own link with `ŝ ≤ stop line` and `next = NO_NEXT`. With the camera zoomed onto the held head cars, ≥ 8 of them are drawn at their presented point (Δluminance ≥ 30 shown vs hidden). Their old-rule points (the link end) are mostly empty, in ≥ half of them.<br>**Running at 20× for 2 s:** a car whose newest frame shows it held is never presented past its stop line. |
+| 10 | `tracked_car_never_steps_back_in_the_browser` (e2e) | At 1× and 20×, a tracked car sampled every animation frame for 3 s: progress on a link never decreases (0.05 m tolerance), and it never returns to an earlier link. The ring stays on the car within 1 px. |
 
 ## Must NOT
 - Change the sim, the 16 B record or the golden hashes.
-- Weaken any kept frozen test.
-- Extrapolate beyond the newest authoritative frame.
+- Weaken a kept frozen test.
+- Extrapolate beyond the newest frame.
+- Use an ALLOWLIST entry for `no_orphaned_exports`. The exports must be used.
 
 ## Must DO
-- Log supersessions S4–S8 in `.wdd/memory/supersessions.md`, with full hashes, before Red approval. Mark them `test.skip` with a pointer.
-- Measure before and after: the render interval and draw time at 1× and 20× (SwiftShader), the frame payload (+4 B per vehicle), and the presentation latency.
+- Log supersessions S4–S8 with full hashes, and mark them `test.skip` with a pointer.
+- Measure before and after: render interval and draw time at 1× and 20× (SwiftShader), frame payload (+4 B per vehicle) and presentation latency.
 - Update the docs.
 
 ## Manual Smoke Test
 ### Setup
 `pnpm -C web build:wasm && pnpm -C web dev`
 ### Steps
-1. At 1×, zoom into a junction. Cars slow down and stop at the stop line, wait outside the junction, then turn through it in one smooth motion when released. No car stops at the end of the curve and then jumps.
-2. At 20×, follow a car for 30 s. It never steps backwards, and turns are continuous.
-3. Change the speed 20× → 5× → 60× while watching a junction. There are no jumps.
-4. Close the main bridge. Queues form behind the stop lines and no car drives into the closed bridge. Reopen it, and the queue releases smoothly.
-5. Pause, then resume. Cars settle and continue without a jump.
-6. Seek back, branch, compare. No car slides from a stale position after the jump. Both sides move together.
+1. At 1×, zoom into a junction. Cars queue up to the stop line without overlapping, wait outside the junction, and turn through it in one smooth motion when released. No car stops at the curve end and then jumps.
+2. At 20×, follow a car for 30 s: it never steps back, and its turns are continuous.
+3. Change the speed 20× → 5× → 60× at a junction: no jumps.
+4. Close the main bridge: queues form behind the stop lines, and no car drives into the closed bridge. Reopen it: the queue releases smoothly.
+5. Pause, then resume: cars settle and continue without a jump.
+6. Seek back, branch and compare: no car slides from a stale position, and both sides move together.
 ### Pass criteria
-- [ ] Motion looks coherent at 1× and 20× (recorded frames).
-- [ ] No held car inside a junction.
+- [ ] Motion is coherent at 1× and 20× (recorded frames).
+- [ ] No held car inside a junction, and no overlap at queue fronts.
 - [ ] The latency is measured and stated.

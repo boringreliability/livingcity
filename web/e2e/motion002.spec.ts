@@ -17,6 +17,7 @@ type Hook = {
   vehicleScreenCenter(record: number): [number, number] | null;
   pickAt(x: number, y: number): { vehicle: number | null };
   setDebug(o: { hideVehicles?: boolean }): void;
+  linkScreenPoint(link: number, t: number): [number, number] | null;
 };
 const snap = (page: Page): Promise<Snap> => page.evaluate(() => (window.__livingcity as unknown as Hook).snapshot());
 const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -118,6 +119,7 @@ test('compare_shares_one_presentation_time', async ({ page }) => {
     expect(p!.tickB, 'B is presented').not.toBeNull();
     expect(p!.tickA, 'A and B at one presentation time').toBe(p!.tickB);
   }
+  expect(s.at(-1)!.tickA, 'both sides advance').toBeGreaterThan(s[0]!.tickA + 5);
 });
 
 // 8 (browser part)
@@ -133,6 +135,8 @@ test('presentation_latency_is_bounded_in_the_browser', async ({ page }) => {
     await play(page);
     await sleep(1500);
     const lags = await sampleFrames<number>(page, 4000, 'lag');
+    const ps = await sampleFrames<Presentation | null>(page, 1000, 'presentation');
+    for (const p of ps) if (p && p.lagS > 0.01) expect(Math.abs(p.lagMs - (p.lagS * 1000) / m) / ((p.lagS * 1000) / m), `${m}×: lagMs ≈ lagS / rate`).toBeLessThanOrEqual(0.25);
     out[`${m}x`] = median(lags);
     expect(median(lags), `${m}×: median presentation lag (ms)`).toBeLessThanOrEqual(bound);
     expect(Math.min(...lags), `${m}×: never ahead of the newest frame`).toBeGreaterThanOrEqual(0);
@@ -170,11 +174,13 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
     expect(c.d.s, 'at or behind the stop line').toBeLessThanOrEqual(stopLine(c.d.length) + 0.01);
     expect(c.d.next, 'not moving on while held').toBe(0xffff);
   }
-  // zoom where most held cars are; the GPU draws them where the rule says
-  let best = held[0]!;
+  // zoom where most held head cars are (the front car of a lane: frame s = length)
+  const heads = held.filter((c) => c.f.s >= c.d.length - 1e-3);
+  expect(heads.length, 'held head cars').toBeGreaterThanOrEqual(8);
+  let best = heads[0]!;
   let n = 0;
-  for (const c of held) {
-    const k = held.filter((e) => Math.hypot(e.d.page[0] - c.d.page[0], e.d.page[1] - c.d.page[1]) < 40).length;
+  for (const c of heads) {
+    const k = heads.filter((e) => Math.hypot(e.d.page[0] - c.d.page[0], e.d.page[1] - c.d.page[1]) < 40).length;
     if (k > n) [best, n] = [c, k];
   }
   const box = (await page.locator('canvas.city').first().boundingBox())!;
@@ -185,14 +191,47 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
   await page.mouse.up();
   await sleep(300);
   await wheelZoom(page, centre, (z) => z >= 4);
-  const visible = (await all()).filter((c) => c.d.page[0] > 30 && c.d.page[1] > 30 && c.d.page[0] < box.width - 30 && c.d.page[1] < box.height - 30);
-  const pts = visible.slice(0, 12).map((c) => c.d.page);
-  expect(pts.length, 'cars in view').toBeGreaterThanOrEqual(8);
+  const inView = (p: [number, number]) => p[0] > 30 && p[1] > 30 && p[0] < box.width - 30 && p[1] < box.height - 30;
+  const now = (await all()).filter((c) => c.f.queued && c.f.s >= c.d.length - 1e-3 && inView(c.d.page)).slice(0, 12);
+  expect(now.length, 'held head cars in view').toBeGreaterThanOrEqual(8);
+  const pts = now.map((c) => c.d.page);
+  // the old rule drew a held head car at its link's end (the junction): those points
+  const old = await page.evaluate((links) => links.map((l) => (window.__livingcity as unknown as Hook).linkScreenPoint(l, 1)), now.map((c) => c.d.link));
   const shown = await Promise.all(pts.map((p) => lum(page, p)));
+  const oldShown = await Promise.all(old.map((p) => (p ? lum(page, p) : Promise.resolve(Number.NaN))));
   await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: true }));
   await sleep(300);
   const hidden = await Promise.all(pts.map((p) => lum(page, p)));
-  for (let i = 0; i < pts.length; i++) expect(Math.abs(shown[i]! - hidden[i]!), `car ${i} drawn at its presented point`).toBeGreaterThanOrEqual(30);
+  const oldHidden = await Promise.all(old.map((p) => (p ? lum(page, p) : Promise.resolve(Number.NaN))));
+  for (let i = 0; i < pts.length; i++) expect(Math.abs(shown[i]! - hidden[i]!), `held car ${i} drawn at its presented point`).toBeGreaterThanOrEqual(30);
+  const emptyOld = old.filter((_, i) => Math.abs(oldShown[i]! - oldHidden[i]!) < 30).length;
+  expect(emptyOld, 'the old points (inside the junction) are mostly empty').toBeGreaterThanOrEqual(Math.ceil(old.length / 2));
+  await page.evaluate(() => (window.__livingcity as unknown as Hook).setDebug({ hideVehicles: false }));
+
+  // running at 20×: a car its newest frame shows held is never presented past its stop line
+  await speed(page, 20);
+  await play(page);
+  const end = Date.now() + 2000;
+  let checked = 0;
+  while (Date.now() < end) {
+    const bad = await page.evaluate(() => {
+      const h = window.__livingcity as unknown as Hook;
+      const out: string[] = [];
+      let n = 0;
+      for (let i = 0; i < h.snapshot().frameRecords; i++) {
+        const f = h.frameVehicle(i);
+        const d = h.vehicleDraw(i);
+        if (!f || !d || !f.queued || d.link !== f.link) continue;
+        if (f.s < d.length - Math.min(6, d.length / 2)) continue;
+        n++;
+        if (d.s > d.length - Math.min(6, d.length / 2) + 0.01) out.push(`record ${i} on link ${d.link}: ${d.s} > stop line`);
+      }
+      return { out, n };
+    });
+    checked += bad.n;
+    expect(bad.out, 'running: held cars never past their stop line').toEqual([]);
+  }
+  expect(checked, 'held cars checked while running').toBeGreaterThan(20);
 });
 
 // 10

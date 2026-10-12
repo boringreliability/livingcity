@@ -21,11 +21,21 @@ export function stopLine(l: LinkGeom): number {
   return l.length - Math.min(STOP_M, l.length / 2);
 }
 
+/** The visual coordinate of sim position `s` on a link of `length`: the last 2·STOP_M are drawn in STOP_M,
+ *  so a held car (s = length) sits at the stop line and a queue does not overlap. */
+export function visualS(length: number, s: number): number {
+  void length;
+  void s;
+  throw new Error('presentation: not implemented (motion-002 red)');
+}
+
 /** One authoritative frame as the presenter needs it. */
 export interface PresentFrame {
   tick: number;
   scenario: 0 | 1;
   world: number;
+  /** The side's timeline epoch: a new one after any jump (seek, branch, view switch, discard, compare). */
+  epoch: number;
   compare: boolean;
   vehicles: DecodedVehicles;
   tripIds: Uint32Array;
