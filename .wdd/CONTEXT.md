@@ -59,4 +59,4 @@
 
 ## What Comes Next
 - **Epic `fonts` complete, approved 2026-10-12** (bundled Inter/JetBrains Mono 5.3.0, measured legend placement `ui/bottomBand.ts`; CI green on Ubuntu); re-deployed and verified live under COEP.
-- **Next (queued by the user 2026-10-11):** motion (interpolation by identity, held cars before the stop line), paused work, consequences UI, city character: `.wdd/memory/task-2026-10-11-motion-paused-consequences.md`. It carries an explicit authorization to supersede frozen tests for those behaviours (rules: CLAUDE.md § "Frozen tests and contracts: unlocking"; log in `.wdd/memory/supersessions.md`).
+- **Now: epic `motion`** (`.wdd/epics/motion.md`, the user's task `.wdd/memory/task-2026-10-11-motion-paused-consequences.md`, facts `.wdd/memory/investigation-2026-10-12.md`, supersessions `.wdd/memory/supersessions.md`). motion-001 done (quiet pause: dirty-driven posts + one settling frame, 50→0 frames/s paused; LIFO pools ≤4 with world generations; S1–S3). Next: motion-002 (interpolated motion by trip id, stop lines; spec written), then 003 consequences, 004 character, 005 integration.

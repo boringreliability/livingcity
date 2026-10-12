@@ -3,7 +3,7 @@ ward: 2
 revision: null
 name: "Interpolated motion by identity"
 epic: "motion"
-status: "planned"
+status: "red"
 dependencies: ["motion-001"]
 layer: "fullstack"
 estimated_tests: 10
@@ -62,9 +62,10 @@ The facts are in `.wdd/memory/investigation-2026-10-12.md` § Motion. **This war
 - **Renderer.** The GPU draws exactly what the CPU rule says.
   - The vertex shader gets the matched older and newer states per instance plus a shared α (or the CPU uploads presented poses).
   - A and B renderers use the same `P` while comparing.
-  - `ExtrapolationClock` and `extrapolate` are removed or unused.
+  - `ExtrapolationClock`, `extrapolate` and `vehicleDrawPosition` are no longer used by the renderer, but stay exported: the frozen `motion.test.ts` imports them, and its kept test 2 must still load.
 - **Same position everywhere.** Picking, Follow, the tracked ring and route, and the hooks `vehicleScreenCenter`, `vehicleDraw`, `trackedDraw`, `drawAt` and `trackedScreenCenter` all use the presented position. Their signatures are kept; `drawAt` becomes the new visual rule for a car at `s` on `link`, moving onto `next`, or not moving on when `next` is NO_NEXT.
-- **Latency is reported.** The presentation delay (sim seconds behind the newest frame, and its wall-time equivalent) appears in Diagnostics and in `diagnostics().presentation`.
+- **Latency is reported.** The presentation delay (sim seconds behind the newest frame, and its wall-time equivalent) appears in Diagnostics and in `diagnostics().presentation` = `{ tickA, tickB (null outside compare), lagS, lagMs }`, where `tickA`/`tickB` are the presented ticks (`P / DT`) of each side.
+- **Hook.** `vehicleDraw(record)` gains `length` (the link's sim length); its `s` and `next` are the presented values.
 - **Docs.** `docs/architecture.md` describes the model. `docs/known-issues.md` marks i1, i2 and i4 resolved. The supersessions are logged.
 
 ## Supersessions (authorized 2026-10-11; valid intent kept)
@@ -99,7 +100,7 @@ These frozen tests are kept and must stay green:
 |---|-----------|----------|
 | 1 | `frame_carries_trip_ids` (vitest, host on wasm) | `tripIds` is a `Uint32Array` of length `count`, unique within a frame, and equals `trip_at_record(tick, i)` for every record. A vehicle keeps its id across frames: it is found again by id while its record index changes. It is correct after a seek and in B. `vehicles.byteLength` is still `count·16`. |
 | 2 | `held_car_stays_behind_its_stop_line` (vitest, pure) | A trip at `(A, length)` with v = 0 in several consecutive frames, with another link existing after A, is presented at an along-A coordinate ≤ `length − STOP_M` at every `P`. It is never on the curve and never at B's start. A queued car at `s < length − STOP_M` is drawn exactly at its own `s`. Off the junction, the presented pose equals the straight lane placement. |
-| 3 | `junction_transition_is_continuous` (vitest, pure) | A trip at `(A, length − 4)` in frame k and `(B, 3)` in frame k + 1, where B starts at A's end node. Sampling `P` in 50 steps across the interval: the pose starts at A's lane placement of `s` and ends at B's placement of 3. Each step is ≤ 1.5 × path length / 50 + 1 mm, and the heading changes by ≤ 30° per step. The same holds for a sharp turn (≥ 120°). When B does not start at A's end node, the car is placed directly, with no path through other links. |
+| 3 | `junction_transition_is_continuous` (vitest, pure) | A trip at `(A, length − 4)` in frame k and `(B, 3)` in frame k + 1, where B starts at A's end node. Sampling `P` in 50 steps across the interval: the pose starts at A's lane placement of `s` and ends at B's placement of 3. Each step is ≤ 1.5 × path length / 50 + 1 mm, and the heading changes by ≤ 30° per step. The same holds for the sharpest turn in the network (a 90° turn in the grid, ≥ 85°). When B does not start at A's end node, the car is placed directly, with no path through other links. |
 | 4 | `forward_playback_never_steps_back` (vitest, pure) | Simulated playback of a recorded run (≥ 200 frames, real wasm) at 1× and 20×. It has jittered frame arrivals (8–40 ms), varying ticks per frame, one delayed frame (300 ms) and speed changes 20× → 5× → 60× → 1×. Results: `P` is non-decreasing and never exceeds the newest frame. For every trip present in consecutive samples, its along-route progress is non-decreasing. No trip is drawn beyond its newest authoritative position. |
 | 5 | `identity_not_record_index` (vitest, pure) | Two frames whose records are reordered, where one record index is reused by a new trip. Each trip interpolates only between its own states. The new trip is first drawn at its own position, and a trip that disappeared is not drawn. |
 | 6 | `history_resets_on_seek_scenario_and_world` (vitest, pure) | After a frame with a lower tick (seek back), a forward jump of more than 8 ticks (seek), a different `scenario`, a different `world`, or a compare on/off change, the first presented positions equal the new frame's authoritative placement exactly. `P` equals the new frame's time. Nothing is interpolated from the old frames. |

@@ -87,7 +87,8 @@ describe('polish-003', () => {
     check(h.last(), 'branch B');
   });
 
-  test('3 draw_position_is_continuous_across_junctions', { timeout: 120_000 }, () => {
+  // SUPERSEDED (motion-002, S4 in .wdd/memory/supersessions.md): (a) pinned a car at s = length drawn at the next link’s start (held cars inside junctions); its valid intent is motion002 tests 2 and 3.
+  test.skip('3 draw_position_is_continuous_across_junctions', { timeout: 120_000 }, () => {
     const { links } = city();
     let pairs = 0;
     for (const a of links) {
@@ -140,7 +141,8 @@ describe('polish-003', () => {
       }
   });
 
-  test('4 extrapolation_stops_at_the_end_on_the_curve', () => {
+  // SUPERSEDED (motion-002, S5 in .wdd/memory/supersessions.md): pinned extrapolation clamped at the link end, drawn at the next link’s start; its valid intent is motion002 tests 2 and 4.
+  test.skip('4 extrapolation_stops_at_the_end_on_the_curve', () => {
     // The sim holds cars at stop lines and stops them instantly, so extrapolating past the end would
     // snap cars back when the next frame arrives (Red r1 B1). Extrapolation stops at the link end; with a
     // next link that end is the next link's start (the blend curve), so the next frame continues from there.
@@ -168,7 +170,8 @@ describe('polish-003', () => {
     expect(checked).toBeGreaterThan(60);
   });
 
-  test('5 speed_change_never_moves_cars_back', () => {
+  // SUPERSEDED (motion-002, S6 in .wdd/memory/supersessions.md): pinned the ExtrapolationClock API; its valid intent is motion002 test 4.
+  test.skip('5 speed_change_never_moves_cars_back', () => {
     const c = new ExtrapolationClock();
     let now = 0;
     let tick = 100;
@@ -207,7 +210,8 @@ describe('polish-003', () => {
     expect(c.at(now, rate)).toBeCloseTo(10 * rate, 9);
   });
 
-  test('6 stall_cannot_overshoot', () => {
+  // SUPERSEDED (motion-002, S7 in .wdd/memory/supersessions.md): its “> 0.5” pinned that extrapolation happens; its valid intent is motion002 tests 4 and 8.
+  test.skip('6 stall_cannot_overshoot', () => {
     const c = new ExtrapolationClock();
     let now = 0;
     let tick = 0;

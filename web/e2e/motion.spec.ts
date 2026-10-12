@@ -86,7 +86,8 @@ const onCanvas = (page: Page, p: [number, number]) =>
   page.evaluate(([x, y]) => [[0, 0], [-6, -6], [6, -6], [-6, 6], [6, 6]].every(([a, b]) => document.elementFromPoint(x + a!, y + b!)?.tagName === 'CANVAS'), p);
 
 // 7
-test('gpu_draws_cars_where_the_cpu_says', async ({ page }) => {
+// SUPERSEDED (motion-002, S8 in .wdd/memory/supersessions.md): pinned held cars drawn on the junction curve (vehicleDraw with the old rule); its valid intent is motion002 e2e test 9 gpu_draws_where_presentation_says.
+test.skip('gpu_draws_cars_where_the_cpu_says', async ({ page }) => {
   test.setTimeout(300_000);
   await ready(page, '/?demand=3');
   // junction queues: close the main bridge and let the alternatives fill
