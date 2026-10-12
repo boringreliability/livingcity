@@ -3,7 +3,7 @@ ward: 2
 revision: null
 name: "Interpolated motion by identity"
 epic: "motion"
-status: "red"
+status: "approved"
 dependencies: ["motion-001"]
 layer: "fullstack"
 estimated_tests: 16
@@ -56,7 +56,7 @@ The stop line is at `length − end[L]`, and the entry point at `start[L]`. A he
 
 So a held car at `s = length` is drawn exactly at the stop line, and a car at `s = 0` at the entry point. Drawn cars in a queue stay ≥ 3.75 m apart, so they do not overlap.
 
-**Visual rule `visualPose(links, link, ŝ, lane, next)`, which is also the hook's `drawAt`:**
+**Visual rule `visualPose(links, C, link, ŝ, lane, next)` (C = the clearances), which is also the hook's `drawAt`:**
 - **`next = NO_NEXT`:** the straight lane placement at ŝ clamped to [start, stop line].
 - **`next` = B:** the straight placement up to the stop line. Past it, `u = (ŝ − stop line) / end[L]` runs along a **cubic** Bézier:
   - P0 is the stop-line pose and P3 is B's entry point in lane min(lane, B.lanes − 1);
@@ -66,6 +66,7 @@ So a held car at `s = length` is drawn exactly at the stop line, and a car at `s
 **Transitions.** A car is in a transition only while it is on link A in the older frame and on link B in the newer one, where B starts at A's end node.
 - Its path runs from its pose at `visualS(A, s_old)` along A to the stop line, through the curve to B's entry point, then along B to `visualS(B, s_new)`.
 - It is traversed at a uniform rate along the drawn path, by α.
+- If the newer lane on B differs from `min(laneA, B.lanes − 1)`, the lateral change is spread over the transition path. The presented `lane` may be fractional, and the pose stays `visualPose` of the presented values. (Red r4 F1: 43 % of River City transitions change lane.)
 - Its presented `(link, s, next)` is `(A, ŝ, B)` on A or the curve, and `(B, ŝ, NO_NEXT)` on B.
 
 If B does not start at A's end node, the car moved more than one link in one frame. It is then placed directly at its new position, with no fabricated path.
@@ -141,6 +142,7 @@ If B does not start at A's end node, the car moved more than one link in one fra
 | 2c | `interpolation_is_linear_in_the_visual_coordinate` (vitest, pure) | Pure 1× and 20× cases. A trip stays on link A across three frames, with `s` = 10, 17, 24, and a second trip moves inside the compression zone, from `length − 10` to `length − 2`. For every sample with P between ticks k and k + 1, the presented ŝ equals visualS(s_k) + α·(visualS(s_k+1) − visualS(s_k)) within 1e-6, where α = P / DT − k. This excludes a car that waits at its old position and then jumps (i1). |
 | 2b | `release_from_a_held_state_is_continuous` (vitest, pure) | Several frames have the car at `(A, length, v = 0)`, then one at `(B, 2)`, with frames pushed as time passes. The cases are the straight continuation, the sharpest turn and a right turn. Across the release interval:<br>• the first pose is the stop-line pose;<br>• each step is ≤ 1.5 × its share of the path + 1 mm;<br>• the heading changes ≤ 30° per step;<br>• it ends at B's placement of `visualS(B, 2)`;<br>• the presented `next` is B while on A or the curve. |
 | 3 | `junction_transition_is_continuous` (vitest, pure) | Frames are pushed as time passes, starting with a priming frame. The cases are every junction pair of three_bridges and a spread of River City pairs, ≥ 120 in total, including turns of ≥ 85°. A trip at `(A, length − 12)` is then at `(B, 3)`: the poses go from A's placement of `visualS(length − 12)` to B's placement of 3. Each step is ≤ 1.5 × its share of the path (Δα × path length) + 1 mm, and the heading changes ≤ 30° per step. If B does not leave A's end node, each sample lies on A's or B's lane line only. |
+| 3d | `transition_into_another_lane_is_continuous` (vitest, pure; Red r4 F1) | River City junction pairs (both ≥ 30 m) where A or B has ≥ 2 lanes, every lane pair with `lb ≠ min(la, B.lanes − 1)`, a deterministic spread of ≥ 100 covering la < lb and la > lb. Test 3's schedule with lane `la` on A and `lb` on B: the poses start at A's placement in lane la, end at B's placement of `visualS(B, 3)` in lane lb, and are smooth as in test 3. |
 | 3c | `clearances_keep_cars_out_of_junctions` (vitest, pure) | **River City and three_bridges, every link and every lane.**<br>• A 4.5 × 2.0 m car at `(L, length − end[L])` overlaps no road rectangle of another link at L's end node (L's reverse excluded), and likewise at `(L, start[L])` at L's start node.<br>• The values are minimal: at `end[L] − 0.25` (and `start[L] − 0.25`) some overlap exists, unless the value is 0.5.<br>• Both are ≤ length / 2, and 2·end + 2·start ≤ length. |
 | 3b | `visual_rule_sweep` (vitest, pure; carries the S4 breadth) | **River City and three_bridges.** For **every** link A, every lane, and every B that leaves A's end node (not A's reverse):<br>• `visualPose(A, ŝ, lane, NO_NEXT)` equals the straight placement at ŝ clamped to [start[A], stop line];<br>• with `next = B`, sweeping ŝ from 0 to `length` in steps of at most 0.01 m:<br>&nbsp;&nbsp;– each step is ≤ 0.75 m;<br>&nbsp;&nbsp;– the heading changes ≤ 10° per 0.1 m of drawn arc, including across the stop line;<br>&nbsp;&nbsp;– the pose equals the straight placement before the stop line;<br>&nbsp;&nbsp;– at ŝ = `length` it equals B's entry point (`start[B]`, lane min(lane, B.lanes − 1)) with B's heading within 1e-3. |
 | 4 | `forward_playback_is_smooth` (vitest, pure, real wasm frames) | Recorded run of ≥ 200 frames at 20×, 5×, 60× and 1×, with jittered arrivals (8–40 ms), varying ticks per frame and one delayed frame (300 ms). Results:<br>• `P` is non-decreasing, never exceeds the newest frame, and every step is ≤ 1.5 · rate · Δwall + 1e-9, where rate is the larger of the last two frames' requested multipliers (sim s per ms).<br>• For every trip, progress on a link is non-decreasing, and a link change goes only to a link the trip holds in a retained frame.<br>• No trip is drawn beyond its newest authoritative position.<br>A separate stall case: steady 20× frames, then a 600 ms gap with no frames, then frames resume ~24 ticks further on. `P` never steps by more than 1.5 · rate · Δwall, and catches up within 3 s. |

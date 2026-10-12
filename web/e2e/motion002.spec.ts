@@ -180,6 +180,7 @@ test('gpu_draws_where_presentation_says', async ({ page }) => {
   expect(held.length, 'held cars at junctions').toBeGreaterThanOrEqual(10);
   for (const c of held) {
     expect(c.d.link, 'drawn on its own link').toBe(c.f.link);
+    expect(c.d.stop, 'the stop line is before the link end').toBeLessThanOrEqual(c.d.length - 0.5);
     expect(c.d.s, 'at or behind the stop line').toBeLessThanOrEqual(c.d.stop + 0.01);
     expect(c.d.next, 'not moving on while held').toBe(0xffff);
   }

@@ -296,9 +296,14 @@ describe('motion-002', () => {
     const aEpoch = r.after.epoch;
     r = epochAfter({ type: 'viewScenario', scenario: 1 });
     expect(r.after.epoch === r.before.epoch && r.after.scenario === r.before.scenario, 'view switch').toBe(false);
+    r = epochAfter({ type: 'viewScenario', scenario: 0 });
+    expect(r.after.scenario).toBe(0);
+    expect(r.after.epoch, 'view switch A → B → A: A has a new epoch').not.toBe(aEpoch);
+    const aEpoch2 = r.after.epoch;
+    epochAfter({ type: 'viewScenario', scenario: 1 });
     r = epochAfter({ type: 'discardBranch' });
     expect(r.after.scenario).toBe(0);
-    expect(r.after.epoch, 'discard').not.toBe(aEpoch);
+    expect(r.after.epoch, 'discard').not.toBe(aEpoch2);
   });
 
   test('2 held_car_stays_at_its_stop_line_without_overlap', () => {
@@ -451,6 +456,44 @@ describe('motion-002', () => {
         if (v) expect(onLane(A, v.pose.x, v.pose.y) || onLane(Cn, v.pose.x, v.pose.y), 'only on A or on the new link').toBe(true);
       },
     );
+  }, 180_000);
+
+  test('3d transition_into_another_lane_is_continuous', () => {
+    // the newer frame puts the car in a lane on B other than min(laneA, B.lanes − 1) (≈40 % of real transitions)
+    const city: City = 'river_city';
+    const net = network(city);
+    const C = cl(city);
+    const all: [number, number, number, number][] = [];
+    for (const [a, b] of junctionPairs(30, city)) {
+      const A = net.links[a]!;
+      const B = net.links[b]!;
+      if (A.lanes < 2 && B.lanes < 2) continue;
+      for (let la = 0; la < A.lanes; la++) for (let lb = 0; lb < B.lanes; lb++) if (lb !== Math.min(la, B.lanes - 1)) all.push([a, b, la, lb]);
+    }
+    const cases = all.filter((_, i) => i % 5 === 0);
+    expect(cases.length, 'a spread of lane-changing transitions').toBeGreaterThanOrEqual(100);
+    expect(cases.some(([, , la, lb]) => la < lb) && cases.some(([, , la, lb]) => la > lb), 'both directions').toBe(true);
+    for (const [a, b, la, lb] of cases) {
+      const A = net.links[a]!;
+      const B = net.links[b]!;
+      const s0 = Math.max(vS(A, C, 0), A.length - 2 * C.end[a]! - 6);
+      const p = new Presenter(net.links, net.from, net.to);
+      const sched = [
+        { at: -500, c: run(1), f: frame(199, [{ trip: 5, link: a, s: s0 - 7, v: 8, lane: la }]) },
+        { at: 0, c: run(1), f: frame(200, [{ trip: 5, link: a, s: s0, v: 8, lane: la }]) },
+        { at: 500, c: run(1), f: frame(201, [{ trip: 5, link: b, s: 3, v: 8, lane: lb }]) },
+        { at: 1000, c: run(1), f: frame(202, [{ trip: 5, link: b, s: 7, v: 8, lane: lb }]) },
+      ];
+      const poses: { x: number; y: number; hx: number; hy: number; P: number }[] = [];
+      drive(p, sched, 1800, 2, (_n, P) => {
+        if (P >= 200 * DT - 1e-9 && P <= 201 * DT + 1e-9) poses.push({ ...p.vehicle(5)!.pose, P });
+      });
+      const tag = `${city} ${a}/${la}→${b}/${lb}`;
+      expect(poses.length, tag).toBeGreaterThan(20);
+      expect(near(poses[0]!, vehiclePosition(A, vS(A, C, s0), la), 0.05), `${tag}: starts at A in lane ${la}`).toBe(true);
+      expect(near(poses.at(-1)!, vehiclePosition(B, vS(B, C, 3), lb), 0.05), `${tag}: ends at B in lane ${lb}`).toBe(true);
+      expectSmooth(poses, tag);
+    }
   }, 180_000);
 
   test('3c clearances_keep_cars_out_of_junctions', () => {
