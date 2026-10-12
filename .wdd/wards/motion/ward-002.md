@@ -3,7 +3,7 @@ ward: 2
 revision: null
 name: "Interpolated motion by identity"
 epic: "motion"
-status: "approved"
+status: "gold"
 dependencies: ["motion-001"]
 layer: "fullstack"
 estimated_tests: 16

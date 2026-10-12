@@ -321,9 +321,10 @@ const PATH_SAMPLES = 48;
 /**
  * Frames kept at most. `advance` (once per animation frame) trims the history; without animation frames
  * (a hidden tab) pushes would pile up, so beyond this the history starts over at the newest frame. The
- * presentation never needs that many: it trails by ≤ 4·DT, plus a catch-up after a stall.
+ * presentation never needs that many: it trails by ≤ 4·DT, plus a catch-up after a stall (Red r6 modelled
+ * ≤ 48 frames at 60× after a 1 s worker stall). 128 frames hold ≈ 10 MB at 6,000 cars.
  */
-const MAX_KEPT = 48;
+const MAX_KEPT = 128;
 
 export class Presenter {
   private readonly clock: PresentationClock;
