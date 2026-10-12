@@ -183,6 +183,8 @@ export interface FrameMessage {
   vehicles: ArrayBuffer;
   /** Per record: the vehicle's next link, or NO_NEXT_LINK (ward polish-003). */
   nextLinks: Uint16Array;
+  /** Per record: the vehicle's trip id (motion-002); the renderer matches cars across frames by it. */
+  tripIds: Uint32Array;
   linkCounts: Uint16Array;
   linkQueued: Uint16Array;
   closed: Uint32Array;
@@ -194,6 +196,9 @@ export interface FrameMessage {
   /** The side's world generation (motion-001): new on init (both sides), and for B on a branch or
    *  discard. Buffers come back tagged with it; a stale world's buffers are never reused. */
   world: number;
+  /** The side's timeline epoch (motion-002): new after any jump (init, seek, branch, view switch,
+   *  discard, compare on/off); the presenter resets its history on a new one. */
+  epoch: number;
   timeline: TimelineStatus;
   /**
    * The inspected vehicle, its one-time `gone` notice, or null. At runtime the key is omitted

@@ -224,6 +224,15 @@ impl Sim {
             .map_or(-1.0, |&t| t as f64)
     }
 
+    /// Trip ids of the last encoded frame, in record order (the table `trip_at_record` reads; ward
+    /// motion-002: the renderer matches cars across frames by trip, never by record index).
+    pub fn trip_ids(&self) -> Vec<u32> {
+        self.frame_trips
+            .back()
+            .map(|(_, trips)| trips.iter().map(|&t| t as u32).collect())
+            .unwrap_or_default()
+    }
+
     /// `VEHICLE_DETAIL` layout (protocol.ts): `[found, trip_id, origin, dest, state, link, lane, s, v,
     /// age_s, route_switches, blocked_ticks, route_len, …remaining route (current link first)]`.
     pub fn vehicle_detail(&self, trip_id: f64) -> Vec<f64> {

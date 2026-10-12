@@ -36,6 +36,8 @@ export interface SimLike {
   link_queued(): Uint16Array;
   /** Per record of the last encoded frame: next link or 0xFFFF (ward polish-003; optional for fakes). */
   next_links?(): Uint16Array;
+  /** Trip ids of the last encoded frame, in record order (motion-002). */
+  trip_ids?(): Uint32Array;
   /** Test hook: panics inside wasm (ward polish-005; optional for fakes). */
   debug_trap?(): void;
   metrics(): Float64Array;
@@ -145,6 +147,9 @@ export function createSimHost(deps: HostDeps): SimHost {
   const pools: [ArrayBuffer[], ArrayBuffer[]] = [[], []];
   /** Each side's world generation; buffers returned for an older one are dropped. */
   const worlds: [number, number] = [0, 0];
+  /** Each side's timeline epoch (motion-002): new after every jump that breaks continuity (init, seek,
+   *  branch, view switch, discard, compare on/off), so the presenter never interpolates across one. */
+  const epochs: [number, number] = [0, 0];
   /** A handled message (other than `returnBuffer`) is answered by a frame from the next iteration. */
   let dirty = false;
   /** While paused nothing is posted, except one settling frame once the achieved-rate window is empty. */
@@ -182,6 +187,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     pools[1] = [];
     worlds[0]++;
     worlds[1]++;
+    epochs[0]++;
+    epochs[1]++;
     try {
       sim = deps.createSim(demandSeed, behaviorSeed, city, demandScale);
     } catch (e) {
@@ -325,6 +332,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     sinceFrameMs = 0;
     sinceFrameTicks = 0;
     trackedTrip = null;
+    epochs[0]++;
+    epochs[1]++;
     const t = deps.now();
     postPair(t);
     postComparison(t);
@@ -337,6 +346,8 @@ export function createSimHost(deps: HostDeps): SimHost {
       if (!comparing) return;
       comparing = false;
       if (viewed === 0) pools[1] = []; // B posts no frames until it is viewed or compared again (k5)
+      epochs[0]++;
+      epochs[1]++;
       const t = deps.now();
       postFrame(s, t);
       lastPost = t;
@@ -382,6 +393,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     sinceFrameMs = 0;
     sinceFrameTicks = 0;
     trackedTrip = null;
+    epochs[viewed]++;
     const t = deps.now();
     postFrame(s, t);
     lastPost = t;
@@ -562,6 +574,8 @@ export function createSimHost(deps: HostDeps): SimHost {
       vehicles,
       // a fresh copy per frame (structured-cloned, 2 bytes per vehicle); fakes without it draw straight
       nextLinks: s.next_links?.() ?? new Uint16Array(count).fill(NO_NEXT_LINK),
+      // 4 bytes per vehicle (motion-002); fakes without trip ids are matched by record index
+      tripIds: s.trip_ids?.() ?? Uint32Array.from({ length: count }, (_, i) => i),
       linkCounts: s.link_counts(),
       linkQueued: s.link_queued(),
       closed: s.closed_links(),
@@ -570,6 +584,7 @@ export function createSimHost(deps: HostDeps): SimHost {
       perf: perf(t),
       scenario: side,
       world: worlds[side],
+      epoch: epochs[side],
       timeline: timelineStatus(s),
       // no vehicle tracking and no host link detail while comparing (ward timeline-004)
       ...(vehicleInspectionUsed ? { tracked: comparing ? null : tracked(s), trackedSeq: inspectSeq } : {}),
