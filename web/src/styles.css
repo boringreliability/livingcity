@@ -154,6 +154,18 @@ canvas.city {
   color: var(--muted);
 }
 
+.diagnostics h2 {
+  display: flex;
+  justify-content: space-between;
+}
+
+.diag-lag {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .diagnostics dl {
   margin: 0;
   display: grid;
