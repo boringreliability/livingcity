@@ -123,7 +123,8 @@ test('intervention_summary_and_map_markers', async ({ page }) => {
   for (const n of await markerNames(page)) expect(n).not.toMatch(FORBIDDEN);
 
   // reopen (Red r1 M3): a second line with ○, a ○ marker at its tick, two entries in tick order
-  await page.getByRole('button', { name: /reopen/i }).first().click();
+  // the bridge toggle keeps its accessible name; pressed = closed, so a click reopens
+  await page.getByRole('button', { name: 'Close the main bridge', pressed: true }).click();
   await blur(page);
   await page.keyboard.press('Space');
   await expect.poll(async () => (await page.evaluate(() => window.__livingcity!.interventions())).length, { timeout: 30_000 }).toBe(2);
@@ -180,7 +181,7 @@ test('summary_queue_entry_selects_the_link', async ({ page }) => {
   await expect.poll(async () => (await snap(page)).selectedLink).toBe(link);
   const sel = page.getByRole('region', { name: 'Selected road' });
   await expect(sel.getByRole('heading', { name: new RegExp(`^Link ${link}\\b`) })).toBeVisible();
-  await expect(sel, 'the panel shows the same queue count').toContainText(new RegExp(`queued\\s*${queued}\\b`, 'i'));
+  await expect(sel, 'the panel shows the same queue count').toContainText(new RegExp(`queued\\s*${queued}(?!\\d)`, 'i'));
 });
 
 // 9
