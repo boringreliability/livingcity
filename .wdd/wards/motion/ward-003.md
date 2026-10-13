@@ -3,12 +3,12 @@ ward: 3
 revision: null
 name: "Consequences of an intervention"
 epic: "motion"
-status: "gold"
+status: "complete"
 dependencies: ["motion-002"]
 layer: "fullstack"
 estimated_tests: 10
 created: "2026-10-11"
-completed: null
+completed: "2026-10-13"
 ---
 # Ward motion-003: Consequences of an intervention
 

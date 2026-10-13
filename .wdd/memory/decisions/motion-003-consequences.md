@@ -1,0 +1,9 @@
+# motion-003: consequences of an intervention (2026-10-13)
+
+- **Observation, not cause.** The summary shows what was changed and when (the command log), the crossings per bridge per 10 sim min now and in the 10 min before the latest bridge closure, and the longest queues now. Wording never claims a cause; A against B stays the comparison panel's job.
+- **Read-only from the core.** `Timeline::exits_at(tick, links)` reads cumulative exit counts from the position world or the newest retained snapshot at or before `tick`, so no new sim state, and golden `state_hash` values are unchanged. `Sim.command_log()` and `Sim.exits_at()` are thin getters.
+- **Small, fixed frame payload.** Each frame carries `interventions` (command triples) and `bridgeFlow` (two blocks of 15 numbers: now and before). Compare crossings have their base captured once at branch time (`branchBase`), so snapshot eviction cannot lose it (Red r1 M4). Measured cost: 0.66–0.74 µs per frame.
+- **Map marks avoid labels.** Bridge names sit above the deck. Queue pins take the nearest of 16 places that covers no label or pin (else the least covered one), every animation frame and after every render (Gold r1/r2). Pins do not avoid panels (known issue).
+- **Timeline markers stay on their tick.** The frozen marker-position test pins the glyph centred on its tick. Only the window-start marker is shifted into the track. An end-side shift was tried and reverted (Gold r3).
+- **Layout.** The summary appears only in the single view and yields to road and vehicle panels. The guide's 100 px band is reserved while it shows.
+- Gates: Red r1 rejected, then r2 approved, with r4 and r5 approved under the convergence rule (`-auto`). Gold r1–r3 rejected, escalated to the user, then Gold r4 approved (0 BLOCKER, 0 MAJOR, 3 minors in `docs/known-issues.md`).

@@ -1,7 +1,7 @@
 # Progress — livingcity
 
 ## Summary
-21 of 21 Wards complete · 367 estimated tests · 0 blocked
+25 of 27 Wards complete · 423 estimated tests · 0 blocked
 
 ## Ward Status
 | Ward | Name | Tests | Status | Date |
@@ -16,6 +16,12 @@
 | core-003 | Closures, rerouting, commands and determinism | 36 | ✅ Complete | 2026-10-06 |
 | core-004 | WASM worker bridge | 39 | ✅ Complete | 2026-10-07 |
 | core-005 | First closure in the browser | 20 | ✅ Complete | 2026-10-07 |
+| fonts-001 | Bundled fonts and a fit-based bottom band | 6 | ✅ Complete | 2026-10-11 |
+| motion-001 | Quiet pause and bounded buffer reuse | 8 | ✅ Complete | 2026-10-12 |
+| motion-002 | Interpolated motion by identity | 16 | ✅ Complete | 2026-10-13 |
+| motion-003 | Consequences of an intervention | 10 | ✅ Complete | 2026-10-13 |
+| motion-004 | City character | 8 | 📋 Planned | - |
+| motion-005 | Integration: verified in the browser, measured | 8 | 📋 Planned | - |
 | polish-001 | Keyboard, focus and honest labels | 9 | ✅ Complete | 2026-10-09 |
 | polish-002 | Layout that fits: resize refit, split-view panels and narrow widths | 6 | ✅ Complete | 2026-10-09 |
 | polish-003 | Calm motion and clear markers in the renderer | 10 | ✅ Complete | 2026-10-09 |
@@ -29,4 +35,4 @@
 | timeline-005 | The full brief workflow in the browser, measured | 9 | ✅ Complete | 2026-10-09 |
 
 ## Test Summary
-- Estimated total: 367
+- Estimated total: 423

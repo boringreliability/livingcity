@@ -23,6 +23,9 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - motion-003: while comparing, interventions of A and B at nearly the same time sit next to each other in the timeline's lower lane ("✕B✕A"); at the same tick they overlap.
 - motion-003: a timeline marker at the head stays centred on its tick (the frozen marker-position test pins that), so its glyph can overhang the track's right edge by half its width.
 - motion-003: at a crowded junction a queue pin may take a place up to about 30 px from its queue head, to stay clear of the labels there.
+- motion-003: queue pins step clear of labels and other pins, not of panels. At 1280×720 a pin at the Old Bridge's south approach can sit under the Legend panel; its queue is still listed in the Intervention panel.
+- motion-003: a timeline marker at the window's start is drawn about 8 px right of its tick, so its glyph stays inside the track.
+- motion-003: the frozen `motion003.spec` test 9 (`compare_shows_crossings_since_branch`) expects queue pins on A at the moment it samples. When A has no queue of 3 or more cars at that moment, no pin is correct and the test fails; it passed 3 of 3 on rerun. Changing it needs the user's authorization (for the epic gate).
 - motion-002: if B's renderer cannot be created while comparing (only after a WebGL failure), B's presenter is never advanced; its history then starts over every 128 frames, which moves the shared presentation time forward in a step.
 
 ## (a) Accessibility and keyboard
