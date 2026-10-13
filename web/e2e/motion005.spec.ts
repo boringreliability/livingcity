@@ -34,7 +34,9 @@ const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTML
 
 /** The motion bound (ward spec): metres a drawn car may move between two animation frames dt ms apart. */
 const V_MAX = 20;
-const bound = (m: number, dtMs: number) => (3 * V_MAX * m * dtMs) / 1000 + 2;
+/** dt is between the samples' animation-frame timestamps, plus one frame: the sampler's callback and the app's
+ *  own may run in either order within a frame, so one sample step can span two of the app's frames. */
+const bound = (m: number, dtMs: number) => (3 * V_MAX * m * (dtMs + 17)) / 1000 + 2;
 
 async function ready(page: Page, url = '/') {
   await page.goto(url);
@@ -90,6 +92,50 @@ async function maxLum(page: Page, c: P): Promise<number> {
   }, buf.toString('base64'));
 }
 const hideVehicles = (page: Page, on: boolean) => page.evaluate((v) => window.__livingcity!.setDebug({ hideVehicles: v }), on);
+
+type RunSample = { tick: number; scenario: 'A' | 'B'; presA: number; onLink: number; n: number };
+/** From now for `ms`, on every animation frame: the tick, the viewed scenario, the presented tick and how many
+ *  sampled cars (≤ 40 with a screen position) are drawn on their frame record's link. */
+function sampleRunning(page: Page, ms: number): Promise<RunSample[]> {
+  return page.evaluate(
+    (ms) =>
+      new Promise<RunSample[]>((resolve) => {
+        const h = window.__livingcity as unknown as Hook;
+        const out: RunSample[] = [];
+        const end = performance.now() + ms;
+        const step = () => {
+          let onLink = 0;
+          let n = 0;
+          const s = h.snapshot();
+          for (let i = 0; i < s.frameRecords && n < 40; i++) {
+            const f = h.frameVehicle(i);
+            const v = h.vehicleDraw(i);
+            if (!f || !v || !h.vehicleScreenCenter(i)) continue;
+            n++;
+            if (v.link === f.link) onLink++;
+          }
+          out.push({ tick: s.tick, scenario: s.scenario, presA: h.diagnostics().presentation.tickA, onLink, n });
+          if (performance.now() < end) requestAnimationFrame(step);
+          else resolve(out);
+        };
+        requestAnimationFrame(step);
+      }),
+    ms,
+  );
+}
+/** After a seek or a scenario switch while running: never ahead of the newest frame, never backwards from the
+ *  first sample on, and cars on their records' links (stale history would draw them from their old places). */
+function checkFresh(after: RunSample[], floor: number, what: string) {
+  expect(after.length, `${what}: samples`).toBeGreaterThanOrEqual(10);
+  let last = -Infinity;
+  for (const x of after) {
+    expect(x.presA, `${what}: the presentation starts at the new state`).toBeGreaterThanOrEqual(floor);
+    expect(x.presA, `${what}: never ahead of the newest frame`).toBeLessThanOrEqual(x.tick);
+    expect(x.presA, `${what}: the presented tick moves forward`).toBeGreaterThanOrEqual(last);
+    last = x.presA;
+    if (x.n) expect(x.onLink / x.n, `${what}: cars on their records' links`).toBeGreaterThanOrEqual(0.8);
+  }
+}
 
 async function shot(page: Page, name: string) {
   const path = test.info().outputPath(`${name}.png`);
@@ -151,9 +197,9 @@ function sampleTracked(page: Page, ms: number, stopOffLink: number | null): Prom
         const out: TrackedSample[] = [];
         const end = performance.now() + ms;
         let after = 0;
-        const step = () => {
+        const step = (frameT: number) => {
           const d = h.trackedDraw();
-          out.push({ t: performance.now(), d, marker: h.trackedMarker(), centre: h.trackedScreenCenter(), route: h.snapshot().trackedRoute });
+          out.push({ t: frameT, d, marker: h.trackedMarker(), centre: h.trackedScreenCenter(), route: h.snapshot().trackedRoute });
           if (stopOff !== null && d && d.link !== stopOff) after++;
           // keep 30 more frames after the crossing so the step across it and after it are both seen
           if (performance.now() < end && after < 30) requestAnimationFrame(step);
@@ -291,47 +337,14 @@ for (const m of [1, 20]) {
     await sleep(3000);
     // a seek while running (Red r1 MAJOR 1): the presentation never shows a tick from before the seek, cars are
     // drawn on their new records' links, and the presented tick only moves forward from the seek on
-    type RunSample = { tick: number; presA: number; onLink: number; n: number };
     const runBefore = (await snap(page)).tick;
-    const runSampling = page.evaluate(
-      () =>
-        new Promise<RunSample[]>((resolve) => {
-          const h = window.__livingcity as unknown as Hook;
-          const out: RunSample[] = [];
-          const end = performance.now() + 1500;
-          const step = () => {
-            let onLink = 0;
-            let n = 0;
-            const records = h.snapshot().frameRecords;
-            for (let i = 0; i < records && n < 40; i++) {
-              const f = h.frameVehicle(i);
-              const v = h.vehicleDraw(i);
-              if (!f || !v || !h.vehicleScreenCenter(i)) continue;
-              n++;
-              if (v.link === f.link) onLink++;
-            }
-            out.push({ tick: h.snapshot().tick, presA: h.diagnostics().presentation.tickA, onLink, n });
-            if (performance.now() < end) requestAnimationFrame(step);
-            else resolve(out);
-          };
-          requestAnimationFrame(step);
-        }),
-    );
+    const runSampling = sampleRunning(page, 1500);
     await page.getByRole('button', { name: '−1 min' }).click();
     const run = await runSampling;
     await attachJson(`seek-running-${m}x-samples`, run);
     const runAfter = run.filter((x) => x.tick < runBefore);
-    expect(runAfter.length, `${m}×: samples after the running seek`).toBeGreaterThanOrEqual(10);
-    const seekTick = runAfter[0]!.tick;
-    let lastPres = -Infinity;
-    for (const x of runAfter) {
-      expect(x.presA, `${m}×: no tick from before the seek is shown`).toBeLessThan(runBefore);
-      expect(x.presA, `${m}×: the presentation starts at the seek`).toBeGreaterThanOrEqual(seekTick);
-      expect(x.presA, `${m}×: never ahead of the newest frame`).toBeLessThanOrEqual(x.tick);
-      expect(x.presA, `${m}×: the presented tick moves forward`).toBeGreaterThanOrEqual(lastPres);
-      lastPres = x.presA;
-      if (x.n) expect(x.onLink / x.n, `${m}×: cars on their records' links after the running seek`).toBeGreaterThanOrEqual(0.8);
-    }
+    for (const x of runAfter) expect(x.presA, `${m}×: no tick from before the seek is shown`).toBeLessThan(runBefore);
+    checkFresh(runAfter, runAfter[0]?.tick ?? 0, `${m}× running seek`);
     await pause(page);
     const before = (await snap(page)).tick;
     // one seek, sampled from the click on: after it, the presentation stands on the new frame and nothing moves
@@ -396,6 +409,14 @@ for (const m of [1, 20]) {
     const last = s.filter((x) => x.d).at(-1)!.d!;
     const progressed = last.link !== d0.link ? route.includes(last.link) || s.some((x) => x.route.includes(last.link)) : last.s > d0.s + 0.5;
     expect(progressed, `${m}×: the followed car moves on B`).toBe(true);
+    // a scenario switch while running (Red r2 minor 2): viewing A again clears B's motion history
+    await page.keyboard.press('Escape');
+    const switching = sampleRunning(page, 1500);
+    await page.getByRole('button', { name: 'A: original' }).click();
+    const sw = await switching;
+    await attachJson(`switch-${m}x-samples`, sw);
+    const onA = sw.filter((x) => x.scenario === 'A');
+    checkFresh(onA.slice(1), onA[0]?.tick ?? 0, `${m}× switch to A`);
   });
 }
 
@@ -426,7 +447,8 @@ test('flow_queue_forms_and_releases', async ({ page }) => {
         new Promise<{ queued: number; behind: boolean }[]>((resolve) => {
           const h = window.__livingcity as unknown as Hook;
           const out: { queued: number; behind: boolean }[] = [];
-          const end = performance.now() + 3000;
+          const t0 = performance.now();
+          let withQueue = 0;
           const step = () => {
             let queued = 0;
             let behind = true;
@@ -440,7 +462,10 @@ test('flow_queue_forms_and_releases', async ({ page }) => {
               if (v.s > v.stop + 0.05) behind = false;
             }
             out.push({ queued, behind });
-            if (performance.now() < end) requestAnimationFrame(step);
+            if (queued) withQueue++;
+            // ≥ 3 s and ≥ 15 frames with queued cars (load and stop-and-go both thin them out), at most 10 s
+            const ms = performance.now() - t0;
+            if (ms < 10_000 && (ms < 3000 || withQueue < 15)) requestAnimationFrame(step);
             else resolve(out);
           };
           requestAnimationFrame(step);
@@ -450,7 +475,7 @@ test('flow_queue_forms_and_releases', async ({ page }) => {
     await attachJson(`queue-${mm}x-frames`, frames);
     for (const f of frames) expect(f.behind, `${mm}×: queued cars held behind the stop line`).toBe(true);
     // not vacuous: queued cars were on the link in enough frames to see them held (the queue may drain at 20×)
-    expect(frames.filter((f) => f.queued >= 1).length, `${mm}×: frames with queued cars`).toBeGreaterThanOrEqual(20);
+    expect(frames.filter((f) => f.queued >= 1).length, `${mm}×: frames with queued cars`).toBeGreaterThanOrEqual(15);
   }
   // release
   await speed(page, 20);
@@ -563,9 +588,44 @@ test('flow_side_by_side_compare', async ({ page }) => {
   await expect.poll(async () => (await snap(page)).scenario).toBe('B');
   await page.getByRole('button', { name: 'Compare side by side' }).click();
   await expect.poll(async () => (await snap(page)).compare).toBe(true);
+  // B's map read from its pixels (Red r2 MAJOR 1: no hook reports B's cars): labels hidden, so the bright
+  // pixels on B (open bridge: no hatch, no ring, no route) are cars: moving (light) or queued (orange)
+  await page.addStyleTag({ content: '.labels { visibility: hidden !important; }' });
+  const carMaskB = async (): Promise<Set<number>> => {
+    // everything but the canvases is hidden for the capture (panels, side labels and badges are light too)
+    await page.evaluate(() => {
+      const st = document.createElement('style');
+      st.id = 'zz-hide-panels';
+      st.textContent = 'body * { visibility: hidden !important; } canvas { visibility: visible !important; }';
+      document.head.append(st);
+    });
+    await page.mouse.move(3, 3); // no hovered road (its dashed stroke is light)
+    await sleep(100);
+    const buf = await page.locator('canvas.city-b').screenshot({ animations: 'disabled' });
+    await page.evaluate(() => document.getElementById('zz-hide-panels')?.remove());
+    return page.evaluate(async (b64) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const cv = new OffscreenCanvas(img.width, img.height);
+      const g = cv.getContext('2d')!;
+      g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, img.width, img.height).data;
+      const out: number[] = [];
+      for (let i = 0; i < d.length; i += 4) {
+        // 4 px off the canvas edges: the A|B divider is a light border on B's canvas
+        const [x, y] = [(i / 4) % img.width, Math.floor(i / 4 / img.width)];
+        if (x < 4 || y < 4 || x >= img.width - 4 || y >= img.height - 4) continue;
+        const [r, gg, b] = [d[i]!, d[i + 1]!, d[i + 2]!];
+        if ((r >= 190 && gg >= 190 && b >= 190) || (r >= 220 && gg >= 130 && gg <= 200 && b <= 90)) out.push(i / 4);
+      }
+      return out;
+    }, buf.toString('base64')).then((xs) => new Set(xs));
+  };
   for (const m of [1, 20]) {
     await speed(page, m);
     await play(page);
+    const maskB0 = await carMaskB();
     const frames = await page.evaluate(
       () =>
         new Promise<{ same: boolean; cams: boolean; pres: boolean; tickA: number; tickB: number | null; cars: string[] }[]>((resolve) => {
@@ -602,6 +662,11 @@ test('flow_side_by_side_compare', async ({ page }) => {
     }
     expect(frames.filter((f) => f.pres).length / frames.length, `${m}×: one presentation time`).toBeGreaterThanOrEqual(0.95);
     // both maps move together (Red r1 MAJOR 2): both presented ticks advance, and A's drawn cars move
+    const maskB1 = await carMaskB();
+    const union = new Set([...maskB0, ...maskB1]);
+    const changed = [...union].filter((p) => !(maskB0.has(p) && maskB1.has(p))).length;
+    expect(maskB0.size, `${m}×: cars drawn on B (${maskB0.size} car pixels)`).toBeGreaterThanOrEqual(40);
+    expect(changed / union.size, `${m}×: B's cars move`).toBeGreaterThanOrEqual(0.3);
     const [f0, f1] = [frames[0]!, frames.at(-1)!];
     expect(f1.tickA, `${m}×: A's presentation advances`).toBeGreaterThan(f0.tickA);
     expect(f1.tickB ?? -1, `${m}×: B's presentation advances`).toBeGreaterThan(f0.tickB ?? Infinity);

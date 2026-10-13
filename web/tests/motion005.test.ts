@@ -114,15 +114,25 @@ test('epic_measured_before_and_after', () => {
   const hw = j['hardware'] as Record<string, any>;
   expect(hw, 'hardware group').toBeTruthy();
   if (hw['measured'] === false) expect(String(hw['reason'] ?? '').length, 'why hardware was not measured').toBeGreaterThanOrEqual(20);
-  else expect(String(hw['renderer'] ?? ''), 'hardware renderer').not.toMatch(/SwiftShader/);
-  // the runs in their order, alternating before/after, each with its load (Red r1 minor 5)
-  const runs = j['runs'] as { label: string; build: 'before' | 'after'; load1min: number }[];
+  else {
+    expect(String(hw['renderer'] ?? ''), 'hardware renderer').not.toMatch(/SwiftShader/);
+    const hwMetrics = Object.values(hw).filter((v) => v && typeof v === 'object' && finite((v as Record<string, unknown>)['after']));
+    expect(hwMetrics.length, 'hardware metrics measured').toBeGreaterThan(0);
+  }
+  // the runs in their order, alternating before/after, each with its load and start, within one hour (Red r1
+  // minor 5, r2 minor 3)
+  const runs = j['runs'] as { label: string; build: 'before' | 'after'; load1min: number; startedAt: string }[];
   expect(Array.isArray(runs) && runs.length >= 4, 'a run list').toBe(true);
   runs.forEach((r, i) => {
     expect(['before', 'after'], `run ${i} build`).toContain(r.build);
     expect(Number.isFinite(r.load1min), `run ${i} load`).toBe(true);
-    if (i > 0) expect(r.build, `run ${i}: interleaved`).not.toBe(runs[i - 1]!.build);
+    expect(Number.isFinite(Date.parse(r.startedAt)), `run ${i} startedAt`).toBe(true);
+    if (i > 0) {
+      expect(r.build, `run ${i}: interleaved`).not.toBe(runs[i - 1]!.build);
+      expect(Date.parse(r.startedAt), `run ${i}: in order`).toBeGreaterThanOrEqual(Date.parse(runs[i - 1]!.startedAt));
+    }
   });
+  expect(Date.parse(runs.at(-1)!.startedAt) - Date.parse(runs[0]!.startedAt), 'the runs start within one hour').toBeLessThanOrEqual(3600_000);
 
   // docs/performance.md prints the epic table from this JSON
   const doc = read('docs/performance.md');
