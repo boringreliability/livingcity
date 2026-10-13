@@ -94,15 +94,21 @@ async function maxLum(page: Page, c: P): Promise<number> {
 const hideVehicles = (page: Page, on: boolean) => page.evaluate((v) => window.__livingcity!.setDebug({ hideVehicles: v }), on);
 
 type RunSample = { tick: number; scenario: 'A' | 'B'; presA: number; onLink: number; n: number };
-/** From now for `ms`, on every animation frame: the tick, the viewed scenario, the presented tick and how many
- *  sampled cars (≤ 40 with a screen position) are drawn on their frame record's link. */
-function sampleRunning(page: Page, ms: number): Promise<RunSample[]> {
+/** After-event test for the samplers: a tick below `tickBelow`, or the viewed scenario `scenario`. */
+type After = { tickBelow?: number; scenario?: 'A' | 'B' };
+/**
+ * From now on every animation frame: the tick, the viewed scenario, the presented tick and how many sampled cars
+ * (≤ 40 with a screen position) are drawn on their frame record's link. Runs until ≥ `minMs` have passed and
+ * ≥ `minAfter` samples are after the event, at most 10 s (Red r3 MAJOR 1: a loaded machine draws fewer frames).
+ */
+function sampleRunning(page: Page, minMs: number, minAfter: number, after: After): Promise<RunSample[]> {
   return page.evaluate(
-    (ms) =>
+    ([minMs, minAfter, after]) =>
       new Promise<RunSample[]>((resolve) => {
         const h = window.__livingcity as unknown as Hook;
         const out: RunSample[] = [];
-        const end = performance.now() + ms;
+        const t0 = performance.now();
+        let n0 = 0;
         const step = () => {
           let onLink = 0;
           let n = 0;
@@ -115,12 +121,14 @@ function sampleRunning(page: Page, ms: number): Promise<RunSample[]> {
             if (v.link === f.link) onLink++;
           }
           out.push({ tick: s.tick, scenario: s.scenario, presA: h.diagnostics().presentation.tickA, onLink, n });
-          if (performance.now() < end) requestAnimationFrame(step);
+          if ((after.tickBelow === undefined || s.tick < after.tickBelow) && (after.scenario === undefined || s.scenario === after.scenario)) n0++;
+          const ms = performance.now() - t0;
+          if (ms < 10_000 && (ms < minMs || n0 < minAfter)) requestAnimationFrame(step);
           else resolve(out);
         };
         requestAnimationFrame(step);
       }),
-    ms,
+    [minMs, minAfter, after] as const,
   );
 }
 /** After a seek or a scenario switch while running: never ahead of the newest frame, never backwards from the
@@ -187,7 +195,7 @@ async function followMovingCar(page: Page, minFrac = 0): Promise<number[]> {
   return route;
 }
 
-type TrackedSample = { t: number; d: TrackedDraw | null; marker: { page: P } | null; centre: P | null; route: number[] };
+type TrackedSample = { t: number; d: TrackedDraw | null; marker: { page: P } | null; centre: P | null; route: number[]; presA: number };
 /** Tracked-car samples on every animation frame, for `ms` or until it has left `stopOffLink` (if given). */
 function sampleTracked(page: Page, ms: number, stopOffLink: number | null): Promise<TrackedSample[]> {
   return page.evaluate(
@@ -199,7 +207,7 @@ function sampleTracked(page: Page, ms: number, stopOffLink: number | null): Prom
         let after = 0;
         const step = (frameT: number) => {
           const d = h.trackedDraw();
-          out.push({ t: frameT, d, marker: h.trackedMarker(), centre: h.trackedScreenCenter(), route: h.snapshot().trackedRoute });
+          out.push({ t: frameT, d, marker: h.trackedMarker(), centre: h.trackedScreenCenter(), route: h.snapshot().trackedRoute, presA: h.diagnostics().presentation.tickA });
           if (stopOff !== null && d && d.link !== stopOff) after++;
           // keep 30 more frames after the crossing so the step across it and after it are both seen
           if (performance.now() < end && after < 30) requestAnimationFrame(step);
@@ -209,6 +217,13 @@ function sampleTracked(page: Page, ms: number, stopOffLink: number | null): Prom
       }),
     [ms, stopOffLink] as const,
   );
+}
+
+/** While running, the picture is between frames (interpolated): the presented tick is fractional on ≥ 50 % of the
+ *  samples (Red r3 minor 1: drawing at frame records gives whole ticks). */
+function checkInterpolated(samples: TrackedSample[], what: string) {
+  const frac = samples.filter((x) => Math.abs(x.presA - Math.round(x.presA)) > 1e-6).length;
+  expect(frac / samples.length, `${what}: presented between frames`).toBeGreaterThanOrEqual(0.5);
 }
 
 /**
@@ -257,6 +272,7 @@ for (const m of [1, 20]) {
       const s = await sampleTracked(page, 40_000, first);
       await attachJson(`junction-${m}x-samples-${attempt}`, s);
       crossed = checkTracked(s, m, `${m}× junction`);
+      checkInterpolated(s, `${m}× junction`);
       if (crossed) await shot(page, `junction-${m}x-after`);
       await page.keyboard.press('Escape');
     }
@@ -322,6 +338,7 @@ for (const m of [1, 20]) {
     await attachJson(`resume-${m}x-samples`, s);
     expect((await snap(page)).tick, `${m}×: tick advances after resume`).toBeGreaterThan(t0);
     checkTracked(s, m, `${m}× resume`);
+    checkInterpolated(s, `${m}× resume`);
     const last = s.filter((x) => x.d).at(-1)!.d!;
     const progressed = last.link !== startLink ? route.includes(last.link) || s.some((x) => x.route.includes(last.link)) : last.s > startS;
     expect(progressed, `${m}×: the tracked car moves on after resume`).toBe(true);
@@ -338,7 +355,7 @@ for (const m of [1, 20]) {
     // a seek while running (Red r1 MAJOR 1): the presentation never shows a tick from before the seek, cars are
     // drawn on their new records' links, and the presented tick only moves forward from the seek on
     const runBefore = (await snap(page)).tick;
-    const runSampling = sampleRunning(page, 1500);
+    const runSampling = sampleRunning(page, 1500, 10, { tickBelow: runBefore });
     await page.getByRole('button', { name: '−1 min' }).click();
     const run = await runSampling;
     await attachJson(`seek-running-${m}x-samples`, run);
@@ -351,11 +368,12 @@ for (const m of [1, 20]) {
     // (a presenter that kept history from before the seek would animate cars from their old places)
     type SeekSample = { tick: number; presA: number; cars: { link: number; s: number; fLink: number; fS: number; world: P }[] };
     const sampling = page.evaluate(
-      () =>
+      (before) =>
         new Promise<SeekSample[]>((resolve) => {
           const h = window.__livingcity as unknown as Hook;
           const out: SeekSample[] = [];
-          const end = performance.now() + 1500;
+          const t0 = performance.now();
+          let n0 = 0;
           const step = () => {
             const cars: SeekSample['cars'] = [];
             const records = h.snapshot().frameRecords;
@@ -366,11 +384,14 @@ for (const m of [1, 20]) {
               cars.push({ link: v.link, s: v.s, fLink: f.link, fS: f.s, world: v.world });
             }
             out.push({ tick: h.snapshot().tick, presA: h.diagnostics().presentation.tickA, cars });
-            if (performance.now() < end) requestAnimationFrame(step);
+            if (out.at(-1)!.tick < before) n0++;
+            const ms = performance.now() - t0;
+            if (ms < 10_000 && (ms < 1500 || n0 < 10)) requestAnimationFrame(step);
             else resolve(out);
           };
           requestAnimationFrame(step);
         }),
+      before,
     );
     await page.getByRole('button', { name: '−1 min' }).click();
     const seek = await sampling;
@@ -404,6 +425,7 @@ for (const m of [1, 20]) {
     const s = await sampleTracked(page, 3000, null);
     await attachJson(`branch-${m}x-samples`, s);
     checkTracked(s, m, `${m}× on B`);
+    checkInterpolated(s, `${m}× on B`);
     expect((await snap(page)).tick, `${m}×: B advances`).toBeGreaterThan(t0);
     // the drawn car moves on B (Red r1 MAJOR 2: a frozen presentation passes every other check)
     const last = s.filter((x) => x.d).at(-1)!.d!;
@@ -411,12 +433,14 @@ for (const m of [1, 20]) {
     expect(progressed, `${m}×: the followed car moves on B`).toBe(true);
     // a scenario switch while running (Red r2 minor 2): viewing A again clears B's motion history
     await page.keyboard.press('Escape');
-    const switching = sampleRunning(page, 1500);
+    const switching = sampleRunning(page, 1500, 11, { scenario: 'A' });
     await page.getByRole('button', { name: 'A: original' }).click();
     const sw = await switching;
     await attachJson(`switch-${m}x-samples`, sw);
     const onA = sw.filter((x) => x.scenario === 'A');
     checkFresh(onA.slice(1), onA[0]?.tick ?? 0, `${m}× switch to A`);
+    // viewing a scenario pauses it (host): the presentation stands exactly on A's frame (Red r3 minor 2)
+    for (const x of onA.slice(1)) expect(x.presA, `${m}×: A presented at its own frame`).toBe(x.tick);
   });
 }
 
