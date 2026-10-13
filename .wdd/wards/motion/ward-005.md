@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "Integration: verified in the browser, measured"
 epic: "motion"
-status: "red"
+status: "approved"
 dependencies: ["motion-001", "motion-002", "motion-003", "motion-004"]
 layer: "typescript"
 estimated_tests: 8
