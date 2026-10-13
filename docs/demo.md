@@ -59,6 +59,7 @@ The **Comparison** panel counts the same trips in both: those generated since th
 - **Generated** is equal in A and B. Demand is identical; only the outcome differs.
 - **Completed**, **Incomplete** (still on their way or waiting), the removals, and the **mean / p95 travel time** show the consequences.
 - The difference column gives the sign and an arrow ▲/▼.
+- The timeline marks each scenario's own interventions after the branch: "✕B" is a closure in B, "✕A" one in A (the names say so too).
 - **Crossings · North / Main / Old Bridge** count the vehicles over each bridge since the branch, in A and B, for the same trips and time window.
 - Incomplete trips are always listed, so a scenario does not look better just because its slowest trips have not arrived yet.
 

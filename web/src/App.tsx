@@ -73,8 +73,25 @@ interface FrameView {
 
 type Intervention = { kind: 'close' | 'open'; link: number };
 
-/** Where a queue pin may sit around its point: above, below, right, left (CSS transforms). */
-const PIN_PLACES = ['translate(-50%, calc(-100% - 4px))', 'translate(-50%, 4px)', 'translate(4px, -50%)', 'translate(calc(-100% - 4px), -50%)'];
+/** Where a queue pin may sit around its point (CSS transforms): above, below, right, left, the diagonals,
+ *  then the same a pin's size further out; the nearest free one wins. */
+const PIN_PLACES = [0, 1].flatMap((far) => {
+  const gap = far ? 22 : 4;
+  const above = `calc(-100% - ${gap}px)`;
+  const below = `${gap}px`;
+  const right = `${gap}px`;
+  const left = `calc(-100% - ${gap}px)`;
+  return [
+    `translate(-50%, ${above})`,
+    `translate(-50%, ${below})`,
+    `translate(${right}, -50%)`,
+    `translate(${left}, -50%)`,
+    `translate(${right}, ${above})`,
+    `translate(${left}, ${above})`,
+    `translate(${right}, ${below})`,
+    `translate(${left}, ${below})`,
+  ];
+});
 
 /** `?demand=` for stress measurements, read once (an invalid value falls back to 1 with a warning). */
 const DEMAND = (() => {
@@ -282,21 +299,37 @@ export function App() {
     for (const layer of document.querySelectorAll<HTMLElement>('.labels')) {
       const shown = (e: HTMLElement) => e.style.visibility !== 'hidden';
       const taken = [...layer.querySelectorAll<HTMLElement>('.zone, .bridge-label')].filter(shown).map((e) => e.getBoundingClientRect());
+      /** Overlap area with what is already there. */
+      const covered = (r: DOMRect) =>
+        taken.reduce((a, t) => a + Math.max(0, Math.min(r.right, t.right) - Math.max(r.left, t.left)) * Math.max(0, Math.min(r.bottom, t.bottom) - Math.max(r.top, t.top)), 0);
       for (const pin of layer.querySelectorAll<HTMLElement>('.queue-pin')) {
+        // the first free place, else the one that covers least (a crowded junction)
         let chosen = PIN_PLACES[0]!;
+        let least = Infinity;
         for (const place of PIN_PLACES) {
           pin.style.transform = place;
-          const r = pin.getBoundingClientRect();
-          if (!taken.some((t) => r.left < t.right && t.left < r.right && r.top < t.bottom && t.top < r.bottom)) {
-            chosen = place;
-            break;
-          }
+          const c = covered(pin.getBoundingClientRect());
+          if (c < least) [chosen, least] = [place, c];
+          if (c === 0) break;
         }
         pin.style.transform = chosen;
         if (shown(pin)) taken.push(pin.getBoundingClientRect());
       }
     }
   };
+  /** Place every map mark, let the pins step aside, hide what is cut (each animation frame, and after
+   *  every render, so a newly mounted pin never shows in its default place). */
+  const placeMarks = () => {
+    if (!marks.current.size) return;
+    const els: HTMLElement[] = [];
+    for (const m of marks.current.values()) {
+      placeLabel(m.el, m);
+      els.push(m.el);
+    }
+    clearPins();
+    hideCutLabels(els);
+  };
+  useLayoutEffect(placeMarks);
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
   const [following, setFollowing] = useState(false);
@@ -776,15 +809,7 @@ export function App() {
         }
       });
       if (placed.length) hideCutLabels(placed);
-      if (marks.current.size) {
-        const els: HTMLElement[] = [];
-        for (const m of marks.current.values()) {
-          placeLabel(m.el, m);
-          els.push(m.el);
-        }
-        clearPins();
-        hideCutLabels(els);
-      }
+      placeMarks();
       renderFrames.current++;
       scheduleHousekeeping();
       raf = requestAnimationFrame(loop);

@@ -385,6 +385,7 @@ button.bridge.closed {
 
 .consequence-crossings th[scope='row'] {
   padding-left: 0;
+  white-space: nowrap;
   text-align: left;
   font-weight: 500;
 }
@@ -608,6 +609,15 @@ button.bridge.closed {
 
 .timeline-branch.to-left {
   transform: translateX(calc(-100% + 0.45em));
+}
+
+/* at the window's edges a marker stays inside the track */
+.timeline-track .timeline-intervention.at-start {
+  transform: none;
+}
+
+.timeline-track .timeline-intervention.at-end {
+  transform: translateX(-100%);
 }
 
 /* an intervention (motion-003): ✕ closed, ○ reopened, in the track's lower lane */

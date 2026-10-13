@@ -18,6 +18,9 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 
 - motion-002: a car's queued shape (square, brake band) comes from the newest frame, while its drawn position trails it by up to 4 ticks, so a car can look queued shortly before it visibly stops.
 - motion-002: the presentation latency (281–311 ms at 1×, 37–38 ms at 20×) is measured by `motion002.spec` test 8 and logged by it; it is not written to a `web/perf-results` file.
+- motion-003: the timeline's intervention markers are inside the timeline slider, whose children screen readers may treat as presentational; the same interventions are listed as text in the Intervention panel.
+- motion-003: while the Intervention panel is shown, the guide's band (100 px) stays reserved even when the guide is hidden, so the panels below it never move onto other roads.
+- motion-003: while comparing, interventions of A and B at nearly the same time sit next to each other in the timeline's lower lane ("✕B✕A"); at the same tick they overlap.
 - motion-002: if B's renderer cannot be created while comparing (only after a WebGL failure), B's presenter is never advanced; its history then starts over every 128 frames, which moves the shared presentation time forward in a step.
 
 ## (a) Accessibility and keyboard
