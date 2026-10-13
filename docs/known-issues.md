@@ -23,6 +23,12 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - motion-003: while comparing, interventions of A and B at nearly the same time sit next to each other in the timeline's lower lane ("✕B✕A"); at the same tick they overlap.
 - motion-003: a timeline marker at the head stays centred on its tick (the frozen marker-position test pins that), so its glyph can overhang the track's right edge by half its width.
 - motion-003: at a crowded junction a queue pin may take a place up to about 30 px from its queue head, to stay clear of the labels there.
+- motion-004: the legend explains the closure ring and the followed car's brackets, but not the dashed route or its end square. The legend's footprint is pinned (703.5 px), and today it is 702 px wide.
+- motion-004: the building shader picks each roof mark by kind index (residential, workplace, hospital, waterfront), while the `districtSamples` hook reads `DISTRICT_STYLE[kind].mark`. They agree today; reassigning marks in `DISTRICT_STYLE` would need the shader changed too.
+- motion-004: the waterfront shed lines are the faintest roof mark, about 9 grey levels above their fill, because every decor colour stays below the darkest road.
+- motion-004: under SwiftShader at `?demand=5` the render interval's p95 is one 16.7 ms step higher than before (the per-pixel building shader on a software rasteriser); draw CPU is unchanged.
+- motion-004: at fit zoom under heavy demand, the followed route's white dashes can look like a stream of cars.
+- motion-004: small leftovers: the renderer rebuilds the two district colour arrays every frame (8 numbers each), River City still draws the 6 m bank strip under the 10 m quay, and `DECOR_COLORS.outline` is kept for the palette test while buildings use the district outlines.
 - motion-003: queue pins step clear of labels and other pins, not of panels. At 1280×720 a pin at the Old Bridge's south approach can sit under the Legend panel; its queue is still listed in the Intervention panel.
 - motion-003: a timeline marker at the window's start is drawn about 8 px right of its tick, so its glyph stays inside the track.
 - motion-003: the frozen `motion003.spec` test 9 (`compare_shows_crossings_since_branch`) expects queue pins on A at the moment it samples. When A has no queue of 3 or more cars at that moment, no pin is correct and the test fails; it passed 3 of 3 on rerun. Changing it needs the user's authorization (for the epic gate).

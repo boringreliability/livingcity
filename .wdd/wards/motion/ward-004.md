@@ -3,12 +3,12 @@ ward: 4
 revision: null
 name: "City character"
 epic: "motion"
-status: "gold"
+status: "complete"
 dependencies: ["motion-003"]
 layer: "typescript"
 estimated_tests: 9
 created: "2026-10-11"
-completed: null
+completed: "2026-10-13"
 ---
 # Ward motion-004: City character
 

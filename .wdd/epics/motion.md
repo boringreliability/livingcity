@@ -83,7 +83,7 @@ It must not break any frozen visual test that pins valid behaviour.
 | motion-001 | complete |
 | motion-002 | complete |
 | motion-003 | complete |
-| motion-004 | M4: city character |
+| motion-004 | complete |
 | motion-005 | M5: integration (browser flows, measurements, docs) |
 
 ## Completion criteria
