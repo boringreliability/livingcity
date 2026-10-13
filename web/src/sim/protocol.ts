@@ -84,6 +84,8 @@ export interface ComparisonMessage {
   fromTick: number;
   a: Float64Array;
   b: Float64Array;
+  /** Exits since the branch per landmark link (motion-003), A and B; `baseTick` = the branch tick. */
+  crossings?: { a: Float64Array; b: Float64Array; baseTick: number };
 }
 
 /** Replay memory per scenario (snapshot budget); mirrors sim-wasm. */
@@ -185,6 +187,17 @@ export interface FrameMessage {
   nextLinks: Uint16Array;
   /** Per record: the vehicle's trip id (motion-002); the renderer matches cars across frames by it. */
   tripIds: Uint32Array;
+  /** The viewed side's command log as `[tick, kind (0 close, 1 open), link]` triples (motion-003). */
+  interventions: Float64Array;
+  /**
+   * Bridge crossings (motion-003), for the landmark links L in order (north W→E, E→W, central …, south …):
+   * `[posTick, nowBase, …L exits at the position, …L exits at nowBase,
+   *   closeTick, beforeBase, …L exits at closeTick, …L exits at beforeBase]`.
+   * nowBase / beforeBase are the bases of `exits_at(position − 1200)` / `exits_at(closeTick − 1200)`;
+   * closeTick is the latest close command at or before the position. Missing values are NaN; empty
+   * without landmarks.
+   */
+  bridgeFlow: Float64Array;
   linkCounts: Uint16Array;
   linkQueued: Uint16Array;
   closed: Uint32Array;

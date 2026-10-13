@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::command::{Command, CommandError};
+use crate::network::LinkId;
 use crate::world::{CompletedTrip, GeneratedTrip, RemovalLog, World};
 
 /// Ticks between periodic snapshots (1 sim minute).
@@ -288,6 +289,14 @@ impl Timeline {
     fn push_snapshot(&mut self) {
         let s = Arc::new(self.world.snapshot());
         self.add_snapshot(s);
+    }
+
+    /// Cumulative exit counts of `links` at `tick` (ward motion-003, read-only): the position world's
+    /// when `tick ≥ position` (base = position), else the newest retained snapshot at or before `tick`
+    /// (base = its tick); `None` when no retained snapshot is that old.
+    pub fn exits_at(&self, tick: u64, links: &[LinkId]) -> Option<(u64, Vec<u64>)> {
+        let _ = (tick, links);
+        todo!("motion-003 red: exits_at")
     }
 
     /// How many snapshots this timeline shares (the same `Arc`) with `other` (ward polish-005).

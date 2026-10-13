@@ -38,6 +38,10 @@ export interface SimLike {
   next_links?(): Uint16Array;
   /** Trip ids of the last encoded frame, in record order (motion-002). */
   trip_ids?(): Uint32Array;
+  /** `[tick, kind, link]` triples of the command log (motion-003). */
+  command_log?(): Float64Array;
+  /** `[baseTick, exits per link…]` at `tick` (motion-003). */
+  exits_at?(tick: number, links: Uint32Array): Float64Array;
   /** Test hook: panics inside wasm (ward polish-005; optional for fakes). */
   debug_trap?(): void;
   metrics(): Float64Array;

@@ -1,4 +1,5 @@
 import type { Landmarks, PerfStats, TimelineStatus } from '../sim/protocol';
+import type { CrossingRate, InterventionEntry } from './consequences';
 import type { PresentationStats, RenderStats } from './DiagnosticsPanel';
 
 /** Read-only state exposed for end-to-end tests (`window.__livingcity`). */
@@ -11,6 +12,8 @@ export interface LivingCitySnapshot {
   metrics: Record<string, number>;
   closed: number[];
   linkCounts: number[];
+  /** Queued vehicles per link in the viewed frame (motion-003). */
+  linkQueued: number[];
   landmarks: Landmarks | null;
   selectedLink: number | null;
   /** requestAnimationFrame draws so far (rendering is independent of ticks). */
@@ -121,10 +124,25 @@ interface LivingCityHook {
   diagnostics(): LivingCityDiagnostics;
   /** Record `record` of the latest frame (its next link or NO_NEXT), or null. */
   frameVehicle(record: number): { link: number; s: number; queued: boolean; lane: number; next: number } | null;
+  /** The intervention summary's entries (motion-003), as shown. */
+  interventions(): InterventionEntry[];
+  /** Crossings per bridge per 10 sim min (motion-003), as shown; [] without a summary. */
+  crossings(): CrossingRate[];
+  /** Queue pins on A's map (motion-003): link, queued count and page position. */
+  queuePins(): { link: number; queued: number; page: [number, number] }[];
+  /** Bridge name labels on A's map (motion-003): name, page position (centre), shown or hidden as cut. */
+  bridgeLabels(): { name: string; page: [number, number]; shown: boolean }[];
   /** A link's sim length and lanes, or null for an unknown link. */
   linkInfo(link: number): { length: number; lanes: number } | null;
   /** The latest comparison (plain arrays), or null outside the comparison. */
-  comparison(): { tick: number; fromTick: number; a: number[]; b: number[] } | null;
+  comparison(): {
+    tick: number;
+    fromTick: number;
+    a: number[];
+    b: number[];
+    /** Exits since the branch per landmark link (motion-003), or null. */
+    crossings: { a: number[]; b: number[]; baseTick: number } | null;
+  } | null;
   /** Like `linkScreenPoint`, on B's canvas (null when not comparing). */
   linkScreenPointB(link: number, t: number): [number, number] | null;
   startPerfRecording(): void;

@@ -359,6 +359,19 @@ impl Sim {
             .collect()
     }
 
+    /// The command log as `[tick, kind (0 = close, 1 = open), link]` triples, in log order (ward motion-003,
+    /// read-only).
+    pub fn command_log(&self) -> Vec<f64> {
+        Vec::new() // motion-003 red
+    }
+
+    /// `[baseTick, cumulative exits per link…]` at `tick` (`Timeline::exits_at`); baseTick NaN when no
+    /// retained snapshot is that old (ward motion-003, read-only).
+    pub fn exits_at(&self, tick: f64, links: &[u32]) -> Vec<f64> {
+        let _ = (tick, links);
+        Vec::new() // motion-003 red
+    }
+
     pub fn state_hash_hex(&self) -> String {
         format!("{:016x}", self.timeline.world().state_hash())
     }

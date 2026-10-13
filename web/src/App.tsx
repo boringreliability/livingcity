@@ -1004,6 +1004,7 @@ export function App() {
           metrics: f?.metrics ?? {},
           closed: f?.closed ?? [],
           linkCounts: f ? Array.from(f.linkCounts) : [],
+          linkQueued: f ? Array.from(f.linkQueued) : [],
           landmarks: readyRef.current?.landmarks ?? null,
           city: readyRef.current?.city ?? null,
           selectedLink: selectedRef.current,
@@ -1031,7 +1032,9 @@ export function App() {
       },
       comparison: () => {
         const m = comparisonRef.current;
-        return m ? { tick: m.tick, fromTick: m.fromTick, a: Array.from(m.a), b: Array.from(m.b) } : null;
+        if (!m) return null;
+        const x = m.crossings;
+        return { tick: m.tick, fromTick: m.fromTick, a: Array.from(m.a), b: Array.from(m.b), crossings: x ? { a: Array.from(x.a), b: Array.from(x.b), baseTick: x.baseTick } : null };
       },
       linkScreenPointB: (link: number, t: number) => {
         const l = geometry.current?.links[link];
@@ -1061,6 +1064,10 @@ export function App() {
         const v = r.vehicles;
         return { link: v.link(record), s: v.s(record), queued: (v.flags(record) & FLAG_QUEUED) !== 0, lane: v.lane(record), next: r.next[record] ?? NO_NEXT };
       },
+      interventions: () => [], // motion-003 red
+      crossings: () => [],
+      queuePins: () => [],
+      bridgeLabels: () => [],
       linkInfo: (link: number) => {
         const l = geometry.current?.links[link];
         return l ? { length: l.length, lanes: l.lanes } : null;

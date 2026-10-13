@@ -1,8 +1,19 @@
-import type { ReadyMessage } from '../../sim/protocol';
+import type { Landmarks, ReadyMessage } from '../../sim/protocol';
+import type { BridgeNaming } from '../../ui/consequences';
 import type { RoadGeometry } from '../geometry';
 import { LABEL_ICONS, riverCityDecor, type CityDecor } from './riverCity';
 
 export type { CityDecor, CityLabel } from './riverCity';
+
+/**
+ * Display names of the bridges (render-side data, ward motion-003): River City's own names, else
+ * "Bridge 1/2/3", in landmark order (north, central, south).
+ */
+export function bridgeNaming(city: string, landmarks: Landmarks): BridgeNaming {
+  void city;
+  void landmarks;
+  throw new Error('bridgeNaming: not implemented (motion-003 red)');
+}
 
 const PAD_RADIUS_M = 45;
 const MARGIN_M = 2000;
