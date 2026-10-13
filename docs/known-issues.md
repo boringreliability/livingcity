@@ -28,6 +28,8 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - motion-004: the waterfront shed lines are the faintest roof mark, about 9 grey levels above their fill, because every decor colour stays below the darkest road.
 - motion-004: under SwiftShader at `?demand=5` the render interval's p95 is one 16.7 ms step higher than before (the per-pixel building shader on a software rasteriser); draw CPU is unchanged.
 - motion-004: at fit zoom under heavy demand, the followed route's white dashes can look like a stream of cars.
+- motion-005: under SwiftShader at a load of about 40, the presentation lag at 1× measured 0.49–0.57 s, close to the frozen bound of 0.6 s in motion002.spec. On the hardware GPU it is about 0.28 s.
+- motion-005: two Red mutations are not caught by the integration flows: a presenter that ignores scenario and epoch (viewing a scenario pauses it, and A is behind B, so the tick-back reset hides it), and B's map drawing A's traffic (two coordinated edits). Neither shows in the product today.
 - motion-004: small leftovers: the renderer rebuilds the two district colour arrays every frame (8 numbers each), River City still draws the 6 m bank strip under the 10 m quay, and `DECOR_COLORS.outline` is kept for the palette test while buildings use the district outlines.
 - motion-003: queue pins step clear of labels and other pins, not of panels. At 1280×720 a pin at the Old Bridge's south approach can sit under the Legend panel; its queue is still listed in the Intervention panel.
 - motion-003: a timeline marker at the window's start is drawn about 8 px right of its tick, so its glyph stays inside the track.

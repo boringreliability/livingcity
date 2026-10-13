@@ -1,0 +1,329 @@
+{
+  "epic": "motion",
+  "what": "The epic as a whole, before against after, under comparable conditions: interleaved runs (before, after, before, after) on the same machine within one hour. SwiftShader (the headless harness) and the hardware GPU (headed) are kept apart.",
+  "before": {
+    "commit": "19e9fbf",
+    "built": "git archive 19e9fbf, wasm built from its own Rust (wasm-pack 0.13.1), its own @perf harness"
+  },
+  "after": {
+    "commit": "23da733",
+    "built": "the motion-005 Red-approved tree (product code as at motion-004 complete), wasm rebuilt with the same wasm-pack"
+  },
+  "runs": [
+    {
+      "label": "before-1",
+      "build": "before",
+      "load1min": 10.6,
+      "startedAt": "2026-10-13T19:47:55.350603+00:00",
+      "load1minEnd": 34.2
+    },
+    {
+      "label": "after-1",
+      "build": "after",
+      "load1min": 34.2,
+      "startedAt": "2026-10-13T19:53:17.830054+00:00",
+      "load1minEnd": 38.9
+    },
+    {
+      "label": "before-2",
+      "build": "before",
+      "load1min": 38.9,
+      "startedAt": "2026-10-13T19:59:08.365271+00:00",
+      "load1minEnd": 42.6
+    },
+    {
+      "label": "after-2",
+      "build": "after",
+      "load1min": 42.6,
+      "startedAt": "2026-10-13T20:04:28.104211+00:00",
+      "load1minEnd": 23.7
+    }
+  ],
+  "load1min": {
+    "before-1": 10.6,
+    "after-1": 34.2,
+    "before-2": 38.9,
+    "after-2": 42.6
+  },
+  "swiftshader": {
+    "tickMsMean": {
+      "before": [
+        0.075,
+        0.086
+      ],
+      "after": [
+        0.076,
+        0.085
+      ],
+      "unit": "ms per tick",
+      "source": "@perf harness, baseline 1×: measured tick time per frame ÷ ticks (worker, wasm)"
+    },
+    "nativeStepMsMedian": {
+      "before": [
+        0.0152,
+        0.0148
+      ],
+      "after": [
+        0.0151,
+        0.0148
+      ],
+      "unit": "ms per tick",
+      "source": "cargo run -p sim-core --release --example frame_cost_probe -- baseline (native release, River City x1)",
+      "note": "each value is one run: the mean step time over 2000 ticks after 1 sim h; the median is taken across runs"
+    },
+    "renderIntervalMedianMs": {
+      "baseline-1x": {
+        "before": [
+          50,
+          99.9
+        ],
+        "after": [
+          66.7,
+          66.7
+        ],
+        "unit": "ms"
+      },
+      "baseline-20x": {
+        "before": [
+          50,
+          166.7
+        ],
+        "after": [
+          66.7,
+          66.7
+        ],
+        "unit": "ms"
+      },
+      "stress-5x": {
+        "before": [
+          116.7,
+          116.7
+        ],
+        "after": [
+          133.3,
+          150
+        ],
+        "unit": "ms"
+      }
+    },
+    "renderIntervalP95Ms": {
+      "baseline-1x": {
+        "before": [
+          100.0,
+          366.8
+        ],
+        "after": [
+          300,
+          200
+        ],
+        "unit": "ms"
+      },
+      "baseline-20x": {
+        "before": [
+          83.3,
+          400
+        ],
+        "after": [
+          216.7,
+          183.4
+        ],
+        "unit": "ms"
+      },
+      "stress-5x": {
+        "before": [
+          333.3,
+          299.9
+        ],
+        "after": [
+          399.9,
+          400
+        ],
+        "unit": "ms"
+      }
+    },
+    "frameBytes": {
+      "before": [
+        30672,
+        30582
+      ],
+      "after": [
+        37532,
+        37532
+      ],
+      "unit": "bytes per frame",
+      "source": "@perf harness, baseline 20× (the Diagnostics frame size)",
+      "definition": "vehicle records (16 B each) + next links (2 B each), plus trip ids (4 B each) after the epic: the per-vehicle buffers of one frame; per-link arrays are not counted"
+    },
+    "transferBytesPerS": {
+      "before": [
+        272835,
+        272818
+      ],
+      "after": [
+        662522,
+        667641
+      ],
+      "unit": "bytes per wall second",
+      "source": "epic_probe.mjs, running at 20× for 10 s: the byteLength of every typed array in the frame messages the UI received",
+      "framesPerS": {
+        "before": [
+          54.57,
+          54.58
+        ],
+        "after": [
+          53.97,
+          54.38
+        ]
+      }
+    },
+    "pausedFramesPerS": {
+      "before": [
+        54.76,
+        54.95
+      ],
+      "after": [
+        0,
+        0
+      ],
+      "unit": "frames per wall second",
+      "source": "epic_probe.mjs, paused (after 2 s settling), 5 s window"
+    },
+    "pausedBytesPerS": {
+      "before": [
+        261844,
+        263213
+      ],
+      "after": [
+        0,
+        0
+      ],
+      "unit": "bytes per wall second",
+      "source": "epic_probe.mjs, paused, 5 s window"
+    },
+    "presentationLagMsMedian": {
+      "1x": {
+        "before": null,
+        "after": [
+          491.0,
+          573.7
+        ],
+        "unit": "ms",
+        "source": "epic_probe.mjs: the Diagnostics presentation lag, median of 100 ms samples over 10 s at 1×",
+        "note": "before the epic there was no presentation stage: cars were extrapolated ahead of the newest frame in the vertex shader, so the picture did not trail it (it could run ahead and step back: i4)"
+      },
+      "20x": {
+        "before": null,
+        "after": [
+          180.7,
+          123.1
+        ],
+        "unit": "ms",
+        "source": "epic_probe.mjs: the Diagnostics presentation lag, median of 100 ms samples over 10 s at 20×",
+        "note": "before the epic there was no presentation stage: cars were extrapolated ahead of the newest frame in the vertex shader, so the picture did not trail it (it could run ahead and step back: i4)"
+      }
+    }
+  },
+  "hardware": {
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+    "how": "headed Chromium on the GPU (no SwiftShader flags), epic_probe.mjs with \"headed\", dev server per build; display refresh 120 Hz",
+    "rafIntervalMedianMs20x": {
+      "before": [
+        8.3,
+        8.3
+      ],
+      "after": [
+        8.3,
+        8.3
+      ],
+      "unit": "ms",
+      "source": "requestAnimationFrame intervals over 10 s at 20×"
+    },
+    "rafIntervalP95Ms20x": {
+      "before": [
+        9.9,
+        9.9
+      ],
+      "after": [
+        10,
+        10
+      ],
+      "unit": "ms"
+    },
+    "transferBytesPerS": {
+      "before": [
+        276940,
+        276984
+      ],
+      "after": [
+        682627,
+        676401
+      ],
+      "unit": "bytes per wall second"
+    },
+    "pausedFramesPerS": {
+      "before": [
+        55.98,
+        54.58
+      ],
+      "after": [
+        0,
+        0
+      ],
+      "unit": "frames per wall second"
+    },
+    "presentationLagMsMedian": {
+      "1x": {
+        "before": null,
+        "after": [
+          273.6,
+          281.5
+        ],
+        "unit": "ms"
+      },
+      "20x": {
+        "before": null,
+        "after": [
+          24.6,
+          14.7
+        ],
+        "unit": "ms"
+      }
+    },
+    "runs": [
+      {
+        "label": "before-1",
+        "build": "before",
+        "load1min": 16.6,
+        "startedAt": "2026-10-13T20:11:59.789358+00:00"
+      },
+      {
+        "label": "after-1",
+        "build": "after",
+        "load1min": 11.6,
+        "startedAt": "2026-10-13T20:12:34.507079+00:00"
+      },
+      {
+        "label": "before-2",
+        "build": "before",
+        "load1min": 8.9,
+        "startedAt": "2026-10-13T20:13:34.191550+00:00"
+      },
+      {
+        "label": "after-2",
+        "build": "after",
+        "load1min": 10.1,
+        "startedAt": "2026-10-13T20:14:07.944490+00:00"
+      }
+    ]
+  },
+  "conditions": {
+    "browser": "chromium 153.0.8010.12",
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "hardware": "Mac16,7 · Apple M4 Pro",
+    "note": "shared machine; the 1-minute load average rose from about 11 to 43 during the SwiftShader runs (other sessions), so render intervals there are noisy"
+  }
+}

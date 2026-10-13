@@ -3,7 +3,7 @@ ward: 5
 revision: null
 name: "Integration: verified in the browser, measured"
 epic: "motion"
-status: "approved"
+status: "gold"
 dependencies: ["motion-001", "motion-002", "motion-003", "motion-004"]
 layer: "typescript"
 estimated_tests: 8
@@ -136,6 +136,20 @@ Each flow is checked through successive observed frames, sampled on every animat
 - [ ] All six flows behave as described at 1× and at 20×, confirmed by recordings or successive frames, not stills.
 - [ ] The measurements are interleaved before/after, with SwiftShader and hardware apart.
 - [ ] All suites are green locally and on GitHub Actions.
+
+## Gold notes
+- **No product change was needed.** The six flows passed at 1× and 20× on the existing code. Red found no defect; every Red failure was a test oracle. One example: right after a seek, a single frame is drawn straight, without a junction curve.
+- **Measurements:**
+  - Script: `scratchpad` `epic_ab.py` + `epic_probe.mjs`. The result is `web/perf-results/motion-epic-before-after.json`, and `docs/performance.md` § Epic motion has the tables.
+  - The before tree is `git archive 19e9fbf`, with wasm built from its own Rust. Before and after were interleaved, all runs within 17 minutes.
+  - **A hardware-GPU run was possible** (headed Chromium, Apple M4 Pro via Metal, 120 Hz) and is kept in its own group.
+- **Load:** the shared machine's load rose from about 11 to 43 during the SwiftShader runs. Render intervals there are reported but not interpreted as a change caused by the epic.
+- **Suites:**
+  - `cargo test --workspace` and clippy are clean.
+  - vitest: 162 passed, 7 skipped.
+  - Full e2e: 149 passed, 2 skipped, 5 failed. It took 41 min at a 15-minute load of about 28 (normally about 31 min).
+  - The 5 were all timing or frame-count tests (gold_city003 M1, integration_polish `controls_respond_under_load`, motion.spec `tracked_car_moves_continuously`, motion002 `compare_shares_one_presentation_time` and `presentation_latency_is_bounded_in_the_browser`). Rerun alone at a load of about 20, they passed 5/5. motion-005 changes no product code.
+- **Docs:** `docs/verification/motion-005.md` with 14 screenshots (downscaled to 960 px), plus `docs/demo.md` (motion, quiet pause) and `docs/performance.md`.
 
 ## Verification
 The Red gate approves tests 1–8. Gold makes them pass, with product fixes only through failing regression tests. Gold also records the measurements and the docs and runs every suite. The Gold reviewer reruns the flows, performs the smoke test (with a recording) and checks the integration: no orphaned exports, no hooks without consumers, no UI control without effect.

@@ -14,6 +14,7 @@ The metrics strip at the bottom left, above the timeline, shows the live values 
 
 - **Speed:** the app starts at **20×**. Change it in the *Speed* box or with **+** / **−** (1×, 5×, 20×, 60×). If the engine cannot keep up, the control panel says *"⚠ Behind"* instead of silently dropping steps.
 - **Zoom:** use the mouse wheel. Zoomed out, the roads and congestion dominate (congested roads draw wider and lighter). The arterials and the three bridges are drawn wider and lighter than local streets, so the main routes read even at the widest zoom. Zoomed in, individual cars become readable. Moving cars are long and slim; queued cars are squares with a brake band, and from about 1.5 px/m every car has a dark outline, so the cars in a queue can be counted one by one. The legend at the bottom explains each symbol by shape and pattern, never by colour alone.
+- **Motion:** cars glide between simulation steps. The picture is interpolated per trip and trails the newest step by a fraction of a second (the *Diagnostics* panel, **D**, shows this lag). A car that has to wait does so behind its stop line, never inside the junction, and it takes the curve only when it actually drives through.
 - **Districts:** zoom to 1 px/m or closer and each district shows its own roof mark, in a darker shade than any road (it also reads in grayscale):
   - **residential** (Westbrook and the other housing areas): a ridge line along each house;
   - **workplace** (Market, Downtown, Tech, Harbor): an inner courtyard outline;
@@ -41,7 +42,7 @@ The **Intervention** panel (beside the map) answers it from the simulation's own
 - **Where traffic queues now:** up to three of the longest queues (3 or more cars), as ▼ pins with their count at the queue heads on the map and as buttons that select the road. While a road or a car is selected, its panel takes the place of the summary; press **Esc** to get the summary back.
 
 ## 3. Pause and rewind
-Press **Space** to pause. The **timeline** at the bottom shows the replay window: the retained sim time and its memory against the budget.
+Press **Space** to pause. While paused, the simulation sends nothing (the *Diagnostics* panel shows 0 frames/s), yet you can still pan, zoom, select roads and follow cars. Their panels update right away. The **timeline** at the bottom shows the replay window: the retained sim time and its memory against the budget.
 - Drag the handle or click on the track to scrub back to **before the closure**. You can also press **−1 min** a few times, or focus the track and press **←**.
 - The bridge is open again at that moment: you are looking at the past of the original scenario, *A*.
 

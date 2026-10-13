@@ -149,6 +149,58 @@ The car outline, the corner brackets, the route casing and the end square are a 
 - **Render interval at baseline and in the closure burst is the same within the harness's 16.7 ms steps.** The closure-burst median moved by one step in round 1, but the after run had the higher load.
 - **Under stress, the p95 is one step (16.7 ms) higher in both rounds.** The likely cause is the heavier building fragment shader on the software rasteriser, which shades every building pixel on the CPU. On a hardware GPU this shader is trivial. That has not been measured here.
 
+## Epic motion: before and after
+
+These tables compare the whole epic: before = commit `19e9fbf` (the last commit before the epic), after = the motion-005 tree (`23da733`; product code as at motion-004 complete). Every number comes from `web/perf-results/motion-epic-before-after.json`.
+- **Build:** both builds were made from source. For "before", that is the `19e9fbf` tree with wasm built from its own Rust code.
+- **Runs:** both builds were measured interleaved (before, after, before, after) on the same machine within one hour.
+- **Values:** each cell lists one value per run.
+
+### SwiftShader (headless harness, software GPU)
+
+| Metric | Before (`19e9fbf`) | After |
+|---|---|---|
+| `renderIntervalMedianMs` baseline 1× (ms) | 50.0, 99.9 | 66.7, 66.7 |
+| `renderIntervalMedianMs` baseline 20× (ms) | 50.0, 166.7 | 66.7, 66.7 |
+| `renderIntervalMedianMs` stress 5× (ms) | 116.7, 116.7 | 133.3, 150.0 |
+| `renderIntervalP95Ms` baseline 1× (ms) | 100.0, 366.8 | 300.0, 200.0 |
+| `renderIntervalP95Ms` stress 5× (ms) | 333.3, 299.9 | 399.9, 400.0 |
+| `tickMsMean` baseline 1×, worker (ms per tick) | 0.075, 0.086 | 0.076, 0.085 |
+| `nativeStepMsMedian` native release x1 (ms per tick) | 0.0152, 0.0148 | 0.0151, 0.0148 |
+| `frameBytes` baseline 20× (bytes per frame) | 30,672, 30,582 | 37,532, 37,532 |
+| `transferBytesPerS` running 20× (bytes per s) | 272,835, 272,818 | 662,522, 667,641 |
+| `pausedFramesPerS` (frames per s) | 54.76, 54.95 | 0, 0 |
+| `pausedBytesPerS` (bytes per s) | 261,844, 263,213 | 0, 0 |
+| `presentationLagMsMedian` 1× (ms) | none (no presentation stage) | 491.0, 573.7 |
+| `presentationLagMsMedian` 20× (ms) | none | 180.7, 123.1 |
+
+### Hardware GPU (headed Chromium, Apple M4 Pro via Metal, 120 Hz display)
+
+| Metric | Before | After |
+|---|---|---|
+| Animation-frame interval at 20×, median (ms) | 8.3, 8.3 | 8.3, 8.3 |
+| Animation-frame interval at 20×, p95 (ms) | 9.9, 9.9 | 10.0, 10.0 |
+| Frame transfer while running at 20× (bytes per s) | 276,940, 276,984 | 682,627, 676,401 |
+| Frames received while paused (per s) | 55.98, 54.58 | 0, 0 |
+| Presentation lag at 1×, median (ms) | none | 273.6, 281.5 |
+| Presentation lag at 20×, median (ms) | none | 24.6, 14.7 |
+
+**What the numbers say:**
+- **Paused frame production is gone.** Before the epic, a paused host sent about 55 full frames per second (≈ 262 kB/s). Now it sends nothing until something changes (motion-001). This holds on both renderers.
+- **Simulation cost is unchanged.**
+  - Native step time: 0.015 ms before and after.
+  - Worker tick time: 0.075–0.086 ms before and after.
+  - The epic added no per-tick work.
+- **Payload per frame grew.**
+  - `frameBytes`: +6.9 kB per frame for the trip ids (4 B per vehicle), which interpolation by trip needs (motion-002).
+  - Total transfer while running: from about 273 to about 665 kB/s. This counts every typed array of a frame message, so it also includes the consequence data (`interventions`, `bridgeFlow`; motion-003) and the per-link arrays.
+  - About 55 frames per second are sent in both builds.
+- **On a hardware GPU, rendering keeps the display rate** (8.3 ms at 120 Hz) before and after.
+  - Under SwiftShader, render intervals are dominated by the software rasteriser and by the machine's load, which rose from about 11 to 43 during these runs because other sessions shared the machine.
+  - The after-runs ran at the higher loads. The SwiftShader render-interval differences are therefore not attributable to the epic, and no improvement or regression is claimed from them.
+- **The added presentation latency is the cost of smooth, never-backward motion.** On the hardware GPU, the picture trails the newest frame by a median of about 0.28 s at 1× and 15–25 ms at 20×. Under SwiftShader at high load it is 0.49–0.57 s at 1× and 0.12–0.18 s at 20×. motion-002's frozen browser test bounds it at 600 ms at 1× and 120 ms at 20×, measured at its own load.
+  - **Before the epic** there was no presentation stage. The vertex shader extrapolated ahead of the newest frame, which caused the stops and backward steps i1 and i4.
+
 ## How to reproduce
 
 ```bash
