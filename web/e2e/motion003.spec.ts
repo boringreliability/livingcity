@@ -53,6 +53,10 @@ const expectedPins = (q: number[]) =>
     .sort((a, b) => b.queued - a.queued || a.link - b.link)
     .slice(0, 3);
 const summary = (page: Page) => page.getByRole('region', { name: 'Intervention' });
+/** The comparison's count format: "+n ▲", "−n ▼" or "0". */
+const countDelta = (d: number) => (d > 0 ? `+${d} ▲` : d < 0 ? `−${-d} ▼` : '0');
+/** The accessible names of the timeline's intervention markers. */
+const markerNames = (page: Page) => page.locator('.timeline-track [aria-label]').evaluateAll((es) => es.map((e) => e.getAttribute('aria-label')!).filter((n) => /^(Closed|Reopened) /.test(n)));
 
 // 7
 test('intervention_summary_and_map_markers', async ({ page }) => {
@@ -111,12 +115,55 @@ test('intervention_summary_and_map_markers', async ({ page }) => {
   for (const r of rates) {
     expect(r.now, `${r.name}: a rate now`).not.toBeNull();
     expect(r.before, `${r.name}: a rate before the closure`).not.toBeNull();
-    const row = box.getByRole('row', { name: new RegExp(`^${r.name}`) });
-    await expect(row).toContainText(String(Math.round(r.now!)));
-    await expect(row).toContainText(String(Math.round(r.before!)));
+    const cells = await box.getByRole('row', { name: new RegExp(`^${r.name}`) }).getByRole('cell').allInnerTexts();
+    expect(cells.map((c) => c.trim()), `${r.name}: now, before, change`).toEqual([String(Math.round(r.now!)), String(Math.round(r.before!)), countDelta(Math.round(r.now!) - Math.round(r.before!))]);
   }
   // the Main Bridge is closed: nothing crosses it now
   expect(rates[1]!.now).toBe(0);
+  for (const n of await markerNames(page)) expect(n).not.toMatch(FORBIDDEN);
+
+  // reopen (Red r1 M3): a second line with ○, a ○ marker at its tick, two entries in tick order
+  await page.getByRole('button', { name: /reopen/i }).first().click();
+  await blur(page);
+  await page.keyboard.press('Space');
+  await expect.poll(async () => (await page.evaluate(() => window.__livingcity!.interventions())).length, { timeout: 30_000 }).toBe(2);
+  await pause(page);
+  const two = await page.evaluate(() => window.__livingcity!.interventions());
+  expect(two.map((e) => [e.kind, e.label])).toEqual([
+    ['close', 'Main Bridge'],
+    ['open', 'Main Bridge'],
+  ]);
+  expect(two[1]!.tick).toBeGreaterThan(two[0]!.tick);
+  await expect(box).toContainText(`○ Reopened Main Bridge · ${hms(two[1]!.tick)}`);
+  await expect(box).toContainText(`✕ Closed Main Bridge · ${hms(at)}`);
+  const reopened = page.locator('.timeline-track').getByLabel(`Reopened Main Bridge at ${hms(two[1]!.tick)}`);
+  await expect(reopened).toContainText('○');
+  const s2 = await snap(page);
+  const tr = (await page.locator('.timeline-track').boundingBox())!;
+  const rb = (await reopened.boundingBox())!;
+  const x2 = tr.x + ((two[1]!.tick - s2.timeline.windowStartTick) / Math.max(1, s2.timeline.headTick - s2.timeline.windowStartTick)) * tr.width;
+  expect(Math.abs(rb.x + rb.width / 2 - x2), 'reopen marker at its tick').toBeLessThanOrEqual(2);
+
+  // rewind to before the closure: the summary goes, both markers stay where they were in time
+  await page.getByRole('button', { name: /jump to start/i }).click();
+  await expect.poll(async () => (await snap(page)).timeline.positionTick).toBeLessThan(at);
+  await expect(box).toBeHidden();
+  expect(await page.evaluate(() => window.__livingcity!.interventions())).toEqual([]);
+  expect((await markerNames(page)).sort()).toEqual([`Closed Main Bridge at ${hms(at)}`, `Reopened Main Bridge at ${hms(two[1]!.tick)}`].sort());
+});
+
+// 7b (Red r1 M2): the other city names its bridges and shows the same summary
+test('consequences_in_three_bridges', async ({ page }) => {
+  test.setTimeout(300_000);
+  await page.goto('/?city=three_bridges');
+  await expect.poll(async () => (await snap(page)).city, { timeout: 60_000 }).toBe('three_bridges');
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 60_000 }).toBeGreaterThan(200);
+  const at = await closeAndRun(page, 600);
+  await expect(summary(page)).toContainText(`✕ Closed Main Bridge · ${hms(at)}`);
+  const labels = await page.evaluate(() => window.__livingcity!.bridgeLabels());
+  expect(labels.map((l) => l.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
+  await expect(page.locator('.labels .bridge-label')).toHaveCount(3);
+  expect((await page.evaluate(() => window.__livingcity!.crossings())).map((r) => r.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
 });
 
 // 8
@@ -131,7 +178,7 @@ test('summary_queue_entry_selects_the_link', async ({ page }) => {
   await expect.poll(async () => (await snap(page)).selectedLink).toBe(link);
   const sel = page.getByRole('region', { name: 'Selected road' });
   await expect(sel.getByRole('heading', { name: new RegExp(`^Link ${link}\\b`) })).toBeVisible();
-  await expect(sel, 'the panel shows the same queue count').toContainText(String(queued));
+  await expect(sel, 'the panel shows the same queue count').toContainText(new RegExp(`queued\\s*${queued}\\b`, 'i'));
 });
 
 // 9
@@ -171,7 +218,9 @@ test('compare_shows_crossings_since_branch', async ({ page }) => {
     const d = b - a;
     expect(td!.trim(), `${name} Δ`).toBe(d === 0 ? '0' : `${d > 0 ? '+' : '−'}${Math.abs(d)} ${d > 0 ? '▲' : '▼'}`);
   }
-  // B has the Main Bridge closed: no crossing of it since the branch beyond the vehicles already on it
+  // B has the Main Bridge closed since the branch: fewer crossings of it than A (open)
+  expect(c.crossings!.b[2]! + c.crossings!.b[3]!, 'B (closed) < A (open) on the Main Bridge').toBeLessThan(c.crossings!.a[2]! + c.crossings!.a[3]!);
+  await expect(summary(page), 'the summary is single-view only').toBeHidden();
   for (const row of ['Generated', 'Completed', 'Incomplete', 'Unserved', 'Mean trip', 'p95 trip']) await expect(panel.getByRole('row', { name: new RegExp(`^${row}`) })).toBeVisible();
   expect(await panel.innerText()).not.toMatch(/faster|slower/i);
   // both halves: bridge labels and queue pins from each side's own frame

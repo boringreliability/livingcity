@@ -2,6 +2,7 @@
 // and the frame / comparison fields the host builds from them (read-only: no new World state).
 import { describe, expect, test } from 'vitest';
 
+import { bridgeNaming } from '../src/render/cities';
 import { createSimHost, type SimLike } from '../src/sim/host';
 import type { ComparisonMessage, FrameMessage, FromWorker, Landmarks, ReadyMessage, ToWorker } from '../src/sim/protocol';
 import { crossingRates, summarizeInterventions, topQueues, type BridgeNaming } from '../src/ui/consequences';
@@ -19,9 +20,17 @@ function host() {
   const memory = loadWasm();
   let t = 0;
   const sims: Sim[] = [];
+  /** While set, the host sees no snapshot older than the position (as if the replay window evicted them). */
+  const evict = { on: false };
   const wrap = (s: Sim): SimLike =>
     new Proxy(s as unknown as SimLike, {
       get(target, key) {
+        if (key === 'exits_at')
+          return (tick: number, links: Uint32Array) => {
+            const r = s.exits_at(tick, links);
+            if (evict.on && tick < s.tick()) r.fill(NaN);
+            return r;
+          };
         if (key === 'branch')
           return (at: number) => {
             const b = s.branch(at);
@@ -53,7 +62,7 @@ function host() {
     }
   };
   const ready = () => posted.find((m): m is ReadyMessage => m.type === 'ready')!;
-  return { send, frames, comparisons, iterate, ready, sims };
+  return { send, frames, comparisons, iterate, ready, sims, evict };
 }
 
 const NAMES: BridgeNaming = {
@@ -134,35 +143,45 @@ describe('motion-003', () => {
     expect(summarizeInterventions([], 1000, NAMES)).toEqual([]);
   });
 
+  test('2b bridge_naming', () => {
+    const lm: Landmarks = { north_bridge: [1, 2], central_bridge: [3, 4], south_bridge: [5, 6] };
+    expect(bridgeNaming('river_city', lm)).toEqual({
+      bridges: [
+        { key: 'north_bridge', name: 'North Bridge', links: [1, 2] },
+        { key: 'central_bridge', name: 'Main Bridge', links: [3, 4] },
+        { key: 'south_bridge', name: 'Old Bridge', links: [5, 6] },
+      ],
+    });
+    expect(bridgeNaming('three_bridges', lm).bridges.map((b) => b.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
+    expect(bridgeNaming('unknown', lm).bridges.map((b) => b.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
+  });
+
   test('4 crossing_rates', () => {
-    const NaN6 = [NaN, NaN, NaN, NaN, NaN, NaN];
-    const flow = [
-      // posTick, nowBase, exits at the position, exits at nowBase
-      3000, 1800, 100, 110, 200, 210, 50, 60, 80, 90, 200, 210, 30, 40,
-      // closeTick, beforeBase, exits at closeTick, exits at beforeBase
-      1500, 360, 70, 75, 190, 200, 20, 25, 10, 15, 100, 110, 5, 5,
-    ];
-    const r = crossingRates(flow, NAMES);
+    const NaN15 = Array<number>(15).fill(NaN);
+    // [refTick, refBase, fromBase, …L at refBase, …L at fromBase]
+    const now = [3000, 3000, 1800, 100, 110, 200, 210, 50, 60, 80, 90, 200, 210, 30, 40];
+    // a close at 1530 (off the 120-tick grid): counts at its snapshot base 1440, from base 360 (an evicted
+    // window gives a shorter span than 1200)
+    const before = [1530, 1440, 360, 70, 75, 190, 200, 20, 25, 10, 15, 100, 110, 5, 5];
+    const r = crossingRates([...now, ...before], NAMES);
     expect(r.map((x) => x.name)).toEqual(['North Bridge', 'Main Bridge', 'Old Bridge']);
     expect(r.map((x) => x.now)).toEqual([40, 0, 40]);
     expect(r.map((x) => x.nowSpanS)).toEqual([600, 600, 600]);
-    expect(r[0]!.before).toBeCloseTo((120 * 1200) / 1140, 9);
-    expect(r[1]!.before).toBeCloseTo((180 * 1200) / 1140, 9);
-    expect(r[2]!.before).toBeCloseTo((35 * 1200) / 1140, 9);
-    expect(r.map((x) => x.beforeSpanS)).toEqual([570, 570, 570]);
-    for (const x of r) for (const v of [x.now, x.before]) expect(v!).toBeGreaterThanOrEqual(0);
-    // no close: no "before"
-    const noClose = [...flow.slice(0, 14), NaN, NaN, ...NaN6, ...NaN6];
-    expect(crossingRates(noClose, NAMES).map((x) => [x.before, x.beforeSpanS])).toEqual([
+    expect(r[0]!.before).toBeCloseTo((120 * 1200) / 1080, 9);
+    expect(r[1]!.before).toBeCloseTo((180 * 1200) / 1080, 9);
+    expect(r[2]!.before).toBeCloseTo((35 * 1200) / 1080, 9);
+    expect(r.map((x) => x.beforeSpanS), 'the span between the two bases, not from the close tick').toEqual([540, 540, 540]);
+    // no bridge closure: no "before"
+    expect(crossingRates([...now, ...NaN15], NAMES).map((x) => [x.before, x.beforeSpanS])).toEqual([
       [null, null],
       [null, null],
       [null, null],
     ]);
     // no base for "now" (window too short), or a zero span: null, never a made-up number
-    const noBase = [3000, NaN, 100, 110, 200, 210, 50, 60, ...NaN6, ...flow.slice(14)];
-    expect(crossingRates(noBase, NAMES).map((x) => x.now)).toEqual([null, null, null]);
-    const zero = [3000, 3000, 100, 110, 200, 210, 50, 60, 100, 110, 200, 210, 50, 60, ...flow.slice(14)];
-    expect(crossingRates(zero, NAMES).map((x) => x.now)).toEqual([null, null, null]);
+    const noBase = [3000, 3000, NaN, 100, 110, 200, 210, 50, 60, NaN, NaN, NaN, NaN, NaN, NaN];
+    expect(crossingRates([...noBase, ...before], NAMES).map((x) => x.now)).toEqual([null, null, null]);
+    const zero = [3000, 3000, 3000, 100, 110, 200, 210, 50, 60, 100, 110, 200, 210, 50, 60];
+    expect(crossingRates([...zero, ...before], NAMES).map((x) => x.now)).toEqual([null, null, null]);
     expect(crossingRates([], NAMES), 'no landmarks: nothing').toEqual([]);
   });
 
@@ -197,6 +216,9 @@ describe('motion-003', () => {
     for (let i = 0; i < 4000 && w.frames().length === 0; i++) w.iterate(1, 4);
     const lm = w.ready().landmarks;
     const L = Uint32Array.from([...lm.north_bridge, ...lm.central_bridge, ...lm.south_bridge]);
+    const isBridge = new Set(L);
+    let side = 0;
+    while (isBridge.has(side)) side++; // a link that is not a bridge
     w.send({ type: 'setSpeed', multiplier: 60 });
     w.send({ type: 'setRunning', running: true });
     w.iterate(60);
@@ -205,49 +227,57 @@ describe('motion-003', () => {
     w.iterate(2);
     const A = w.sims[0]!;
     const closeTick = triples(A.command_log()).at(-1)![0];
+    for (let i = 0; i < 4000 && A.tick() < closeTick + 900; i++) w.iterate(1);
+    // a later closure of a side street does not move the "before the closure" window (bridges only)
+    w.send({ type: 'command', kind: 'close', link: side });
     for (let i = 0; i < 4000 && A.tick() < closeTick + 1500; i++) w.iterate(1);
     w.send({ type: 'setRunning', running: false });
     w.iterate(3);
     const f = w.frames().at(-1)!;
     expect(f.tick, 'paused: the frame is at the position').toBe(A.tick());
     expect(Array.from(f.interventions)).toEqual(Array.from(A.command_log()));
-    // bridgeFlow = exits_at read directly
-    const exNow = A.exits_at(f.tick - 1200, L);
-    const exClose = A.exits_at(closeTick, L);
-    const exBefore = A.exits_at(closeTick - 1200, L);
-    const expected = [f.tick, exNow[0]!, ...A.exits_at(f.tick, L).subarray(1), ...exNow.subarray(1), closeTick, exBefore[0]!, ...exClose.subarray(1), ...exBefore.subarray(1)];
-    expect(f.bridgeFlow.length).toBe(2 * (2 + 2 * 6));
-    expect(Array.from(f.bridgeFlow)).toEqual(expected);
-    expect(exClose[0], 'the close tick is read at or before it').toBeLessThanOrEqual(closeTick);
-    expect(crossingRates(f.bridgeFlow, { bridges: [] }), 'well-formed').toEqual([]);
+    expect(triples(f.interventions).length, 'two bridge directions and the side street').toBe(3);
+    // bridgeFlow = exits_at read directly, two blocks [refTick, refBase, fromBase, …at refBase, …at fromBase]
+    const at = (t: number) => A.exits_at(t, L);
+    const block = (ref: number) => {
+      const r = at(ref);
+      const from = at(ref - 1200);
+      return [ref, r[0]!, from[0]!, ...r.subarray(1), ...from.subarray(1)];
+    };
+    expect(f.bridgeFlow.length).toBe(30);
+    expect(Array.from(f.bridgeFlow)).toEqual([...block(f.tick), ...block(closeTick)]);
+    expect(f.bridgeFlow[16], 'the close side is read at a snapshot at or before the close').toBeLessThanOrEqual(closeTick);
 
     // a branch before the closure (B without it), then compare: crossings since the branch
-    const at = closeTick - 100;
-    w.send({ type: 'branch', fromTick: at, then: [] });
+    const bt = closeTick - 100;
+    w.send({ type: 'branch', fromTick: bt, then: [] });
     w.iterate(2);
+    const B = w.sims[1]!;
+    const base = B.exits_at(bt, L); // both sides hold the same counts at the branch tick
+    expect(base[0]).toBe(bt);
+    // from here the host sees no snapshot older than the position (the window evicted them): the
+    // comparison must not depend on reading the branch tick again
+    w.evict.on = true;
     w.send({ type: 'compare', on: true });
     w.iterate(2);
     w.send({ type: 'setRunning', running: true });
-    w.iterate(80);
+    for (let i = 0; i < 6000 && A.tick() < closeTick + 600; i++) w.iterate(1);
     w.send({ type: 'setRunning', running: false });
     w.iterate(3);
     const c = w.comparisons().at(-1)!;
-    const B = w.sims[1]!;
     expect(c.crossings, 'the comparison carries crossings').toBeDefined();
-    expect(c.crossings!.baseTick).toBe(at);
-    const since = (s: Sim) => {
-      const now = s.exits_at(s.tick(), L);
-      const base = B.exits_at(at, L); // both sides hold the same counts at the branch tick
-      expect(base[0]).toBe(at);
-      return Array.from(now.subarray(1)).map((v, i) => v - base[i + 1]!);
-    };
+    expect(c.crossings!.baseTick).toBe(bt);
+    const since = (s: Sim) => Array.from(s.exits_at(s.tick(), L).subarray(1)).map((v, i) => v - base[i + 1]!);
     expect(A.tick()).toBe(B.tick());
     expect(Array.from(c.crossings!.a)).toEqual(since(A));
     expect(Array.from(c.crossings!.b)).toEqual(since(B));
     expect(c.a[2], 'identical demand: generated A = B').toBe(c.b[2]);
-    // the closure is visible in the data: A (closed) carries nothing over the Main Bridge after the close
+    // the closure is visible in the data: A (closed 100 ticks after the branch) crosses the Main Bridge
+    // less than B (open) since the branch
     const main = [2, 3];
-    expect(main.map((i) => c.crossings!.a[i]!).reduce((x, y) => x + y)).toBeLessThan(main.map((i) => c.crossings!.b[i]!).reduce((x, y) => x + y));
+    const sum = (x: Float64Array) => main.map((i) => x[i]!).reduce((p, q) => p + q);
+    expect(sum(c.crossings!.a)).toBeLessThan(sum(c.crossings!.b));
+    w.evict.on = false;
 
     // leave compare, view A, seek back before the closure: no "before" block, the log still lists it
     w.send({ type: 'compare', on: false });
@@ -257,7 +287,7 @@ describe('motion-003', () => {
     w.iterate(3);
     const g = w.frames().at(-1)!;
     expect(g.tick).toBe(closeTick - 300);
-    expect(g.bridgeFlow.slice(14).every((v) => Number.isNaN(v)), 'no close at or before the position').toBe(true);
+    expect(g.bridgeFlow.slice(15).every((v) => Number.isNaN(v)), 'no bridge close at or before the position').toBe(true);
     expect(triples(g.interventions).some(([t]) => t === closeTick), 'the log keeps the later command').toBe(true);
     expect(summarizeInterventions(g.interventions, g.tick, NAMES), 'the summary leaves it out').toEqual([]);
   }, 300_000);
