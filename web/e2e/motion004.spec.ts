@@ -4,6 +4,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
+import { DISTRICT_STYLE, type DistrictKind } from '../src/render/cities/character';
 import type { LivingCitySnapshot } from '../src/ui/testHook';
 
 type P = [number, number];
@@ -109,21 +110,65 @@ async function dragTo(page: Page, from: P, to: P) {
   await sleep(400);
 }
 
-/** Bring the page point `get()` returns (it moves with the map) to FREE: drag it there when it is on the
- * canvas, else pan towards it in steps of at most 300 px; at most 8 pans (Red r2 B-N1). */
+/** Bring the page point `get()` returns (it moves with the map) to FREE at the current zoom: if it is off the
+ * canvas, wheel out at FREE until it is on it; drag it to FREE; wheel back in at FREE to the zoom it had
+ * (Red r3 B3-1: a route end can be 5 km away). */
 async function bringToFree(page: Page, get: () => Promise<P>) {
-  for (let k = 0; k < 8; k++) {
-    const p = await get();
-    if (await onCanvas(page, p, 2)) {
-      await dragTo(page, p, FREE);
-      return;
-    }
-    const [dx, dy] = [FREE[0] - p[0], FREE[1] - p[1]];
-    const d = Math.hypot(dx, dy);
-    const step = Math.min(300, d) / d;
-    await dragTo(page, FREE, [FREE[0] + dx * step, FREE[1] + dy * step]);
+  const zoom = (await snap(page)).camera.zoom;
+  if (!(await onCanvas(page, await get(), 2))) {
+    await page.mouse.move(FREE[0], FREE[1]);
+    await expect
+      .poll(
+        async () => {
+          if (await onCanvas(page, await get(), 2)) return true;
+          await page.mouse.wheel(0, 120);
+          return false;
+        },
+        { intervals: [80], timeout: 60_000 },
+      )
+      .toBe(true);
+    await page.mouse.move(3, 3);
+    await sleep(300);
   }
-  expect(await onCanvas(page, await get(), 2), 'brought onto the canvas').toBe(true);
+  await dragTo(page, await get(), FREE);
+  if ((await snap(page)).camera.zoom < zoom * 0.98) await wheelZoom(page, FREE, (z) => z >= zoom * 0.98, -1);
+  // the wheel keeps FREE fixed; a last drag corrects any rounding
+  const p = await get();
+  if (Math.hypot(p[0] - FREE[0], p[1] - FREE[1]) > 1) await dragTo(page, p, FREE);
+}
+
+/** Lit runs (lum ≥ fill + 6) along a profile, ignoring 2 px at each end (the outline). */
+function litRuns(v: number[], fill: number) {
+  const runs: number[] = [];
+  let n = 0;
+  for (let i = 2; i < v.length - 2; i++) {
+    if (v[i]! >= fill + 6) n++;
+    else if (n) {
+      runs.push(n);
+      n = 0;
+    }
+  }
+  if (n) runs.push(n);
+  return runs;
+}
+
+/** The roof mark read from the picture (Red r3 M3-1): profiles through the box centre across its short side
+ * and along its long side, and whether the centre is lit. */
+async function markSignature(page: Page, box: [number, number, number, number], fill: number) {
+  const [x0, y0, x1, y1] = box;
+  const [w, h] = [x1 - x0, y1 - y0];
+  const [mx, my] = [Math.round((x0 + x1) / 2), Math.round((y0 + y1) / 2)];
+  const row = await lumClip(page, Math.ceil(x0), my, Math.floor(w), 1);
+  const col = await lumClip(page, mx, Math.ceil(y0), 1, Math.floor(h));
+  const [shortP, longP, shortLen, longLen] = w <= h ? [row, col, w, h] : [col, row, h, w];
+  const centre = Math.max(...(await lumAt(page, [mx, my], 3))) >= fill + 6;
+  const across = litRuns(shortP, fill);
+  const along = litRuns(longP, fill);
+  if (centre && across.length === 1 && along.length === 1 && across[0]! <= 4 && along[0]! >= 0.6 * longLen - 4) return 'ridge';
+  if (centre && across.length === 1 && along.length >= 1 && across[0]! >= 0.4 * shortLen - 2) return 'cross';
+  if (!centre && across.length === 2 && along.length === 2) return 'court';
+  if (!centre && across.length === 2 && along.length === 0) return 'quay';
+  return `unknown (centre ${centre}, across ${JSON.stringify(across)}, along ${JSON.stringify(along)})`;
 }
 
 /**
@@ -248,16 +293,9 @@ test('districts_read_and_stay_subordinate', async ({ page }) => {
       }
       expect(road, `a local road on screen at zoom ${zoom}`).not.toBeNull();
       expect(fill, `${kind} fill below a local road at zoom ${zoom}`).toBeLessThanOrEqual(road! - 15);
-      // the roof mark (drawn from zoom 1, Red r1 M4): a local maximum ≥ fill + 6 inside the building, on a
-      // line through its centre along x or along y
-      {
-        const [x0, y0, x1, y1] = s!.box;
-        const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
-        const row = await lumClip(page, x0 + 2, my, Math.max(3, Math.floor(x1 - x0) - 4), 1);
-        const col = await lumClip(page, mx, y0 + 2, 1, Math.max(3, Math.floor(y1 - y0) - 4));
-        const peak = (v: number[]) => v.some((x, i) => i > 0 && i < v.length - 1 && x >= v[i - 1]! && x >= v[i + 1]! && x >= fill + 6);
-        expect(peak(row) || peak(col), `${kind} roof mark (${s!.mark}) at zoom ${zoom}`).toBe(true);
-      }
+      // the roof mark (drawn from zoom 1, Red r1 M4) is the kind's own shape, read from the picture (Red r3 M3-1)
+      expect(s!.mark, `${kind}: the hook's mark`).toBe(DISTRICT_STYLE[kind as DistrictKind].mark);
+      expect(await markSignature(page, s!.box, fill), `${kind} roof mark at zoom ${zoom}`).toBe(DISTRICT_STYLE[kind as DistrictKind].mark);
       // at zoom 1, decor around it stays below the roads: the 99th percentile of a 300 × 300 crop off the
       // roads and bridges is below the median road pixel of the same crop (which must hold roads)
       if (zoom === 1) {
@@ -434,7 +472,7 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
     }
   }
   // (b) follow a car on an axis-aligned link whose remaining route has a congested link (occupancy ≥ 0.3:
-  // tinted light, lum > 100; Red r2 B-N1)
+  // tinted lighter, lum ≈ 90–100, well above the casing's ≤ 50; Red r2 B-N1)
   const cands = await page.evaluate(() => {
     const h = window.__livingcity!;
     const out: [number, number][] = [];
