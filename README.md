@@ -70,6 +70,8 @@ pnpm -C web build:wasm && pnpm -C web build
 npx wrangler pages deploy web/dist --project-name livingcity --branch main
 ```
 
+CI does not deploy on push. The `deploy` job runs only when CI is started by hand on `main` (GitHub → Actions → CI → Run workflow), after Rust, Web and E2E pass.
+
 ## Credits
 
 The fonts are bundled with the app (no CDN): **Inter** (Rasmus Andersson) and **JetBrains Mono** (JetBrains), both under the SIL Open Font License 1.1 (OFL), via the Fontsource packages `@fontsource-variable/inter` and `@fontsource/jetbrains-mono`.

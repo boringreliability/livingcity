@@ -41,7 +41,7 @@ jobs:
   web:
     name: Web (wasm, typecheck, Vitest, build)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60 # the junction sweep (motion002 3b-ci) alone can take 10+ min here
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -110,7 +110,8 @@ jobs:
   deploy:
     name: Deploy (Cloudflare Pages)
     needs: [rust, web, e2e]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # manual only (Actions → CI → Run workflow on main): a green push must not deploy unless the user says so
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

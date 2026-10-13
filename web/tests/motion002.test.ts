@@ -524,7 +524,9 @@ describe('motion-002', () => {
     }
   }, 300_000);
 
-  test('3b visual_rule_sweep', () => {
+  // SUPERSEDED (motion-005, S9 in .wdd/memory/supersessions.md): its 600 s timeout fails on GitHub's runners (the
+  // sweep takes ~250 s on an M4 Pro); the same sweep with the same assertions runs as 3b-ci below (1800 s).
+  test.skip('3b visual_rule_sweep', () => {
     let cases = 0;
     for (const city of ['river_city', 'three_bridges'] as const) {
       const { links } = network(city);
@@ -579,6 +581,62 @@ describe('motion-002', () => {
     }
     expect(cases, 'pair × lane cases (both networks)').toBeGreaterThan(1300);
   }, 600_000);
+  // motion-005 S9: test 3b unchanged except its timeout (user authorization 2026-10-13).
+  test('3b-ci visual_rule_sweep', () => {
+    let cases = 0;
+    for (const city of ['river_city', 'three_bridges'] as const) {
+      const { links } = network(city);
+      const C = cl(city);
+      const pairs = junctionPairs(0, city);
+      expect(pairs.length, `${city}: every junction pair`).toBeGreaterThan(100);
+      const seenA = new Set<number>();
+      for (const [a, b] of pairs) {
+        const A = links[a]!;
+        const B = links[b]!;
+        const [ax, ay] = dirOf(A);
+        for (let lane = 0; lane < A.lanes; lane++) {
+          cases++;
+          if (!seenA.has(a * 16 + lane)) {
+            seenA.add(a * 16 + lane);
+            for (let s = 0; s <= A.length + 1e-9; s += 0.5) {
+              const pz = visualPose(links, C, a, s, lane, NO_NEXT);
+              const [x, y] = vehiclePosition(A, Math.min(Math.max(s, entryAt(A, C)), stopAt(A, C)), lane);
+              expect(Math.hypot(pz.x - x, pz.y - y), `${city}: no next: straight, clamped to [entry, stop line] (link ${a}, s ${s})`).toBeLessThan(1e-6);
+              expect(pz.hx * ax + pz.hy * ay, 'no next: A’s heading').toBeGreaterThanOrEqual(1 - 1e-9);
+            }
+          }
+          const tag = `${city} ${a}→${b}, lane ${lane}`;
+          let prev = visualPose(links, C, a, 0, lane, b);
+          let arc = 0;
+          let turned = 0;
+          const step = Math.min(0.01, C.end[a]! / 100);
+          for (let s = step; s <= A.length + 1e-9; s += step) {
+            const pz = visualPose(links, C, a, s, lane, b);
+            const dl = Math.hypot(pz.x - prev.x, pz.y - prev.y);
+            expect(dl, `${tag}, s ${s.toFixed(2)}: continuous`).toBeLessThanOrEqual(0.75);
+            arc += dl;
+            turned += Math.acos(Math.max(-1, Math.min(1, pz.hx * prev.hx + pz.hy * prev.hy)));
+            if (arc >= 0.1) {
+              expect((turned * 180) / Math.PI / (arc / 0.1), `${tag}, s ${s.toFixed(2)}: heading ≤ 10° per 0.1 m of arc`).toBeLessThanOrEqual(10);
+              arc = 0;
+              turned = 0;
+            }
+            if (s <= stopAt(A, C) - 1e-9 && s >= entryAt(A, C)) {
+              const [x, y] = vehiclePosition(A, s, lane);
+              expect(Math.hypot(pz.x - x, pz.y - y), `${tag}: straight before the stop line`).toBeLessThan(1e-6);
+            }
+            prev = pz;
+          }
+          const end = visualPose(links, C, a, A.length, lane, b);
+          const [ex, ey] = vehiclePosition(B, entryAt(B, C), Math.min(lane, B.lanes - 1));
+          expect(Math.hypot(end.x - ex, end.y - ey), `${tag}: ends at B's entry point`).toBeLessThan(1e-6);
+          const [bx, by] = dirOf(B);
+          expect(end.hx * bx + end.hy * by, `${tag}: with B’s heading`).toBeGreaterThanOrEqual(Math.cos(1e-3));
+        }
+      }
+    }
+    expect(cases, 'pair × lane cases (both networks)').toBeGreaterThan(1300);
+  }, 1_800_000);
 
   test('4 forward_playback_is_smooth', () => {
     // a real run (River City, the default city) with speed changes 20× → 5× → 60× → 1×
