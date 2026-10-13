@@ -170,6 +170,21 @@ test('consequences_in_three_bridges', async ({ page }) => {
   const labels = await page.evaluate(() => window.__livingcity!.bridgeLabels());
   expect(labels.map((l) => l.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
   await expect(page.locator('.labels .bridge-label')).toHaveCount(3);
+  // placed as in River City: centred on each bridge, just above its middle (Red r4 m3)
+  const lm = (await snap(page)).landmarks!;
+  for (const [i, key] of (['north_bridge', 'central_bridge', 'south_bridge'] as const).entries()) {
+    const [we, ew] = lm[key];
+    const mid = await page.evaluate(([a, b]) => {
+      const h = window.__livingcity!;
+      const p = h.linkScreenPoint(a, 0.5)!;
+      const q = h.linkScreenPoint(b, 0.5)!;
+      return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] as [number, number];
+    }, [we, ew] as const);
+    const b = (await page.locator('.labels .bridge-label', { hasText: labels[i]!.name }).boundingBox())!;
+    expect(Math.abs(b.x + b.width / 2 - mid[0]), `${labels[i]!.name} centred on its bridge`).toBeLessThanOrEqual(6);
+    expect(mid[1] - (b.y + b.height), `${labels[i]!.name} just above its bridge`).toBeGreaterThanOrEqual(8);
+    expect(mid[1] - (b.y + b.height), `${labels[i]!.name} close to its bridge`).toBeLessThanOrEqual(30);
+  }
   const rates = await page.evaluate(() => window.__livingcity!.crossings());
   expect(rates.map((r) => r.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
   for (const r of rates) await expect(summary(page).getByRole('row', { name: new RegExp(`^${r.name}`) })).toBeVisible();

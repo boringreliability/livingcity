@@ -3,7 +3,7 @@ ward: 3
 revision: null
 name: "Consequences of an intervention"
 epic: "motion"
-status: "approved"
+status: "gold"
 dependencies: ["motion-002"]
 layer: "fullstack"
 estimated_tests: 10
