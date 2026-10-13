@@ -103,9 +103,9 @@ Each flow is checked through successive observed frames, sampled on every animat
 
 ## Must NOT
 - Change product behaviour without a failing regression test that names the ward the defect belongs to.
-- Change, skip or supersede any frozen test (no user authorization in this ward).
+- Change, skip or supersede any frozen test, except S9: the user authorized on 2026-10-13 (`.wdd/memory/authorization-2026-10-13-s9-ci.md`) superseding only the 600 s timeout of motion002 `3b visual_rule_sweep`, now `3b-ci` with 1800 s and identical assertions, because it failed CI on GitHub's runners.
 - Present SwiftShader numbers as hardware performance, or claim an improvement without a before/after measurement.
-- Deploy (the user's task: "Do not deploy unless separately authorized").
+- Deploy (the user's task: "Do not deploy unless separately authorized"). By the same 2026-10-13 authorization, the CI `deploy` job now runs only on a manual `workflow_dispatch`, so a green push no longer deploys.
 - Commit test-results, videos or temporary configs.
 
 ## Must DO
@@ -125,7 +125,7 @@ Each flow is checked through successive observed frames, sampled on every animat
    - At 20× queues form: pins appear and the cars in a queue can be counted at close zoom.
    - Reopen: the queues drain and the ring goes.
 3. **Pause.**
-   - The Diagnostics panel shows no frame traffic while paused.
+   - No frames arrive while paused (`snapshot().framesReceived` stays still; the Diagnostics panel has no frame-rate row), while the render numbers keep updating.
    - Hover and select a road, and follow a car: everything responds.
    - Resume: motion continues smoothly.
 4. **Rewind 2 minutes and branch.** No car smears or jumps on the seek.
@@ -143,7 +143,11 @@ Each flow is checked through successive observed frames, sampled on every animat
   - Script: `scratchpad` `epic_ab.py` + `epic_probe.mjs`. The result is `web/perf-results/motion-epic-before-after.json`, and `docs/performance.md` § Epic motion has the tables.
   - The before tree is `git archive 19e9fbf`, with wasm built from its own Rust. Before and after were interleaved, all runs within 17 minutes.
   - **A hardware-GPU run was possible** (headed Chromium, Apple M4 Pro via Metal, 120 Hz) and is kept in its own group.
-- **Load:** the shared machine's load rose from about 11 to 43 during the SwiftShader runs. Render intervals there are reported but not interpreted as a change caused by the epic.
+- **Load:** in the second run set the load was 7–22 for SwiftShader and 10–20 for the GPU.
+- **Gold r1 fixes:**
+  - MAJOR 1: the probe missed the vehicle `ArrayBuffer`. Everything was re-measured with it counted, and the JSON and docs were replaced: transfer 1.67 → 2.05 MB/s (+22 %), paused 1.56 MB/s → 0.
+  - MAJOR 2: CI had been red since motion-002. Fixed with S9, which the user authorized on 2026-10-13: the sweep timeout went from 600 s to 1800 s. The deploy job is now manual-only. Locally `motion002.test.ts` passes 14/1 skipped in 293 s. The duration on GitHub is recorded after the push.
+  - Minors: the demo wording, the stale comment, a note on code that only frozen tests use, the after-commit note, and the missing p95 row.
 - **Suites:**
   - `cargo test --workspace` and clippy are clean.
   - vitest: 162 passed, 7 skipped.

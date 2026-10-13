@@ -755,7 +755,7 @@ export function App() {
     };
   }, [camera]);
 
-  // Render loop: independent of the tick rate; extrapolates only while running.
+  // Render loop: independent of the tick rate; the presenter interpolates between frames (motion-002).
   useEffect(() => {
     let raf = 0;
     let last: number | null = null;

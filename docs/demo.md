@@ -42,7 +42,7 @@ The **Intervention** panel (beside the map) answers it from the simulation's own
 - **Where traffic queues now:** up to three of the longest queues (3 or more cars), as ▼ pins with their count at the queue heads on the map and as buttons that select the road. While a road or a car is selected, its panel takes the place of the summary; press **Esc** to get the summary back.
 
 ## 3. Pause and rewind
-Press **Space** to pause. While paused, the simulation sends nothing (the *Diagnostics* panel shows 0 frames/s), yet you can still pan, zoom, select roads and follow cars. Their panels update right away. The **timeline** at the bottom shows the replay window: the retained sim time and its memory against the budget.
+Press **Space** to pause. While paused, the simulation sends no frames until something changes, yet you can still pan, zoom, select roads and follow cars. Their panels update right away. The **timeline** at the bottom shows the replay window: the retained sim time and its memory against the budget.
 - Drag the handle or click on the track to scrub back to **before the closure**. You can also press **−1 min** a few times, or focus the track and press **←**.
 - The bridge is open again at that moment: you are looking at the past of the original scenario, *A*.
 

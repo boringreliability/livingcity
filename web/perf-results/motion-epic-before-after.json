@@ -7,65 +7,66 @@
   },
   "after": {
     "commit": "23da733",
-    "built": "the motion-005 Red-approved tree (product code as at motion-004 complete), wasm rebuilt with the same wasm-pack"
+    "built": "the motion-005 Red-approved tree, wasm rebuilt with the same wasm-pack",
+    "note": "the product code at 23da733 is identical to the motion-005 Gold commits (Gold changes docs, tests and CI only; the one product edit is a comment in App.tsx)"
   },
   "runs": [
     {
       "label": "before-1",
       "build": "before",
-      "load1min": 10.6,
-      "startedAt": "2026-10-13T19:47:55.350603+00:00",
-      "load1minEnd": 34.2
+      "load1min": 7.4,
+      "startedAt": "2026-10-13T21:32:00.865470+00:00",
+      "load1minEnd": 20.1
     },
     {
       "label": "after-1",
       "build": "after",
-      "load1min": 34.2,
-      "startedAt": "2026-10-13T19:53:17.830054+00:00",
-      "load1minEnd": 38.9
+      "load1min": 20.1,
+      "startedAt": "2026-10-13T21:37:19.830929+00:00",
+      "load1minEnd": 22.4
     },
     {
       "label": "before-2",
       "build": "before",
-      "load1min": 38.9,
-      "startedAt": "2026-10-13T19:59:08.365271+00:00",
-      "load1minEnd": 42.6
+      "load1min": 22.4,
+      "startedAt": "2026-10-13T21:43:04.895511+00:00",
+      "load1minEnd": 17.9
     },
     {
       "label": "after-2",
       "build": "after",
-      "load1min": 42.6,
-      "startedAt": "2026-10-13T20:04:28.104211+00:00",
-      "load1minEnd": 23.7
+      "load1min": 17.9,
+      "startedAt": "2026-10-13T21:48:23.292074+00:00",
+      "load1minEnd": 20.0
     }
   ],
   "load1min": {
-    "before-1": 10.6,
-    "after-1": 34.2,
-    "before-2": 38.9,
-    "after-2": 42.6
+    "before-1": 7.4,
+    "after-1": 20.1,
+    "before-2": 22.4,
+    "after-2": 17.9
   },
   "swiftshader": {
     "tickMsMean": {
       "before": [
-        0.075,
-        0.086
+        0.064,
+        0.076
       ],
       "after": [
-        0.076,
-        0.085
+        0.072,
+        0.066
       ],
       "unit": "ms per tick",
       "source": "@perf harness, baseline 1×: measured tick time per frame ÷ ticks (worker, wasm)"
     },
     "nativeStepMsMedian": {
       "before": [
-        0.0152,
-        0.0148
+        0.0149,
+        0.0145
       ],
       "after": [
-        0.0151,
-        0.0148
+        0.0158,
+        0.0157
       ],
       "unit": "ms per tick",
       "source": "cargo run -p sim-core --release --example frame_cost_probe -- baseline (native release, River City x1)",
@@ -75,7 +76,42 @@
       "baseline-1x": {
         "before": [
           50,
-          99.9
+          50
+        ],
+        "after": [
+          50,
+          50
+        ],
+        "unit": "ms"
+      },
+      "baseline-20x": {
+        "before": [
+          50,
+          50
+        ],
+        "after": [
+          50,
+          50
+        ],
+        "unit": "ms"
+      },
+      "stress-5x": {
+        "before": [
+          116.6,
+          100
+        ],
+        "after": [
+          116.6,
+          100
+        ],
+        "unit": "ms"
+      }
+    },
+    "renderIntervalP95Ms": {
+      "baseline-1x": {
+        "before": [
+          50.1,
+          66.7
         ],
         "after": [
           66.7,
@@ -85,7 +121,7 @@
       },
       "baseline-20x": {
         "before": [
-          50,
+          66.7,
           166.7
         ],
         "after": [
@@ -96,59 +132,24 @@
       },
       "stress-5x": {
         "before": [
-          116.7,
+          150,
           116.7
         ],
         "after": [
-          133.3,
-          150
-        ],
-        "unit": "ms"
-      }
-    },
-    "renderIntervalP95Ms": {
-      "baseline-1x": {
-        "before": [
-          100.0,
-          366.8
-        ],
-        "after": [
-          300,
-          200
-        ],
-        "unit": "ms"
-      },
-      "baseline-20x": {
-        "before": [
-          83.3,
-          400
-        ],
-        "after": [
-          216.7,
-          183.4
-        ],
-        "unit": "ms"
-      },
-      "stress-5x": {
-        "before": [
-          333.3,
-          299.9
-        ],
-        "after": [
-          399.9,
-          400
+          150,
+          116.7
         ],
         "unit": "ms"
       }
     },
     "frameBytes": {
       "before": [
-        30672,
+        30582,
         30582
       ],
       "after": [
-        37532,
-        37532
+        37488,
+        37378
       ],
       "unit": "bytes per frame",
       "source": "@perf harness, baseline 20× (the Diagnostics frame size)",
@@ -156,30 +157,30 @@
     },
     "transferBytesPerS": {
       "before": [
-        272835,
-        272818
+        1685706,
+        1652999
       ],
       "after": [
-        662522,
-        667641
+        2044364,
+        2047856
       ],
       "unit": "bytes per wall second",
-      "source": "epic_probe.mjs, running at 20× for 10 s: the byteLength of every typed array in the frame messages the UI received",
+      "source": "epic_probe.mjs, running at 20× for 10 s: the byteLength of every ArrayBuffer and typed array in the frame messages the UI received (vehicle records included); small plain fields are not counted",
       "framesPerS": {
         "before": [
-          54.57,
-          54.58
+          50.88,
+          49.88
         ],
         "after": [
-          53.97,
-          54.38
+          50.59,
+          50.69
         ]
       }
     },
     "pausedFramesPerS": {
       "before": [
-        54.76,
-        54.95
+        50.38,
+        49.57
       ],
       "after": [
         0,
@@ -190,8 +191,8 @@
     },
     "pausedBytesPerS": {
       "before": [
-        261844,
-        263213
+        1578974,
+        1548308
       ],
       "after": [
         0,
@@ -204,8 +205,8 @@
       "1x": {
         "before": null,
         "after": [
-          491.0,
-          573.7
+          440.3,
+          471.8
         ],
         "unit": "ms",
         "source": "epic_probe.mjs: the Diagnostics presentation lag, median of 100 ms samples over 10 s at 1×",
@@ -214,8 +215,8 @@
       "20x": {
         "before": null,
         "after": [
-          180.7,
-          123.1
+          68.3,
+          108.9
         ],
         "unit": "ms",
         "source": "epic_probe.mjs: the Diagnostics presentation lag, median of 100 ms samples over 10 s at 20×",
@@ -240,30 +241,30 @@
     },
     "rafIntervalP95Ms20x": {
       "before": [
-        9.9,
-        9.9
+        9.2,
+        9.3
       ],
       "after": [
-        10,
-        10
+        9.3,
+        9.2
       ],
       "unit": "ms"
     },
     "transferBytesPerS": {
       "before": [
-        276940,
-        276984
+        1687718,
+        1691123
       ],
       "after": [
-        682627,
-        676401
+        2062045,
+        2062103
       ],
       "unit": "bytes per wall second"
     },
     "pausedFramesPerS": {
       "before": [
-        55.98,
-        54.58
+        50.58,
+        51.18
       ],
       "after": [
         0,
@@ -275,16 +276,16 @@
       "1x": {
         "before": null,
         "after": [
-          273.6,
-          281.5
+          222.3,
+          278.1
         ],
         "unit": "ms"
       },
       "20x": {
         "before": null,
         "after": [
-          24.6,
-          14.7
+          16.5,
+          22.0
         ],
         "unit": "ms"
       }
@@ -293,26 +294,26 @@
       {
         "label": "before-1",
         "build": "before",
-        "load1min": 16.6,
-        "startedAt": "2026-10-13T20:11:59.789358+00:00"
+        "load1min": 20.0,
+        "startedAt": "2026-10-13T21:54:08.214714+00:00"
       },
       {
         "label": "after-1",
         "build": "after",
-        "load1min": 11.6,
-        "startedAt": "2026-10-13T20:12:34.507079+00:00"
+        "load1min": 16.1,
+        "startedAt": "2026-10-13T21:54:42.458557+00:00"
       },
       {
         "label": "before-2",
         "build": "before",
-        "load1min": 8.9,
-        "startedAt": "2026-10-13T20:13:34.191550+00:00"
+        "load1min": 11.2,
+        "startedAt": "2026-10-13T21:55:42.521895+00:00"
       },
       {
         "label": "after-2",
         "build": "after",
-        "load1min": 10.1,
-        "startedAt": "2026-10-13T20:14:07.944490+00:00"
+        "load1min": 10.3,
+        "startedAt": "2026-10-13T21:56:16.833332+00:00"
       }
     ]
   },
@@ -324,6 +325,6 @@
       "height": 800
     },
     "hardware": "Mac16,7 · Apple M4 Pro",
-    "note": "shared machine; the 1-minute load average rose from about 11 to 43 during the SwiftShader runs (other sessions), so render intervals there are noisy"
+    "note": "shared machine; the 1-minute load average was 7–22 at the starts of the SwiftShader runs and 10–20 for the hardware runs (other sessions). This run set replaces an earlier one (Gold r1 MAJOR 1: its probe missed the vehicle ArrayBuffer)"
   }
 }
