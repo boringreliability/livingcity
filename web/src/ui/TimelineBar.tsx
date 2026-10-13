@@ -153,7 +153,7 @@ export function TimelineBar({ timeline, position, onSeek, interventions = [] }: 
             // the lower lane of the track (the branch label has the upper one): a glyph, named for screen readers
             <span
               key={`${e.side ?? ''}${e.tick}:${e.kind}:${e.links.join(',')}`}
-              className={`timeline-intervention ${e.kind}${frac(e.tick) < 0.02 ? ' at-start' : frac(e.tick) > 0.98 ? ' at-end' : ''}`}
+              className={`timeline-intervention ${e.kind}${frac(e.tick) < 0.02 ? ' at-start' : ''}`}
               role="img"
               aria-label={`${e.side ? `${e.side}: ` : ''}${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
               title={`${e.side ? `${e.side}: ` : ''}${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}

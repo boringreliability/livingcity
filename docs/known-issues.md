@@ -21,6 +21,8 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - motion-003: the timeline's intervention markers are inside the timeline slider, whose children screen readers may treat as presentational; the same interventions are listed as text in the Intervention panel.
 - motion-003: while the Intervention panel is shown, the guide's band (100 px) stays reserved even when the guide is hidden, so the panels below it never move onto other roads.
 - motion-003: while comparing, interventions of A and B at nearly the same time sit next to each other in the timeline's lower lane ("✕B✕A"); at the same tick they overlap.
+- motion-003: a timeline marker at the head stays centred on its tick (the frozen marker-position test pins that), so its glyph can overhang the track's right edge by half its width.
+- motion-003: at a crowded junction a queue pin may take a place up to about 30 px from its queue head, to stay clear of the labels there.
 - motion-002: if B's renderer cannot be created while comparing (only after a WebGL failure), B's presenter is never advanced; its history then starts over every 128 frames, which moves the shared presentation time forward in a step.
 
 ## (a) Accessibility and keyboard
