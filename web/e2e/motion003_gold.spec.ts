@@ -24,15 +24,26 @@ async function setRunning(page: Page, on: boolean) {
 function sampleOverlaps(page: Page, frames: number) {
   return page.evaluate(
     (frames) =>
-      new Promise<{ samples: number; pins: number; overlaps: string[] }>((resolve) => {
+      new Promise<{ samples: number; pins: number; overlaps: string[]; laidOut: Record<string, number> }>((resolve) => {
         const out: string[] = [];
         let samples = 0;
         let pins = 0;
+        const laidOut: Record<string, number> = {};
         const shown = (e: Element) => (e as HTMLElement).style.visibility !== 'hidden' && getComputedStyle(e).visibility !== 'hidden';
         const step = () => {
           for (const layer of document.querySelectorAll('.labels')) {
+            // a pin is never made to vanish (Red r5 T1): laid out, with a box, and opaque
+            let n = 0;
+            for (const pin of layer.querySelectorAll('.queue-pin')) {
+              const st = getComputedStyle(pin);
+              const r = pin.getBoundingClientRect();
+              if (st.display === 'none' || r.width < 1 || r.height < 1 || Number(st.opacity) < 0.5) out.push(`${layer.className}: "${pin.textContent}" not drawn`);
+              else n++;
+            }
+            laidOut[layer.className] = n;
             const marks = [...layer.querySelectorAll('.zone, .bridge-label, .queue-pin')].filter(shown).map((e) => ({ e, r: e.getBoundingClientRect() }));
             for (const p of marks.filter((m) => m.e.classList.contains('queue-pin'))) {
+              if (p.r.width < 1 || p.r.height < 1) continue;
               pins++;
               for (const o of marks) {
                 if (o.e === p.e) continue;
@@ -44,7 +55,7 @@ function sampleOverlaps(page: Page, frames: number) {
             }
           }
           samples++;
-          if (samples >= frames) resolve({ samples, pins, overlaps: [...new Set(out)] });
+          if (samples >= frames) resolve({ samples, pins, overlaps: [...new Set(out)], laidOut });
           else requestAnimationFrame(step);
         };
         requestAnimationFrame(step);
@@ -68,6 +79,8 @@ test('pins_never_cover_labels_single_view', async ({ page }) => {
     await setRunning(page, false);
     await sleep(400);
     const paused = await sampleOverlaps(page, 20);
+    const want = (await page.evaluate(() => window.__livingcity!.queuePins())).length;
+    expect(paused.laidOut['labels'], 'paused: every queue pin of the hook is drawn').toBe(want);
     await setRunning(page, true);
     pins += run.pins + paused.pins;
     all.push(...run.overlaps, ...paused.overlaps);
@@ -112,6 +125,73 @@ test('pins_never_cover_labels_comparing_and_named_markers', async ({ page }) => 
     await setRunning(page, false);
     await sleep(400);
     const paused = await sampleOverlaps(page, 20);
+    await setRunning(page, true);
+    pins += run.pins + paused.pins;
+    all.push(...run.overlaps, ...paused.overlaps);
+  }
+  expect(pins, 'queue pins were shown').toBeGreaterThan(100);
+  expect([...new Set(all)], 'no queue pin covers a label or another pin, on either half').toEqual([]);
+});
+
+// Red r5 T2: A's Main Bridge closed (the demo state), B branched before that closure; A's marker named,
+// and pins sampled on both halves with A's queues
+test('pins_never_cover_labels_comparing_with_A_closed', async ({ page }) => {
+  test.setTimeout(400_000);
+  await ready(page);
+  await page.getByRole('combobox', { name: 'Speed' }).selectOption('20');
+  await blur(page);
+  await page.getByRole('button', { name: 'Close the main bridge' }).click();
+  await blur(page);
+  await expect.poll(async () => (await page.evaluate(() => window.__livingcity!.interventions())).length, { timeout: 30_000 }).toBe(1);
+  const closedAt = (await page.evaluate(() => window.__livingcity!.interventions()))[0]!.tick;
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000 }).toBeGreaterThan(closedAt + 900);
+  await setRunning(page, false);
+  // rewind to before A's closure (1 sim min per arrow), then branch there (B: the Main Bridge closed at the branch)
+  const slider = page.getByRole('slider', { name: 'Timeline' });
+  await slider.focus();
+  while ((await snap(page)).timeline.positionTick >= closedAt) {
+    const p = (await snap(page)).timeline.positionTick;
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(async () => (await snap(page)).timeline.positionTick).toBe(p - 120);
+  }
+  const at = (await snap(page)).timeline.positionTick;
+  await blur(page);
+  await page.keyboard.press('b');
+  await expect.poll(async () => (await snap(page)).scenario).toBe('B');
+  await page.getByRole('button', { name: 'Compare side by side' }).click();
+  await expect.poll(async () => (await snap(page)).compare).toBe(true);
+  const hms = (tick: number) => {
+    const s = Math.floor(tick / 2);
+    return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, '0')).join(':');
+  };
+  // run past A's closure, then sample both halves, running and paused
+  await setRunning(page, true);
+  await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000 }).toBeGreaterThan(closedAt + 300);
+  // both sides are past A's closure: the shared window holds A's and B's own interventions
+  await setRunning(page, false);
+  const track = (await page.locator('.timeline-track').boundingBox())!;
+  for (const [name, glyph] of [
+    [`A: Closed Main Bridge at ${hms(closedAt)}`, '✕A'],
+    [`B: Closed Main Bridge at ${hms(at)}`, '✕B'],
+  ] as const) {
+    const marker = page.locator('.timeline-track').getByLabel(name, { exact: true });
+    await expect(marker, name).toBeVisible();
+    await expect(marker).toContainText(glyph);
+    const m = (await marker.boundingBox())!;
+    expect(m.x, `${name}: inside the track`).toBeGreaterThanOrEqual(track.x - 0.5);
+    expect(m.x + m.width, `${name}: inside the track`).toBeLessThanOrEqual(track.x + track.width + 0.5);
+  }
+  await setRunning(page, true);
+  let pins = 0;
+  const all: string[] = [];
+  for (let k = 0; k < 3; k++) {
+    await sleep(5_000);
+    const run = await sampleOverlaps(page, 120);
+    await setRunning(page, false);
+    await sleep(400);
+    const paused = await sampleOverlaps(page, 20);
+    expect(paused.laidOut['labels'] ?? 0, 'pins drawn on A').toBeGreaterThan(0);
+    expect(paused.laidOut['labels labels-b'] ?? 0, 'pins drawn on B').toBeGreaterThan(0);
     await setRunning(page, true);
     pins += run.pins + paused.pins;
     all.push(...run.overlaps, ...paused.overlaps);
