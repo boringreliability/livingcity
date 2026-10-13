@@ -5,10 +5,13 @@
  * reads the same whether the legend is stacked or not.
  */
 const STACK_BELOW_GAP_PX = 12;
-/** Unstack only with clearly more room than that: no flipping back and forth at the border. */
-const UNSTACK_ABOVE_GAP_PX = 24;
 
-/** The next placement from the current one and the measured horizontal gap (legend left − metrics right). */
-export function nextStacked(stacked: boolean, gapPx: number): boolean {
-  return stacked ? gapPx < UNSTACK_ABOVE_GAP_PX : gapPx < STACK_BELOW_GAP_PX;
+/**
+ * The placement from the measured horizontal gap (legend left − metrics right) alone. Stacking moves the
+ * legend only vertically, so it does not change the gap: there is no feedback to damp, and a hysteresis
+ * band would leave the legend stacked over the city wherever a transient (a fallback font, a wider value)
+ * once stacked it and the settled gap lies inside the band (motion-005 Gold r2: ~19 px on Linux CI).
+ */
+export function nextStacked(gapPx: number): boolean {
+  return gapPx < STACK_BELOW_GAP_PX;
 }

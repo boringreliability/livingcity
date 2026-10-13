@@ -655,7 +655,7 @@ export function App() {
     const check = () => {
       if (!live) return;
       const gap = legend.getBoundingClientRect().left - metrics.getBoundingClientRect().right;
-      setLegendStacked((s) => nextStacked(s, gap));
+      setLegendStacked(nextStacked(gap));
     };
     check();
     const ro = new ResizeObserver(check);

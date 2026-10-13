@@ -141,16 +141,20 @@ Each flow is checked through successive observed frames, sampled on every animat
 - **No product change was needed.** The six flows passed at 1× and 20× on the existing code. Red found no defect; every Red failure was a test oracle. One example: right after a seek, a single frame is drawn straight, without a junction curve.
 - **Measurements:**
   - Script: `scratchpad` `epic_ab.py` + `epic_probe.mjs`. The result is `web/perf-results/motion-epic-before-after.json`, and `docs/performance.md` § Epic motion has the tables.
-  - The before tree is `git archive 19e9fbf`, with wasm built from its own Rust. Before and after were interleaved, all runs within 17 minutes.
+  - The before tree is `git archive 19e9fbf`, with wasm built from its own Rust. Before and after were interleaved, all SwiftShader and GPU runs within about 25 minutes (21:32–21:57 UTC).
   - **A hardware-GPU run was possible** (headed Chromium, Apple M4 Pro via Metal, 120 Hz) and is kept in its own group.
 - **Load:** in the second run set the load was 7–22 for SwiftShader and 10–20 for the GPU.
 - **Gold r1 fixes:**
   - MAJOR 1: the probe missed the vehicle `ArrayBuffer`. Everything was re-measured with it counted, and the JSON and docs were replaced: transfer 1.67 → 2.05 MB/s (+22 %), paused 1.56 MB/s → 0.
-  - MAJOR 2: CI had been red since motion-002. Fixed with S9, which the user authorized on 2026-10-13: the sweep timeout went from 600 s to 1800 s. The deploy job is now manual-only. Locally `motion002.test.ts` passes 14/1 skipped in 293 s. The duration on GitHub is recorded after the push.
+  - MAJOR 2: CI had been red since motion-002. Fixed with S9, which the user authorized on 2026-10-13: the sweep timeout went from 600 s to 1800 s. The deploy job is now manual-only. Locally `motion002.test.ts` passes 14/1 skipped in 293 s. On GitHub (run 38475090804, 2284e32): Web job 11 min 20 s, Vitest 633 s, `3b-ci` 567 s (under the old 600 s on that runner, so the margin was thin; 1800 s leaves about 3×).
   - Minors: the demo wording, the stale comment, a note on code that only frozen tests use, the after-commit note, and the missing p95 row.
+- **Gold r2 fixes:**
+  - MAJOR 1: on CI's Linux runners the legend stayed stacked over the city (gap ~19 px inside the old 12–24 px hysteresis band), failing 7 frozen e2e tests. Regression test `web/e2e/motion005_legend.spec.ts` (Red: `.wdd/reviews/motion-005-legend-red-1.md` APPROVED, snapshot 6db415cc…) fails on 2284e32 and passes after the fix: `ui/bottomBand.ts` places the legend from the measured gap alone (stacking moves it only vertically, so the gap does not change and there is no feedback to damp). The affected specs pass locally: 53/53.
+  - MAJOR 2 (`flow_queue_forms_and_releases` release oracle fragile when the queue at the reopen is small): put to the user (supersede or known flake).
+  - Minors: performance.md p95 and paused-transfer wording, known-issues lag numbers and the frames/s row, these notes.
 - **Suites:**
   - `cargo test --workspace` and clippy are clean.
-  - vitest: 162 passed, 7 skipped.
+  - vitest: 162 passed, 8 skipped (S9 skips the old 3b).
   - Full e2e: 149 passed, 2 skipped, 5 failed. It took 41 min at a 15-minute load of about 28 (normally about 31 min).
   - The 5 were all timing or frame-count tests (gold_city003 M1, integration_polish `controls_respond_under_load`, motion.spec `tracked_car_moves_continuously`, motion002 `compare_shares_one_presentation_time` and `presentation_latency_is_bounded_in_the_browser`). Rerun alone at a load of about 20, they passed 5/5. motion-005 changes no product code.
 - **Docs:** `docs/verification/motion-005.md` with 14 screenshots (downscaled to 960 px), plus `docs/demo.md` (motion, quiet pause) and `docs/performance.md`.

@@ -28,7 +28,7 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - motion-004: the waterfront shed lines are the faintest roof mark, about 9 grey levels above their fill, because every decor colour stays below the darkest road.
 - motion-004: under SwiftShader at `?demand=5` the render interval's p95 is one 16.7 ms step higher than before (the per-pixel building shader on a software rasteriser); draw CPU is unchanged.
 - motion-004: at fit zoom under heavy demand, the followed route's white dashes can look like a stream of cars.
-- motion-005: under SwiftShader at a load of about 40, the presentation lag at 1× measured 0.49–0.57 s, close to the frozen bound of 0.6 s in motion002.spec. On the hardware GPU it is about 0.28 s.
+- motion-005: under SwiftShader at a load of about 7–22, the presentation lag at 1× measured 0.44–0.47 s, not far below the frozen bound of 0.6 s in motion002.spec; under heavier load it comes closer. On the hardware GPU it is 0.22–0.28 s.
 - motion-005: two Red mutations are not caught by the integration flows: a presenter that ignores scenario and epoch (viewing a scenario pauses it, and A is behind B, so the tick-back reset hides it), and B's map drawing A's traffic (two coordinated edits). Neither shows in the product today.
 - motion-005: `extrapolate`, `ExtrapolationClock` (`render/motion.ts`) and `pickVehicle` (`render/picking.ts`) are no longer used by the app. They are kept because frozen tests import them: the superseded S5–S7 and `inspect.test`.
 - motion-004: small leftovers: the renderer rebuilds the two district colour arrays every frame (8 numbers each), River City still draws the 6 m bank strip under the 10 m quay, and `DECOR_COLORS.outline` is kept for the palette test while buildings use the district outlines.
@@ -134,6 +134,6 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 
 ## From epic motion (motion-001 Gold review minors)
 - A re-init of a host that was running can send one extra settling frame about 1 s after `ready` — limitation: harmless (one frame).
-- While paused the Diagnostics "frames/s" reads 1 for a second (the settling frame) — limitation: cosmetic.
+- While paused the Diagnostics "frames/s" read 1 for a second (the settling frame) — resolved: since motion-002 a paused host sends no frames until something changes, and the panel has no frames/s row.
 - With the Diagnostics panel open, the App re-renders about twice a second to refresh the render numbers — limitation: only while the panel is open.
 

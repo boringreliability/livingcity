@@ -188,7 +188,7 @@ These tables compare the whole epic: before = commit `19e9fbf` (the last commit 
 | Presentation lag at 20×, median (ms) | none | 16.5, 22.0 |
 
 **What the numbers say:**
-- **Paused frame production is gone.** Before the epic, a paused host sent about 50 full frames per second (≈ 1.56 MB/s, as motion-001 measured). Now it sends nothing until something changes. This holds on both renderers.
+- **Paused frame production is gone.** Before the epic, a paused host sent about 50 full frames per second (≈ 1.55–1.58 MB/s in this run set; motion-001 measured 1.65 MB/s). Now it sends nothing until something changes. This holds on both renderers.
 - **Simulation cost did not change measurably.**
   - Worker tick time: 0.064–0.076 ms before and after.
   - Native step time: 0.0145–0.0158 ms. The after-runs are about 0.001 ms higher, within run-to-run noise on a shared machine, so no change is claimed.
@@ -198,7 +198,7 @@ These tables compare the whole epic: before = commit `19e9fbf` (the last commit 
   - Transfer while running at 20×: from about 1.67 to 2.05 MB/s (+22 %), at about 50 frames per second in both builds.
 - **Rendering cost is unchanged.**
   - On the hardware GPU the display rate holds before and after (8.3 ms at 120 Hz).
-  - Under SwiftShader the medians are equal in every scenario. The p95 values move by one 16.7 ms step either way.
+  - Under SwiftShader the medians are equal in every scenario. The p95 values are within one 16.7 ms step of each other, except one before run at baseline 20× (166.7 ms, against 66.7 ms in every other run): with about 50 samples per window, a single long frame sets the p95.
 - **The added presentation latency is the price of smooth, never-backward motion.** The picture now trails the newest frame:
   - on the hardware GPU, a median of 0.22–0.28 s at 1× and 17–22 ms at 20×;
   - under SwiftShader, 0.44–0.47 s at 1× and 68–109 ms at 20×.
