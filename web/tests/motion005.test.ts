@@ -53,13 +53,18 @@ test('epic_wiring_and_docs', () => {
   // verification doc: six flows at 1× and 20×, screenshots exist
   const doc = read('docs/verification/motion-005.md');
   const flows = ['junction', 'queue', 'reopen', 'pause', 'branch', 'compar'];
+  const png = (l: string) => /\(([^)\s]+\.png)\)/.exec(l)?.[1];
+  const caseShots = new Set<string>();
   for (const f of flows) {
-    const lines = doc.split('\n').filter((l) => l.toLowerCase().includes(f));
-    expect(lines.some((l) => l.includes('1×')), `${f} at 1×`).toBe(true);
-    expect(lines.some((l) => l.includes('20×')), `${f} at 20×`).toBe(true);
+    for (const speed of ['1×', '20×']) {
+      // one line per case: the flow, the speed (not "1×" inside "21×") and its own screenshot
+      const line = doc.split('\n').find((l) => l.toLowerCase().includes(f) && new RegExp(`(^|[^0-9])${speed}`).test(l) && png(l));
+      expect(line, `${f} at ${speed}: a line with its screenshot`).toBeTruthy();
+      caseShots.add(png(line!)!);
+    }
   }
+  expect(caseShots.size, 'a distinct screenshot per flow and speed').toBe(12);
   const pngs = [...doc.matchAll(/\(([^)\s]+\.png)\)/g)].map((m) => m[1]!);
-  expect(pngs.length, 'screenshots linked').toBeGreaterThanOrEqual(12);
   for (const p of pngs) {
     expect(p, 'screenshots live under docs/verification/motion-005/').toMatch(/^motion-005\//);
     expect(existsSync(join(ROOT, 'docs/verification', p)), `${p} exists`).toBe(true);
@@ -76,11 +81,26 @@ test('epic_measured_before_and_after', () => {
   expect(String(j['after']?.commit ?? '')).toMatch(/^[0-9a-f]{7,40}$/);
   const finite = (v: unknown) => Array.isArray(v) && v.length >= 2 && v.every((x) => typeof x === 'number' && Number.isFinite(x));
   const required = ['tickMsMean', 'nativeStepMsMedian', 'renderIntervalMedianMs', 'renderIntervalP95Ms', 'frameBytes', 'transferBytesPerS', 'pausedFramesPerS', 'pausedBytesPerS', 'presentationLagMsMedian'];
+  // metrics measured per scenario (Red r1 minor 5): { "<scenario>": { before, after, … } }
+  const scenarios: Record<string, string[]> = {
+    renderIntervalMedianMs: ['baseline-1x', 'baseline-20x', 'stress-5x'],
+    renderIntervalP95Ms: ['baseline-1x', 'baseline-20x', 'stress-5x'],
+    presentationLagMsMedian: ['1x', '20x'],
+  };
   const ss = j['swiftshader'] as Record<string, any>;
   expect(ss, 'swiftshader group').toBeTruthy();
+  const seriesOf = (k: string): Record<string, any>[] => {
+    const m = ss[k];
+    if (!m) return [];
+    if (scenarios[k]) {
+      for (const sc of scenarios[k]!) expect(m[sc], `swiftshader.${k}.${sc}`).toBeTruthy();
+      return scenarios[k]!.map((sc) => m[sc]);
+    }
+    return 'after' in m ? [m] : [];
+  };
+  expect(String(ss['frameBytes']?.definition ?? '').length, 'frameBytes: what one frame counts').toBeGreaterThanOrEqual(20);
   for (const k of required) {
-    // a metric may hold one series or several labelled series ({ "baseline-1x": {before, after}, … })
-    const series: Record<string, any>[] = ss[k] && ('after' in ss[k] ? [ss[k]] : Object.values(ss[k]));
+    const series = seriesOf(k);
     expect(series.length, `swiftshader.${k}`).toBeGreaterThan(0);
     for (const s of series) {
       expect(finite(s['after']), `swiftshader.${k}: after (≥ 2 interleaved runs)`).toBe(true);
@@ -95,8 +115,14 @@ test('epic_measured_before_and_after', () => {
   expect(hw, 'hardware group').toBeTruthy();
   if (hw['measured'] === false) expect(String(hw['reason'] ?? '').length, 'why hardware was not measured').toBeGreaterThanOrEqual(20);
   else expect(String(hw['renderer'] ?? ''), 'hardware renderer').not.toMatch(/SwiftShader/);
-  const load = j['load1min'] as Record<string, number>;
-  expect(Object.keys(load ?? {}).length, 'load per run').toBeGreaterThanOrEqual(4);
+  // the runs in their order, alternating before/after, each with its load (Red r1 minor 5)
+  const runs = j['runs'] as { label: string; build: 'before' | 'after'; load1min: number }[];
+  expect(Array.isArray(runs) && runs.length >= 4, 'a run list').toBe(true);
+  runs.forEach((r, i) => {
+    expect(['before', 'after'], `run ${i} build`).toContain(r.build);
+    expect(Number.isFinite(r.load1min), `run ${i} load`).toBe(true);
+    if (i > 0) expect(r.build, `run ${i}: interleaved`).not.toBe(runs[i - 1]!.build);
+  });
 
   // docs/performance.md prints the epic table from this JSON
   const doc = read('docs/performance.md');
@@ -104,14 +130,18 @@ test('epic_measured_before_and_after', () => {
   expect(at, 'the epic section').toBeGreaterThanOrEqual(0);
   const section = doc.slice(at, doc.indexOf('\n## ', at + 5) < 0 ? undefined : doc.indexOf('\n## ', at + 5));
   expect(section).toContain('motion-epic-before-after.json');
-  const values = new Set<string>();
-  const collect = (v: unknown) => {
-    if (typeof v === 'number') values.add(v.toFixed(1));
-    else if (Array.isArray(v)) v.forEach(collect);
-    else if (v && typeof v === 'object') Object.values(v).forEach(collect);
-  };
-  collect(j);
   for (const k of ['renderIntervalMedianMs', 'frameBytes', 'pausedFramesPerS']) {
+    // the metric's own values (and their medians), not any number in the JSON
+    const values = new Set<string>();
+    const collect = (v: unknown) => {
+      if (typeof v === 'number') values.add(v.toFixed(1));
+      else if (Array.isArray(v)) {
+        v.forEach(collect);
+        const xs = [...v].filter((x) => typeof x === 'number').sort((a, b) => a - b);
+        if (xs.length) values.add((xs.length % 2 ? xs[(xs.length - 1) / 2]! : (xs[xs.length / 2 - 1]! + xs[xs.length / 2]!) / 2).toFixed(1));
+      } else if (v && typeof v === 'object') Object.values(v).forEach(collect);
+    };
+    collect(ss[k]);
     const row = section.split('\n').find((l) => l.includes(k));
     expect(row, `the epic table has a ${k} row`).toBeTruthy();
     // the value cells (after the first, which names the metric and its scenario)

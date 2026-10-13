@@ -73,6 +73,24 @@ async function wheelZoom(page: Page, at: P, ok: (z: number) => boolean) {
   await page.mouse.move(3, 3);
   await sleep(300);
 }
+/** The brightest 3×3 luminance (8 bit) around page point `c` (what the picture shows, not a hook). */
+async function maxLum(page: Page, c: P): Promise<number> {
+  const buf = await page.screenshot({ clip: { x: Math.round(c[0] - 1.5), y: Math.round(c[1] - 1.5), width: 3, height: 3 }, animations: 'disabled' });
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const cv = new OffscreenCanvas(img.width, img.height);
+    const g = cv.getContext('2d')!;
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, img.width, img.height).data;
+    let m = 0;
+    for (let i = 0; i < d.length; i += 4) m = Math.max(m, 0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!);
+    return m;
+  }, buf.toString('base64'));
+}
+const hideVehicles = (page: Page, on: boolean) => page.evaluate((v) => window.__livingcity!.setDebug({ hideVehicles: v }), on);
+
 async function shot(page: Page, name: string) {
   const path = test.info().outputPath(`${name}.png`);
   await page.screenshot({ path });
@@ -148,9 +166,10 @@ function sampleTracked(page: Page, ms: number, stopOffLink: number | null): Prom
 }
 
 /**
- * The tracked-car rule (tests 1, 4, 5): every link entered is next on the remaining route (the previous
- * frame's, or the route at that frame: rerouting is allowed) and never one visited before; no backward step;
- * the motion bound; the brackets on the car.
+ * The tracked-car rule (tests 1, 4, 5): every link entered is the next one on the remaining route and never
+ * one visited before; no backward step; the motion bound. The route comes from the newest frame while the
+ * picture trails it, so the route may already start one link ahead of the drawn car (Red r1 minor 4); a link
+ * that was on no earlier route counts only as a reroute (then it is the route's first link at that frame).
  */
 function checkTracked(samples: TrackedSample[], m: number, what: string) {
   let prev: TrackedSample | null = null;
@@ -158,15 +177,15 @@ function checkTracked(samples: TrackedSample[], m: number, what: string) {
   const visited = new Set<number>();
   for (const x of samples) {
     if (!x.d) continue;
-    if (x.marker && x.centre) expect(Math.hypot(x.marker.page[0] - x.centre[0], x.marker.page[1] - x.centre[1]), `${what}: brackets on the car`).toBeLessThanOrEqual(1.5);
     if (prev?.d) {
       const dist = Math.hypot(x.d.world[0] - prev.d.world[0], x.d.world[1] - prev.d.world[1]);
       expect(dist, `${what}: step of ${dist.toFixed(2)} m in ${(x.t - prev.t).toFixed(0)} ms (link ${prev.d.link} → ${x.d.link})`).toBeLessThanOrEqual(bound(m, x.t - prev.t));
       if (x.d.link === prev.d.link) expect(x.d.s, `${what}: no backward step on link ${x.d.link}`).toBeGreaterThanOrEqual(prev.d.s - 0.05);
       else {
         changes++;
-        const next = prev.route.indexOf(x.d.link) >= 1 || x.route[0] === x.d.link;
-        expect(next, `${what}: link ${x.d.link} is next on the route (was ${JSON.stringify(prev.route.slice(0, 3))}, now ${JSON.stringify(x.route.slice(0, 3))})`).toBe(true);
+        const expected = prev.route[0] === prev.d.link ? prev.route[1] : prev.route[0];
+        const rerouted = !prev.route.includes(x.d.link) && x.route[0] === x.d.link;
+        expect(x.d.link === expected || rerouted, `${what}: link ${x.d.link} is next on the route (expected ${expected}; was ${JSON.stringify(prev.route.slice(0, 3))}, now ${JSON.stringify(x.route.slice(0, 3))})`).toBe(true);
         expect(visited.has(x.d.link), `${what}: link ${x.d.link} was visited before`).toBe(false);
       }
     }
@@ -236,7 +255,14 @@ for (const m of [1, 20]) {
     const route = await followMovingCar(page);
     const m0 = await page.evaluate(() => ({ mk: window.__livingcity!.trackedMarker(), c: window.__livingcity!.trackedScreenCenter(), d: window.__livingcity!.trackedDraw() }));
     expect(m0.mk && m0.c, 'brackets and centre while paused').toBeTruthy();
-    expect(Math.hypot(m0.mk!.page[0] - m0.c![0], m0.mk!.page[1] - m0.c![1])).toBeLessThanOrEqual(1.5);
+    // the brackets are drawn: lit at their four corner vertices (Red r1 minor 1: the hook pair is not evidence)
+    await hideVehicles(page, true);
+    await sleep(300);
+    for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+      const k = 0.71 * m0.mk!.radiusPx;
+      expect(await maxLum(page, [m0.c![0] + sx * k, m0.c![1] + sy * k]), `${m}×: bracket corner (${sx}, ${sy}) drawn`).toBeGreaterThanOrEqual(235);
+    }
+    await hideVehicles(page, false);
     await sleep(1000);
     const d1 = await page.evaluate(() => window.__livingcity!.trackedDraw());
     expect(Math.hypot(d1!.world[0] - m0.d!.world[0], d1!.world[1] - m0.d!.world[1]), `${m}×: the paused car stays put`).toBeLessThanOrEqual(0.01);
@@ -263,6 +289,49 @@ for (const m of [1, 20]) {
     await speed(page, m);
     await play(page);
     await sleep(3000);
+    // a seek while running (Red r1 MAJOR 1): the presentation never shows a tick from before the seek, cars are
+    // drawn on their new records' links, and the presented tick only moves forward from the seek on
+    type RunSample = { tick: number; presA: number; onLink: number; n: number };
+    const runBefore = (await snap(page)).tick;
+    const runSampling = page.evaluate(
+      () =>
+        new Promise<RunSample[]>((resolve) => {
+          const h = window.__livingcity as unknown as Hook;
+          const out: RunSample[] = [];
+          const end = performance.now() + 1500;
+          const step = () => {
+            let onLink = 0;
+            let n = 0;
+            const records = h.snapshot().frameRecords;
+            for (let i = 0; i < records && n < 40; i++) {
+              const f = h.frameVehicle(i);
+              const v = h.vehicleDraw(i);
+              if (!f || !v || !h.vehicleScreenCenter(i)) continue;
+              n++;
+              if (v.link === f.link) onLink++;
+            }
+            out.push({ tick: h.snapshot().tick, presA: h.diagnostics().presentation.tickA, onLink, n });
+            if (performance.now() < end) requestAnimationFrame(step);
+            else resolve(out);
+          };
+          requestAnimationFrame(step);
+        }),
+    );
+    await page.getByRole('button', { name: '−1 min' }).click();
+    const run = await runSampling;
+    await attachJson(`seek-running-${m}x-samples`, run);
+    const runAfter = run.filter((x) => x.tick < runBefore);
+    expect(runAfter.length, `${m}×: samples after the running seek`).toBeGreaterThanOrEqual(10);
+    const seekTick = runAfter[0]!.tick;
+    let lastPres = -Infinity;
+    for (const x of runAfter) {
+      expect(x.presA, `${m}×: no tick from before the seek is shown`).toBeLessThan(runBefore);
+      expect(x.presA, `${m}×: the presentation starts at the seek`).toBeGreaterThanOrEqual(seekTick);
+      expect(x.presA, `${m}×: never ahead of the newest frame`).toBeLessThanOrEqual(x.tick);
+      expect(x.presA, `${m}×: the presented tick moves forward`).toBeGreaterThanOrEqual(lastPres);
+      lastPres = x.presA;
+      if (x.n) expect(x.onLink / x.n, `${m}×: cars on their records' links after the running seek`).toBeGreaterThanOrEqual(0.8);
+    }
     await pause(page);
     const before = (await snap(page)).tick;
     // one seek, sampled from the click on: after it, the presentation stands on the new frame and nothing moves
@@ -317,11 +386,16 @@ for (const m of [1, 20]) {
     // resume on B
     await play(page);
     const t0 = (await snap(page)).tick;
-    await followMovingCar(page);
+    const route = await followMovingCar(page);
+    const d0 = (await page.evaluate(() => window.__livingcity!.trackedDraw()))!;
     const s = await sampleTracked(page, 3000, null);
     await attachJson(`branch-${m}x-samples`, s);
     checkTracked(s, m, `${m}× on B`);
     expect((await snap(page)).tick, `${m}×: B advances`).toBeGreaterThan(t0);
+    // the drawn car moves on B (Red r1 MAJOR 2: a frozen presentation passes every other check)
+    const last = s.filter((x) => x.d).at(-1)!.d!;
+    const progressed = last.link !== d0.link ? route.includes(last.link) || s.some((x) => x.route.includes(last.link)) : last.s > d0.s + 0.5;
+    expect(progressed, `${m}×: the followed car moves on B`).toBe(true);
   });
 }
 
@@ -417,12 +491,21 @@ test('flow_close_and_reopen_main_bridge', async ({ page }) => {
     await bridgeButton(page).click();
     await expect.poll(async () => (await snap(page)).closed, { timeout: 2000 }).toEqual(expect.arrayContaining(main));
     const rings = await page.evaluate(() => (window.__livingcity as unknown as Hook).closureSigns());
+    await hideVehicles(page, true);
+    await sleep(300);
     for (const l of main) {
       const mid = (await page.evaluate((x) => window.__livingcity!.linkScreenPoint(x, 0.5), l))!;
       const r = rings.find((x) => x.link === l);
       expect(r, `${m}×: ring on link ${l}`).toBeDefined();
       expect(Math.hypot(r!.page[0] - mid[0], r!.page[1] - mid[1]), `${m}×: ring at the link's middle`).toBeLessThanOrEqual(2);
+      // drawn: the ring's white core (between r − 3 and r − 1) at ≥ 3 of 4 compass points (Red r1 MAJOR 3)
+      let lit = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        if ((await maxLum(page, [r!.page[0] + dx * (r!.radiusPx - 2), r!.page[1] + dy * (r!.radiusPx - 2)])) >= 220) lit++;
+      }
+      expect(lit, `${m}×: the ring on link ${l} is drawn`).toBeGreaterThanOrEqual(3);
     }
+    await hideVehicles(page, false);
     await expect.poll(() => entries('close')).toBe(c0 + 1);
     const closeEntry = (await page.evaluate(() => (window.__livingcity as unknown as Hook).interventions())).filter((e) => e.kind === 'close').at(-1)!;
     expect(closeEntry.tick, `${m}×: the closure's tick`).toBeGreaterThanOrEqual(t0);
@@ -485,18 +568,26 @@ test('flow_side_by_side_compare', async ({ page }) => {
     await play(page);
     const frames = await page.evaluate(
       () =>
-        new Promise<{ same: boolean; cams: boolean; pres: boolean }[]>((resolve) => {
+        new Promise<{ same: boolean; cams: boolean; pres: boolean; tickA: number; tickB: number | null; cars: string[] }[]>((resolve) => {
           const h = window.__livingcity as unknown as Hook;
-          const out: { same: boolean; cams: boolean; pres: boolean }[] = [];
+          const out: { same: boolean; cams: boolean; pres: boolean; tickA: number; tickB: number | null; cars: string[] }[] = [];
           const end = performance.now() + 3000;
           const step = () => {
             const s = h.snapshot();
             const p = h.diagnostics().presentation;
             const c = s.drawnCameras;
+            const cars: string[] = [];
+            for (let i = 0; i < s.frameRecords && cars.length < 60; i++) {
+              const v = h.vehicleDraw(i);
+              if (v) cars.push(`${v.world[0].toFixed(2)},${v.world[1].toFixed(2)}`);
+            }
             out.push({
               same: !!s.sides && s.sides.a.tick === s.sides.b.tick,
               cams: !!c && c.a.cx === c.b.cx && c.a.cy === c.b.cy && c.a.zoom === c.b.zoom,
               pres: p.tickB !== null && p.tickA === p.tickB,
+              tickA: p.tickA,
+              tickB: p.tickB,
+              cars,
             });
             if (performance.now() < end) requestAnimationFrame(step);
             else resolve(out);
@@ -510,6 +601,13 @@ test('flow_side_by_side_compare', async ({ page }) => {
       expect(f.cams, `${m}×: linked cameras`).toBe(true);
     }
     expect(frames.filter((f) => f.pres).length / frames.length, `${m}×: one presentation time`).toBeGreaterThanOrEqual(0.95);
+    // both maps move together (Red r1 MAJOR 2): both presented ticks advance, and A's drawn cars move
+    const [f0, f1] = [frames[0]!, frames.at(-1)!];
+    expect(f1.tickA, `${m}×: A's presentation advances`).toBeGreaterThan(f0.tickA);
+    expect(f1.tickB ?? -1, `${m}×: B's presentation advances`).toBeGreaterThan(f0.tickB ?? Infinity);
+    const still = f0.cars.filter((c) => f1.cars.includes(c)).length;
+    expect(f0.cars.length, `${m}×: cars drawn on A`).toBeGreaterThan(10);
+    expect(still / f0.cars.length, `${m}×: A's cars move`).toBeLessThanOrEqual(0.5);
     await shot(page, `compare-${m}x`);
   }
   await pause(page);
