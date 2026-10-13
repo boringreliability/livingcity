@@ -157,9 +157,14 @@ function litRuns(v: number[], fill: number) {
 async function markSignature(page: Page, box: [number, number, number, number], fill: number) {
   const [x0, y0, x1, y1] = box;
   const [w, h] = [x1 - x0, y1 - y0];
-  const [mx, my] = [Math.round((x0 + x1) / 2), Math.round((y0 + y1) / 2)];
-  const row = await lumClip(page, Math.ceil(x0), my, Math.floor(w), 1);
-  const col = await lumClip(page, mx, Math.ceil(y0), 1, Math.floor(h));
+  // the pixel that contains the centre, and 3-px-wide profiles (per-position max) through it: a 1.5-px mark line
+  // whose centre falls between two pixel rows still lights one of them (Red r4 B4-1)
+  const [mx, my] = [Math.floor((x0 + x1) / 2), Math.floor((y0 + y1) / 2)];
+  const [W, H] = [Math.floor(w), Math.floor(h)];
+  const rows = await lumClip(page, Math.ceil(x0), my - 1, W, 3);
+  const cols = await lumClip(page, mx - 1, Math.ceil(y0), 3, H);
+  const row = Array.from({ length: W }, (_, i) => Math.max(rows[i]!, rows[W + i]!, rows[2 * W + i]!));
+  const col = Array.from({ length: H }, (_, i) => Math.max(cols[3 * i]!, cols[3 * i + 1]!, cols[3 * i + 2]!));
   const [shortP, longP, shortLen, longLen] = w <= h ? [row, col, w, h] : [col, row, h, w];
   const centre = Math.max(...(await lumAt(page, [mx, my], 3))) >= fill + 6;
   const across = litRuns(shortP, fill);
