@@ -95,9 +95,24 @@ function segDist([px, py]: P, [ax, ay]: P, [bx, by]: P) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+/** A free spot on the canvas at 1280×800 (between the top band, the guide and the bottom panels). */
+const FREE: P = [512, 400];
+
+/** Drag the map so that page point `from` lands on `to` (the camera keeps its zoom). */
+async function dragTo(page: Page, from: P, to: P) {
+  await page.mouse.move(from[0], from[1]);
+  await page.mouse.down();
+  await page.mouse.move((from[0] + to[0]) / 2, (from[1] + to[1]) / 2, { steps: 8 });
+  await page.mouse.move(to[0], to[1], { steps: 8 });
+  await page.mouse.up();
+  await page.mouse.move(3, 3);
+  await sleep(400);
+}
+
 /**
  * A road's cross-section at t = 0.5 of an axis-aligned link: width = pixels with lum > ground + 25 on a
- * 31 px line across it (ground = median of the 6 outermost samples), light = the brightest half's mean.
+ * 31 px line across it (ground = median of the 6 outermost samples); light = the median of the 3 pixels at
+ * the middle of that run (Red r1 M2: an edge pixel must not decide it).
  */
 async function crossSection(page: Page, link: number) {
   const a = (await point(page, link, 0))!;
@@ -107,13 +122,14 @@ async function crossSection(page: Page, link: number) {
   const n = 31;
   const across = horizontal ? await lumClip(page, Math.round(m[0]), Math.round(m[1]) - 15, 1, n) : await lumClip(page, Math.round(m[0]) - 15, Math.round(m[1]), n, 1);
   const ground = median([...across.slice(0, 3), ...across.slice(n - 3)]);
-  const road = across.filter((v) => v > ground + 25);
-  const core = [...road].sort((x, y) => y - x).slice(0, Math.max(1, Math.floor(road.length / 2)));
-  return { width: road.length, light: road.length ? mean(core) : 0 };
+  const idx = across.map((v, i) => (v > ground + 25 ? i : -1)).filter((i) => i >= 0);
+  if (!idx.length) return { width: 0, light: 0 };
+  const mid = idx[Math.floor(idx.length / 2)]!;
+  return { width: idx.length, light: median([across[mid - 1]!, across[mid]!, across[mid + 1]!]) };
 }
 
-/** Links of a class that are straight and axis-aligned, ≥ 60 px long, uncongested, with their middle ≥ 25 px
- * from every other road (its own reverse twin excepted) and on the canvas. */
+/** Links of a class that are straight and axis-aligned, ≥ 60 px long, empty together with their reverse twin
+ * (no congestion tint, Red r1 M2), with their middle ≥ 25 px from every other road and on the canvas. */
 async function measurableLinks(page: Page, ids: number[], want: number) {
   const segs = await allSegments(page);
   const s = await snap(page);
@@ -123,16 +139,27 @@ async function measurableLinks(page: Page, ids: number[], want: number) {
     if (!me) continue;
     const [dx, dy] = [me.b[0] - me.a[0], me.b[1] - me.a[1]];
     if (Math.hypot(dx, dy) < 60 || Math.min(Math.abs(dx), Math.abs(dy)) > 1) continue;
-    const cap = await page.evaluate((x) => window.__livingcity!.linkCapacity(x), l);
-    if (s.linkCounts[l]! / cap >= 0.1) continue;
     const m: P = [(me.a[0] + me.b[0]) / 2, (me.a[1] + me.b[1]) / 2];
     const twin = (x: (typeof segs)[number]) => Math.hypot(x.a[0] - me.b[0], x.a[1] - me.b[1]) < 12 && Math.hypot(x.b[0] - me.a[0], x.b[1] - me.a[1]) < 12;
+    const twins = segs.filter((x) => x.l !== l && twin(x)).map((x) => x.l);
+    if ([l, ...twins].some((x) => s.linkCounts[x] !== 0)) continue;
     if (segs.some((x) => x.l !== l && !twin(x) && segDist(m, x.a, x.b) < 25)) continue;
     if (!(await onCanvas(page, m, 16))) continue;
     out.push(l);
     if (out.length >= want) break;
   }
   return out;
+}
+
+/** The road-class hook partitions all links, with every landmark bridge link major (Red r1 m1). */
+async function classesPartition(page: Page) {
+  const cls = await page.evaluate(() => window.__livingcity!.roadClasses());
+  const s = await snap(page);
+  const all = [...cls.major, ...cls.local].sort((x, y) => x - y);
+  expect(all, 'every link in exactly one class').toEqual(s.linkCounts.map((_, i) => i));
+  const lm = s.landmarks!;
+  for (const l of [...lm.north_bridge, ...lm.central_bridge, ...lm.south_bridge]) expect(cls.major, `bridge link ${l} major`).toContain(l);
+  return cls;
 }
 
 // 5
@@ -143,7 +170,7 @@ test('wide_zoom_shows_major_routes', async ({ page }) => {
   await hideLabels(page);
   await hideVehicles(page);
   await sleep(400);
-  const cls = await page.evaluate(() => window.__livingcity!.roadClasses());
+  const cls = await classesPartition(page);
   const bridges = (await snap(page)).landmarks!;
   const bridgeLinks = [...bridges.north_bridge, ...bridges.central_bridge, ...bridges.south_bridge];
   const major = await measurableLinks(page, cls.major.filter((l) => !bridgeLinks.includes(l)), 3);
@@ -157,7 +184,7 @@ test('wide_zoom_shows_major_routes', async ({ page }) => {
     expect(x.width, `major ${major[k]} width`).toBeGreaterThanOrEqual(4);
     expect(x.width, `major ${major[k]} vs the widest local (${widest})`).toBeGreaterThanOrEqual(1.5 * widest);
   }
-  expect(mean(M.map((x) => x.light)), 'major roads brighter').toBeGreaterThanOrEqual(mean(L.map((x) => x.light)) + 8);
+  expect(mean(M.map((x) => x.light)), 'major roads brighter at their middle').toBeGreaterThanOrEqual(mean(L.map((x) => x.light)) + 8);
   // the bridges are major: wide at fit zoom
   for (const l of [bridges.north_bridge[0], bridges.central_bridge[0], bridges.south_bridge[0]]) {
     expect((await crossSection(page, l)).width, `bridge link ${l}`).toBeGreaterThanOrEqual(4);
@@ -166,7 +193,7 @@ test('wide_zoom_shows_major_routes', async ({ page }) => {
 
 // 6
 test('districts_read_and_stay_subordinate', async ({ page }) => {
-  test.setTimeout(400_000);
+  test.setTimeout(500_000);
   await ready(page);
   await setRunning(page, false);
   await hideLabels(page);
@@ -174,21 +201,25 @@ test('districts_read_and_stay_subordinate', async ({ page }) => {
   await sleep(400);
   const fitZoom = (await snap(page)).camera.zoom;
   const kinds = ['residential', 'workplace', 'hospital', 'waterfront'];
-  const at: Record<string, { z1: number; z3: number }> = {};
+  const fills: Record<string, Record<number, number>> = {};
+  const sample = (kind: string, near: P) => page.evaluate(([k, p]) => window.__livingcity!.districtSamples(p).find((s) => s.kind === k) ?? null, [kind, near] as const);
   for (const kind of kinds) {
-    const fit = await page.evaluate(() => window.__livingcity!.districtSamples());
-    const start = fit.find((s) => s.kind === kind);
-    expect(start, `${kind} shown at fit zoom`).toBeDefined();
-    let res: { z1: number; z3: number } = { z1: 0, z3: 0 };
-    for (const [zoom, key] of [[1, 'z1'], [3, 'z3']] as const) {
-      const near = (await page.evaluate((k) => window.__livingcity!.districtSamples().find((s) => s.kind === k)?.page ?? null, kind)) ?? start!.page;
-      await wheelZoom(page, near, (z) => z >= zoom, -1);
-      const samples = await page.evaluate((p) => window.__livingcity!.districtSamples(p), near);
-      expect(new Set(samples.map((s) => s.kind)), `all kinds sampled at zoom ${zoom}`).toEqual(new Set(kinds));
-      const s = samples.find((x) => x.kind === kind)!;
-      const fill = mean(await lumAt(page, s.page, 3));
-      res = { ...res, [key]: fill };
-      // below the roads: a local road's centreline here is ≥ 15 brighter
+    fills[kind] = {};
+    const start = await sample(kind, FREE);
+    expect(start, `${kind} shown at fit zoom`).not.toBeNull();
+    let anchor: P = start!.page;
+    for (const zoom of [1, 3]) {
+      // zoom in at the building (the wheel keeps it under the pointer), then drag it to a free spot
+      await wheelZoom(page, anchor, (z) => z >= zoom, -1);
+      const s0 = await sample(kind, anchor);
+      expect(s0, `${kind} at zoom ${zoom}`).not.toBeNull();
+      await dragTo(page, s0!.page, FREE);
+      const s = await sample(kind, FREE);
+      expect(s, `${kind} at zoom ${zoom} after the drag`).not.toBeNull();
+      anchor = s!.page;
+      const fill = mean(await lumAt(page, s!.page, 3));
+      fills[kind]![zoom] = fill;
+      // below the roads: a local road's middle on screen is ≥ 15 brighter
       const cls = await page.evaluate(() => window.__livingcity!.roadClasses());
       let road: number | null = null;
       for (const l of cls.local) {
@@ -200,63 +231,86 @@ test('districts_read_and_stay_subordinate', async ({ page }) => {
       }
       expect(road, `a local road on screen at zoom ${zoom}`).not.toBeNull();
       expect(fill, `${kind} fill below a local road at zoom ${zoom}`).toBeLessThanOrEqual(road! - 15);
-      // decor around it stays below the median road: the 99th percentile off the roads
-      const segs = await allSegments(page);
-      const z = (await snap(page)).camera.zoom;
-      const [cx, cy] = [Math.round(s.page[0]) - 100, Math.round(s.page[1]) - 100];
-      if (await onCanvas(page, s.page, 100)) {
-        const crop = await lumClip(page, cx, cy, 200, 200);
-        const nearCrop = segs.filter((sg) => segDist([cx + 100, cy + 100], sg.a, sg.b) <= 200);
+      // the roof mark (drawn from zoom 1, Red r1 M4): a local maximum ≥ fill + 6 inside the building, on a
+      // line through its centre along x or along y
+      {
+        const [x0, y0, x1, y1] = s!.box;
+        const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
+        const row = await lumClip(page, x0 + 2, my, Math.max(3, Math.floor(x1 - x0) - 4), 1);
+        const col = await lumClip(page, mx, y0 + 2, 1, Math.max(3, Math.floor(y1 - y0) - 4));
+        const peak = (v: number[]) => v.some((x, i) => i > 0 && i < v.length - 1 && x >= v[i - 1]! && x >= v[i + 1]! && x >= fill + 6);
+        expect(peak(row) || peak(col), `${kind} roof mark (${s!.mark}) at zoom ${zoom}`).toBe(true);
+      }
+      // at zoom 1, decor around it stays below the roads: the 99th percentile of a 300 × 300 crop off the
+      // roads and bridges is below the median road pixel of the same crop (which must hold roads)
+      if (zoom === 1) {
+        expect(await onCanvas(page, FREE, 150), 'the crop is on the canvas').toBe(true);
+        const [cx, cy] = [FREE[0] - 150, FREE[1] - 150];
+        const crop = await lumClip(page, cx, cy, 300, 300);
+        const segs = (await allSegments(page)).filter((sg) => segDist(FREE, sg.a, sg.b) <= 300);
+        const z = (await snap(page)).camera.zoom;
         const bridgeIds = new Set(Object.values((await snap(page)).landmarks!).flat());
         const off: number[] = [];
         const roadLums: number[] = [];
-        for (let y = 0; y < 200; y++)
-          for (let x = 0; x < 200; x++) {
+        for (let y = 0; y < 300; y++)
+          for (let x = 0; x < 300; x++) {
             const p: P = [cx + x + 0.5, cy + y + 0.5];
             let nearRoad = false;
-            let nearBridge = false;
-            for (const sg of nearCrop) {
+            for (const sg of segs) {
               const d = segDist(p, sg.a, sg.b);
-              // the drawn half width (lanes × 3.5 m / 2, at least the local minimum) plus 3 px of edge
-              if (d <= Math.max(sg.lanes * 1.75 * z, 2.25) + 3) nearRoad = true;
-              if (bridgeIds.has(sg.l) && d <= 25) nearBridge = true;
-              if (d <= 1) roadLums.push(crop[y * 200 + x]!);
+              // the drawn half width (lanes × 3.5 m / 2, at least the minimum) plus 3 px of edge; bridges with
+              // their deck and railing (20 m half width + 8 px) are structure, not decor (Red r1 m8)
+              const reach = bridgeIds.has(sg.l) ? 20 * z + 8 : Math.max(sg.lanes * 1.75 * z, 2.75) + 3;
+              if (d <= reach) nearRoad = true;
+              if (!bridgeIds.has(sg.l) && d <= 0.75) roadLums.push(crop[y * 300 + x]!);
             }
-            if (!nearRoad && !nearBridge) off.push(crop[y * 200 + x]!);
+            if (!nearRoad) off.push(crop[y * 300 + x]!);
           }
-        if (off.length > 1000 && roadLums.length > 20) {
-          const sorted = off.sort((a, b) => a - b);
-          expect(sorted[Math.floor(0.99 * (sorted.length - 1))]!, `decor 99th percentile below the median road (${kind}, zoom ${zoom})`).toBeLessThan(median(roadLums));
-        }
-      }
-      // at zoom 3 the roof mark is there: a local maximum ≥ fill + 6 inside the building, on a line
-      // through its centre along x or along y
-      if (zoom === 3) {
-        const [x0, y0, x1, y1] = s.box;
-        const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
-        const rowW = Math.floor(x1 - x0) - 4;
-        const colH = Math.floor(y1 - y0) - 4;
-        const row = await lumClip(page, x0 + 2, my, rowW, 1);
-        const col = await lumClip(page, mx, y0 + 2, 1, colH);
-        const peak = (v: number[]) => v.some((x, i) => i > 0 && i < v.length - 1 && x >= v[i - 1]! && x >= v[i + 1]! && x >= fill + 6);
-        expect(peak(row) || peak(col), `${kind} roof mark (${s.mark})`).toBe(true);
+        expect(roadLums.length, 'roads in the crop').toBeGreaterThan(20);
+        expect(off.length, 'decor in the crop').toBeGreaterThan(10_000);
+        const sorted = off.sort((a, b) => a - b);
+        expect(sorted[Math.floor(0.99 * (sorted.length - 1))]!, `decor 99th percentile below the median road (${kind})`).toBeLessThan(median(roadLums));
       }
     }
-    at[kind] = res;
-    await wheelZoom(page, [640, 400], (z) => z <= fitZoom * 1.05, 1);
+    await wheelZoom(page, FREE, (z) => z <= fitZoom * 1.05, 1);
   }
-  for (const key of ['z1', 'z3'] as const)
+  // the four kinds' fills differ by ≥ 6 (8-bit) at each zoom (Red r1 M4)
+  for (const zoom of [1, 3])
     for (let i = 0; i < 4; i++)
       for (let j = i + 1; j < 4; j++) {
-        const [a, b] = [at[kinds[i]!]![key], at[kinds[j]!]![key]];
-        expect(Math.abs(a - b), `${kinds[i]} vs ${kinds[j]} at ${key}`).toBeGreaterThanOrEqual(3);
+        const [a, b] = [fills[kinds[i]!]![zoom]!, fills[kinds[j]!]![zoom]!];
+        expect(Math.abs(a - b), `${kinds[i]} vs ${kinds[j]} at zoom ${zoom}`).toBeGreaterThanOrEqual(6);
       }
 });
 
 // 7
-test('queued_cars_countable_at_close_zoom', async ({ page }) => {
+test('queued_cars_countable_and_cars_readable_at_fit_zoom', async ({ page }) => {
   test.setTimeout(300_000);
   await ready(page);
+  await setRunning(page, false);
+  await hideLabels(page);
+  // (a) at fit zoom, moving cars stay bright (the outline must not eat them; Red r1 M3)
+  {
+    const moving = await page.evaluate(() => {
+      const h = window.__livingcity!;
+      const out: [number, number][] = [];
+      for (let i = 0; i < h.snapshot().frameRecords && out.length < 40; i++) {
+        const f = h.frameVehicle(i);
+        const v = h.vehicleDraw(i);
+        if (!f || !v || f.queued) continue;
+        const [x, y] = v.page;
+        if ([[0, 0], [-6, -6], [6, 6]].every(([dx, dy]) => document.elementFromPoint(x + dx!, y + dy!)?.tagName === 'CANVAS')) out.push(v.page);
+      }
+      return out;
+    });
+    expect(moving.length, 'moving cars on the canvas').toBeGreaterThanOrEqual(10);
+    const shown = await Promise.all(moving.map(async (p) => Math.max(...(await lumAt(page, p, 3)))));
+    const bright = shown.filter((v) => v >= 180).length;
+    expect(bright, `moving cars with a bright core at fit zoom (${bright}/${moving.length})`).toBeGreaterThanOrEqual(Math.ceil(0.8 * moving.length));
+  }
+  // (b) queued cars at close zoom: a dark seam at both sides of each car's body, across the lane, on a
+  // congested (light) road where the brake band cannot make it (Red r1 B1)
+  await setRunning(page, true);
   await page.getByRole('combobox', { name: 'Speed' }).selectOption('20');
   await blur(page);
   await page.getByRole('button', { name: 'Close the main bridge' }).click();
@@ -264,78 +318,65 @@ test('queued_cars_countable_at_close_zoom', async ({ page }) => {
   const t0 = (await snap(page)).tick;
   await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000 }).toBeGreaterThan(t0 + 600);
   await setRunning(page, false);
-  await hideLabels(page);
   const pins = await page.evaluate(() => window.__livingcity!.queuePins());
   expect(pins.length, 'a queue to look at').toBeGreaterThan(0);
-  const fitZoom = (await snap(page)).camera.zoom;
-  // the first queue whose last 60 m fit on the canvas when zoomed at their middle
-  let found: { link: number; a: P; b: P; off: number; ux: number; uy: number; len: number; inStretch: P[] } | null = null;
-  for (const pin of pins) {
-    const link = pin.link;
-    const info = (await page.evaluate((l) => window.__livingcity!.linkInfo(l), link))!;
-    await wheelZoom(page, (await point(page, link, 1 - 30 / info.length))!, (z) => z >= 5, -1);
-    const a = (await point(page, link, 1 - 60 / info.length))!;
-    const b = (await point(page, link, 1))!;
-    // lane 0's drawn cars on this link, as presented now
-    const cars = await page.evaluate((l) => {
-      const h = window.__livingcity!;
-      const out: [number, number][] = [];
-      for (let i = 0; i < h.snapshot().frameRecords; i++) {
-        const v = h.vehicleDraw(i);
-        if (v && v.link === l && v.lane === 0) out.push(v.page);
-      }
-      return out;
-    }, link);
-    // the lane line: the centreline a→b moved sideways to the cars (median perpendicular offset)
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const [ux, uy] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
-    const off = cars.length ? median(cars.map(([x, y]) => (x - a[0]) * -uy + (y - a[1]) * ux)) : 0;
-    const along = (p: P) => (p[0] - a[0]) * ux + (p[1] - a[1]) * uy;
-    const inStretch = cars.filter((p) => along(p) >= 0 && along(p) <= len);
-    let visible = cars.length > 0;
-    for (const p of [a, b]) visible = visible && (await onCanvas(page, [p[0] - uy * off, p[1] + ux * off], 2));
-    if (visible) {
-      found = { link, a, b, off, ux, uy, len, inStretch };
-      break;
+  const link = pins[0]!.link;
+  const info = (await page.evaluate((l) => window.__livingcity!.linkInfo(l), link))!;
+  await wheelZoom(page, (await point(page, link, 1 - 30 / info.length))!, (z) => z >= 5, -1);
+  await dragTo(page, (await point(page, link, 1 - 30 / info.length))!, FREE);
+  const a = (await point(page, link, 0))!;
+  const b = (await point(page, link, 1))!;
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const [ux, uy] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+  const cars = await page.evaluate((l) => {
+    const h = window.__livingcity!;
+    const out: [number, number][] = [];
+    for (let i = 0; i < h.snapshot().frameRecords; i++) {
+      const f = h.frameVehicle(i);
+      const v = h.vehicleDraw(i);
+      if (f && v && f.queued && v.link === l) out.push(v.page);
     }
-    await wheelZoom(page, [640, 400], (z) => z <= fitZoom * 1.05, 1);
+    return out;
+  }, link);
+  // 25-px profiles across the lane through each car's middle, with the cars shown and then hidden
+  const across = async (c: P) => {
+    const clip = await lumAt(page, c, 25);
+    const prof: number[] = [];
+    for (let k = -12; k <= 12; k++) prof.push(clip[Math.round(12 + ux * k) * 25 + Math.round(12 - uy * k)]!);
+    return prof;
+  };
+  const onScreen: P[] = [];
+  for (const c of cars) if (await onCanvas(page, c, 14)) onScreen.push(c);
+  const shownProfiles = await Promise.all(onScreen.map(across));
+  await hideVehicles(page, true);
+  await sleep(400);
+  const hiddenProfiles = await Promise.all(onScreen.map(across));
+  await hideVehicles(page, false);
+  let measured = 0;
+  let seamed = 0;
+  for (const [i, prof] of shownProfiles.entries()) {
+    const road = hiddenProfiles[i]!;
+    // the bright body around the middle (index 12)
+    if (prof[12]! < 150) continue;
+    let lo = 12;
+    let hi = 12;
+    while (lo > 0 && prof[lo - 1]! >= 150) lo--;
+    while (hi < 24 && prof[hi + 1]! >= 150) hi++;
+    if (lo < 3 || hi > 21) continue;
+    // counted only where the 2 pixels outside the body on both sides are light road without the cars
+    // (congested): there the brake band cannot make a seam, only an outline can
+    const outside = [lo - 1, lo - 2, hi + 1, hi + 2];
+    if (!outside.every((k) => road[k]! > 100)) continue;
+    measured++;
+    if ((prof[lo - 1]! <= 90 || prof[lo - 2]! <= 90) && (prof[hi + 1]! <= 90 || prof[hi + 2]! <= 90)) seamed++;
   }
-  expect(found, 'a queue whose last 60 m are on the canvas at zoom 5').not.toBeNull();
-  const { a, b, off, ux, uy, len, inStretch } = found!;
-  expect(inStretch.length, '≥ 4 cars in the last 60 m').toBeGreaterThanOrEqual(4);
-  // sample every 0.2 m (zoom ≥ 5 → ≥ 1 px)
-  const x0 = Math.floor(Math.min(a[0], b[0]) - Math.abs(off) - 4);
-  const y0 = Math.floor(Math.min(a[1], b[1]) - Math.abs(off) - 4);
-  const w = Math.ceil(Math.abs(b[0] - a[0]) + 2 * Math.abs(off) + 8);
-  const h = Math.ceil(Math.abs(b[1] - a[1]) + 2 * Math.abs(off) + 8);
-  const crop = await lumClip(page, x0, y0, w, h);
-  const steps = Math.round(60 / 0.2);
-  const profile: number[] = [];
-  for (let k = 0; k <= steps; k++) {
-    const t = k / steps;
-    const px = Math.round(a[0] + ux * len * t - uy * off - x0);
-    const py = Math.round(a[1] + uy * len * t + ux * off - y0);
-    profile.push(crop[py * w + px]!);
-  }
-  let runs = 0;
-  let inRun = false;
-  let dark = true;
-  for (const v of profile) {
-    if (v >= 150 && !inRun && dark) {
-      runs++;
-      inRun = true;
-      dark = false;
-    } else if (v <= 90) {
-      inRun = false;
-      dark = true;
-    }
-  }
-  expect(Math.abs(runs - inStretch.length), `bright runs ${runs} vs cars ${inStretch.length}`).toBeLessThanOrEqual(1);
+  expect(measured, 'queued cars measured on a light road').toBeGreaterThanOrEqual(4);
+  expect(seamed, `queued cars with a dark seam on both sides (${seamed}/${measured})`).toBeGreaterThanOrEqual(Math.ceil(0.8 * measured));
 });
 
 // 8
 test('followed_car_and_route_are_unmistakable', async ({ page }) => {
-  test.setTimeout(400_000);
+  test.setTimeout(500_000);
   await ready(page, '/?demand=3');
   await page.getByRole('combobox', { name: 'Speed' }).selectOption('20');
   await blur(page);
@@ -345,15 +386,17 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
   await expect.poll(async () => (await snap(page)).tick, { timeout: 120_000 }).toBeGreaterThan(t0 + 300);
   await setRunning(page, false);
   await hideLabels(page);
-  // the closure sign: lit at its cardinal points across the bridge
+  // (a) the closure sign: lit at its cardinal points across the bridge
   const main = (await snap(page)).landmarks!.central_bridge[0];
-  const ma = (await point(page, main, 0))!;
-  const mb = (await point(page, main, 1))!;
   await wheelZoom(page, (await point(page, main, 0.5))!, (z) => z >= 2, -1);
-  const signs = await page.evaluate(() => window.__livingcity!.closureSigns());
-  const ring = signs.find((s) => s.link === main);
-  expect(ring, 'the Main Bridge closure ring').toBeDefined();
+  await dragTo(page, (await point(page, main, 0.5))!, FREE);
   {
+    const ma = (await point(page, main, 0))!;
+    const mb = (await point(page, main, 1))!;
+    const ring = (await page.evaluate(() => window.__livingcity!.closureSigns())).find((s) => s.link === main);
+    expect(ring, 'the Main Bridge closure ring').toBeDefined();
+    const mid = (await point(page, main, 0.5))!;
+    expect(Math.hypot(ring!.page[0] - mid[0], ring!.page[1] - mid[1]), 'the ring at the bridge middle').toBeLessThanOrEqual(2);
     const len = Math.hypot(mb[0] - ma[0], mb[1] - ma[1]);
     const n: P = [-(mb[1] - ma[1]) / len, (mb[0] - ma[0]) / len];
     for (const sgn of [1, -1]) {
@@ -361,11 +404,11 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
       expect(Math.max(...(await lumAt(page, q, 3))), 'ring lit across the bridge').toBeGreaterThanOrEqual(220);
     }
   }
-  // follow a car on an axis-aligned link whose remaining route crosses a congested link on screen
+  // (b) follow a car on an axis-aligned link whose remaining route has a congested link (occupancy ≥ 0.5)
   const cands = await page.evaluate(() => {
     const h = window.__livingcity!;
     const out: [number, number][] = [];
-    for (let i = 0; i < h.snapshot().frameRecords && out.length < 30; i++) {
+    for (let i = 0; i < h.snapshot().frameRecords && out.length < 40; i++) {
       const p = h.vehicleScreenCenter(i);
       if (!p) continue;
       const ok = [[0, 0], [-20, -20], [20, -20], [-20, 20], [20, 20]].every(([dx, dy]) => document.elementFromPoint(p[0] + dx!, p[1] + dy!)?.tagName === 'CANVAS');
@@ -373,66 +416,117 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
     }
     return out;
   });
+  const untrack = async () => {
+    await blur(page);
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await snap(page)).trackedTrip).toBeNull();
+    await sleep(400);
+  };
+  let congestedLink: number | null = null;
+  let horizontal = false;
   for (const at of cands) {
     await hideVehicles(page, false);
     await page.mouse.click(at[0], at[1]);
     await expect.poll(async () => (await snap(page)).trackedRoute.length).toBeGreaterThan(0);
     await page.mouse.move(3, 3);
-    await hideVehicles(page, true);
-    await sleep(400);
     const td = await page.evaluate(() => window.__livingcity!.trackedDraw());
-    const marker = await page.evaluate(() => window.__livingcity!.trackedMarker());
     const s = await snap(page);
-    const untrack = async () => {
-      await blur(page);
-      await page.keyboard.press('Escape');
-      await expect.poll(async () => (await snap(page)).trackedTrip).toBeNull();
-      await sleep(400);
-    };
-    if (!td || !marker || !(await onCanvas(page, marker.page, marker.radiusPx + 4))) {
+    if (!td) {
       await untrack();
       continue;
     }
     const la = (await point(page, td.link, 0))!;
     const lb = (await point(page, td.link, 1))!;
-    const horizontal = Math.abs(lb[1] - la[1]) < 1;
+    horizontal = Math.abs(lb[1] - la[1]) < 1;
     const vertical = Math.abs(lb[0] - la[0]) < 1;
-    // a congested route link ≥ 30 px from the car, its middle on the canvas
-    let congested: P | null = null;
-    for (const l of s.trackedRoute) {
+    let cong: number | null = null;
+    for (const l of s.trackedRoute.slice(1)) {
       const cap = await page.evaluate((x) => window.__livingcity!.linkCapacity(x), l);
-      if (s.linkCounts[l]! / cap < 0.5) continue;
-      const m = await point(page, l, 0.5);
-      if (m && Math.hypot(m[0] - marker.page[0], m[1] - marker.page[1]) >= 30 && (await onCanvas(page, m, 12))) {
-        congested = m;
+      if (s.linkCounts[l]! / cap >= 0.5 && (await page.evaluate((x) => window.__livingcity!.linkInfo(x)!.length, l)) >= 40) {
+        cong = l;
         break;
       }
     }
-    const end = await page.evaluate(() => window.__livingcity!.routeEnd());
-    if (!(horizontal || vertical) || !congested || !end || !(await onCanvas(page, end.page, 8))) {
-      await untrack();
-      continue;
+    if ((horizontal || vertical) && cong !== null) {
+      congestedLink = cong;
+      break;
     }
-    // the marker: four lit diagonal corners, dark at the cardinal points across the heading
-    const [c, r] = [marker.page, marker.radiusPx];
+    await untrack();
+  }
+  expect(congestedLink, 'a followed car on an axis-aligned link with a congested link ahead').not.toBeNull();
+  await hideVehicles(page, true);
+  await sleep(400);
+  // the marker: at the car, four lit diagonal corners, dark at the cardinal points across the heading
+  {
+    const marker = await page.evaluate(() => window.__livingcity!.trackedMarker());
+    expect(marker, 'the tracked marker').not.toBeNull();
+    const car = (await page.evaluate(() => window.__livingcity!.trackedScreenCenter()))!;
+    expect(Math.hypot(marker!.page[0] - car[0], marker!.page[1] - car[1]), 'the marker at the car').toBeLessThanOrEqual(1.5);
+    if (!(await onCanvas(page, marker!.page, marker!.radiusPx + 4))) await dragTo(page, marker!.page, FREE);
+    const m = (await page.evaluate(() => window.__livingcity!.trackedMarker()))!;
+    const [c, r] = [m.page, m.radiusPx];
     for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
       expect(Math.max(...(await lumAt(page, [c[0] + 0.71 * r * dx, c[1] + 0.71 * r * dy], 3))), 'bracket corner lit').toBeGreaterThanOrEqual(235);
     }
     const across: P[] = horizontal ? [[c[0], c[1] - r], [c[0], c[1] + r]] : [[c[0] - r, c[1]], [c[0] + r, c[1]]];
     for (const q of across) expect(Math.max(...(await lumAt(page, q, 3))), 'no ring across the heading').toBeLessThan(200);
-    // the route on a congested road and its end mark: present while followed, gone after
-    const routeOn = await lumAt(page, congested, 24);
-    const endOn = await lumAt(page, end.page, 15);
-    await untrack();
-    const routeOff = await lumAt(page, congested, 24);
-    const endOff = await lumAt(page, end.page, 15);
-    const count = (v: number[], f: (x: number) => boolean) => v.filter(f).length;
-    expect(count(routeOn, (x) => x >= 235) - count(routeOff, (x) => x >= 235), 'route light on a congested road').toBeGreaterThanOrEqual(6);
-    expect(count(routeOn, (x) => x <= 50) - count(routeOff, (x) => x <= 50), 'route casing dark on a congested road').toBeGreaterThanOrEqual(6);
-    expect(count(endOn, (x) => x >= 235) - count(endOff, (x) => x >= 235), 'destination mark').toBeGreaterThanOrEqual(12);
-    return;
   }
-  throw new Error('no followed car with a congested route link and its destination on the canvas');
+  // the route on the congested link: a white core with a dark casing ≥ 2 px wide on both sides (Red r1 M1)
+  {
+    await dragTo(page, (await point(page, congestedLink!, 0.5))!, FREE);
+    const a = (await point(page, congestedLink!, 0))!;
+    const b = (await point(page, congestedLink!, 1))!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const [ux, uy] = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    let checked = 0;
+    let cased = 0;
+    for (let k = 0.2; k <= 0.8; k += 0.02) {
+      const p: P = [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+      if (!(await onCanvas(page, p, 12))) continue;
+      const clip = await lumAt(page, p, 25);
+      const prof: number[] = [];
+      for (let j = -12; j <= 12; j++) prof.push(clip[Math.round(12 + ux * j) * 25 + Math.round(12 - uy * j)]!);
+      // a dash: the white core at the middle
+      const core = prof.findIndex((v, i) => i >= 9 && i <= 15 && v >= 235);
+      if (core < 0) continue;
+      let lo = core;
+      let hi = core;
+      while (lo > 0 && prof[lo - 1]! >= 235) lo--;
+      while (hi < 24 && prof[hi + 1]! >= 235) hi++;
+      checked++;
+      const dark2 = (from: number, step: number) => prof[from + step]! <= 50 && prof[from + 2 * step]! <= 50;
+      if (dark2(lo, -1) && dark2(hi, 1)) cased++;
+    }
+    expect(checked, 'route dashes measured on the congested link').toBeGreaterThanOrEqual(4);
+    expect(cased, `dashes with a ≥ 2 px dark casing on both sides (${cased}/${checked})`).toBeGreaterThanOrEqual(Math.ceil(0.75 * checked));
+  }
+  // the destination mark: at the route's last point, a square lit off the route's axis and beyond its end
+  {
+    const route = (await snap(page)).trackedRoute;
+    const last = route[route.length - 1]!;
+    const end = await page.evaluate(() => window.__livingcity!.routeEnd());
+    expect(end, 'the route end').not.toBeNull();
+    const want = (await point(page, last, 1))!;
+    expect(Math.hypot(end!.page[0] - want[0], end!.page[1] - want[1]), 'routeEnd at the last link end').toBeLessThanOrEqual(1);
+    await dragTo(page, end!.page, FREE);
+    const e = (await page.evaluate(() => window.__livingcity!.routeEnd()))!.page;
+    const la = (await point(page, last, 0))!;
+    const lb = (await point(page, last, 1))!;
+    const len = Math.hypot(lb[0] - la[0], lb[1] - la[1]);
+    const [ux, uy] = [(lb[0] - la[0]) / len, (lb[1] - la[1]) / len];
+    const probes: P[] = [
+      [e[0] - uy * 4.5, e[1] + ux * 4.5],
+      [e[0] + uy * 4.5, e[1] - ux * 4.5],
+      [e[0] + ux * 4.5, e[1] + uy * 4.5],
+    ];
+    const on = await Promise.all(probes.map(async (q) => Math.max(...(await lumAt(page, q, 3)))));
+    await untrack();
+    const off = await Promise.all(probes.map(async (q) => Math.max(...(await lumAt(page, q, 3)))));
+    for (let k = 0; k < 3; k++) {
+      expect(on[k]!, `end mark lit at probe ${k}`).toBeGreaterThanOrEqual(235);
+      expect(off[k]!, `nothing lit there when not followed (probe ${k})`).toBeLessThan(200);
+    }
+  }
 });
 
 // 9
@@ -480,7 +574,7 @@ test('character_layout_legend_and_three_bridges', async ({ page }) => {
   await hideLabels(page);
   await hideVehicles(page);
   await sleep(400);
-  const cls = await page.evaluate(() => window.__livingcity!.roadClasses());
+  const cls = await classesPartition(page);
   expect(cls.major.length).toBeGreaterThan(0);
   expect(cls.local.length).toBeGreaterThan(0);
   const [mj] = await measurableLinks(page, cls.major, 1);

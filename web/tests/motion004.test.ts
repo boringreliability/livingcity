@@ -102,11 +102,32 @@ test('building_kinds_cover_the_city', () => {
   expect(Array.from(c.decor().buildingKinds)).toEqual(Array.from(d.buildingKinds));
   // pads carry their zone's kind
   expect(Array.from(d.padKinds)).toEqual(c.zones.map((z) => DISTRICT_KINDS.indexOf(z.kind)));
+  // pads are drawn in their kind's shape (Red r1 m3): area ÷ bounding-box area per zone's pad
+  const padShape = (pads: Float32Array, cx: number, cy: number) => {
+    let area = 0;
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let t = 0; t < pads.length; t += 6) {
+      const [ax, ay, bx, by, qx, qy] = [pads[t]!, pads[t + 1]!, pads[t + 2]!, pads[t + 3]!, pads[t + 4]!, pads[t + 5]!];
+      if (Math.hypot((ax + bx + qx) / 3 - cx, (ay + by + qy) / 3 - cy) > 60) continue;
+      area += Math.abs((bx - ax) * (qy - ay) - (qx - ax) * (by - ay)) / 2;
+      for (const [x, y] of [[ax, ay], [bx, by], [qx, qy]] as const) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+    }
+    const fill = area / ((x1 - x0) * (y1 - y0));
+    return fill >= 0.95 ? 'square' : fill >= 0.74 && fill <= 0.82 ? 'disc' : fill <= 0.7 ? 'cross' : `? (${fill.toFixed(2)})`;
+  };
+  for (const [cc, dd] of [[c, d], [city('three_bridges'), null]] as const) {
+    const pads = (dd ?? cc.decor()).pads;
+    for (const z of cc.zones) {
+      const [zx, zy] = [cc.network.nodeXy[2 * z.node]!, cc.network.nodeXy[2 * z.node + 1]!];
+      expect(padShape(pads, zx, zy), `${z.name} pad`).toBe(PAD_SHAPE[z.kind]);
+    }
+  }
   // the quay runs along the water edges, outside the water
   expect(d.quay.length).toBeGreaterThan(0);
   expect(d.quay.length % 6).toBe(0);
   const edgeAt = (y: number) => {
-    const i = Math.max(1, d.riverProfile.findIndex((p) => p.y >= y));
+    const k = d.riverProfile.findIndex((p) => p.y >= y);
+    const i = k < 0 ? d.riverProfile.length - 1 : Math.max(1, k); // beyond the end: the last segment (Red r1 m4)
     const [p, q] = [d.riverProfile[i - 1]!, d.riverProfile[i]!];
     const t = q.y === p.y ? 0 : (y - p.y) / (q.y - p.y);
     return [p.x0 + t * (q.x0 - p.x0), p.x1 + t * (q.x1 - p.x1)] as const;
@@ -134,7 +155,7 @@ test('district_styles_differ_without_hue', () => {
     for (let j = i + 1; j < 4; j++) {
       const a = lum(DISTRICT_STYLE[kinds[i]!].fill);
       const b = lum(DISTRICT_STYLE[kinds[j]!].fill);
-      expect(Math.abs(a - b), `${kinds[i]} vs ${kinds[j]} fill lum`).toBeGreaterThanOrEqual(0.016);
+      expect(Math.abs(a - b), `${kinds[i]} vs ${kinds[j]} fill lum`).toBeGreaterThanOrEqual(0.03);
     }
   for (const k of kinds) expect(lum(DISTRICT_STYLE[k].markColor), `${k} mark brighter than its fill`).toBeGreaterThanOrEqual(lum(DISTRICT_STYLE[k].fill) + 0.024);
   expect(new Set(Object.values(PAD_SHAPE)).size).toBe(3);
@@ -156,11 +177,13 @@ test('decor_is_darker_than_roads', () => {
   const src = readFileSync(new URL('../src/render/renderer.ts', import.meta.url), 'utf8');
   expect(src).toMatch(/\bDECOR_COLORS\b/);
   expect(src).toMatch(/\bDISTRICT_STYLE\b/);
+  // no decor colour literal left in the renderer (Red r1 m2)
+  expect(src).not.toMatch(/\b(water|bank|park|building|pad|outline|deck|railing|quay)\w*\s*[:=]\s*\[\s*0?\.\d/i);
 });
 
 // 4
 test('road_classes', () => {
-  expect(ROAD_MIN_PX.major).toBeGreaterThanOrEqual(1.5 * ROAD_MIN_PX.local);
+  expect(ROAD_MIN_PX.major).toBeGreaterThanOrEqual(2.2 * ROAD_MIN_PX.local); // 5.5 vs 2.5: ≥ 1 px headroom at fit zoom (Red r1 M2)
   for (const name of ['river_city', 'three_bridges'] as const) {
     const c = city(name);
     const n = c.network.linkFrom.length;
