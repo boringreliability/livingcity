@@ -69,16 +69,16 @@ There is **no new `World` state**: only read-only getters. So `state_hash` and t
   - `central_bridge` → "Main Bridge" (the bridge the "Close the main bridge" button closes, in both cities);
   - `south_bridge` → "Old Bridge" in River City, "South Bridge" in other cities (three_bridges).
 - **UI:**
-  - **Intervention summary.** `section.panel.consequences` (`aria-label="Intervention"`), in `.side` above the selection, single view only. It is shown once the viewed scenario has an intervention at or before the position. It holds:
+  - **Intervention summary.** `section.panel.consequences` (`aria-label="Intervention"`), in `.side` below the guide's band, single view only. It is shown once the viewed scenario has an intervention at or before the position, and while no road or vehicle panel is open (Gold: those take its place, and the column keeps its earlier layout; Esc brings it back). While it shows, the guide's 100 px band stays reserved, so hiding or showing the guide moves nothing below it (frozen guide.spec: the guide adds no covered road). It holds:
     - one line per intervention, e.g. "✕ Closed Main Bridge · 00:12:30" or "○ Reopened Main Bridge · 00:40:00";
     - "Crossings per 10 min (observed)": a table with a row per bridge and cells *now*, *before the closure* (rounded rates, "—" when null) and the change: round(now) − round(before) in the comparison's count format ("+n ▲", "−n ▼", "0", or "—");
     - "Longest queues now": up to 3 "Link N · q queued" buttons that select the link.
 
     The summary is hidden while comparing; the comparison panel answers the A/B question there. The wording describes observations only: "observed", "since", "before". It never says "because", "caused", "due to" or "faster".
-  - **Timeline.** One marker per intervention in the window, inside `.timeline-track`: ✕ for close, ○ for open. Each has an accessible name such as "Closed Main Bridge at 00:12:30". A glyph, not colour, carries the kind.
+  - **Timeline.** One marker per intervention in the window, inside `.timeline-track` (its lower lane; the branch label has the upper one): ✕ for close, ○ for open. Each has an accessible name such as "Closed Main Bridge at 00:12:30". A glyph, not colour, carries the kind. While comparing, the markers after the branch tick are A's and B's own, named and marked with their scenario ("B: Closed Main Bridge at …", ✕B); the shared history before the branch stays unmarked (Gold r1 M2).
   - **Map.**
     - A bridge name label just above each bridge's midpoint, centred on it and 8–30 px above it, never covering it, so a closed bridge's hatch stays visible (frozen look.spec samples it there; Red r4). Class `bridge-label`, not `zone`; camera-placed; hidden when cut; on each shown side.
-    - A queue pin at the stop-line end of each top-queued link: class `queue-pin`, "▼ q", on each shown side from that side's frame.
+    - A queue pin at the stop-line end of each top-queued link: class `queue-pin`, "▼ q", on each shown side from that side's frame. A pin takes the first of four places around its point (above, below, right, left) that overlaps no shown label of its layer (Gold r1 M1).
   - **Comparison.** Rows "Crossings · North Bridge", "Crossings · Main Bridge" and "Crossings · Old Bridge". Each has A, B (exits since the branch, both directions) and Δ = B − A in the existing count format. The existing rows, header and formats are unchanged.
 - **Hooks:**
   - `interventions()` → the summary entries;

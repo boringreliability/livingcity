@@ -31,7 +31,7 @@ Click a road to see its lanes, vehicles, queued count and state in the *Selected
 The **Intervention** panel (beside the map) answers it from the simulation's own data:
 - **Which road, and when:** "✕ Closed Main Bridge · 00:16:12", from the command log. The timeline shows the same ✕ at that time; a reopening is a ○.
 - **Which crossings are used:** crossings per bridge per 10 sim min, *now* and in the 10 min *before* the bridge closure, with the change. The three bridges are named on the map. This is an observation of one scenario over time, not proof of cause: for that, compare with a branch (step 5).
-- **Where traffic queues now:** the three longest queues, as ▼ pins with their count at the queue heads on the map and as buttons that select the road.
+- **Where traffic queues now:** up to three of the longest queues (3 or more cars), as ▼ pins with their count at the queue heads on the map and as buttons that select the road. While a road or a car is selected, its panel takes the place of the summary; press **Esc** to get the summary back.
 
 ## 3. Pause and rewind
 Press **Space** to pause. The **timeline** at the bottom shows the replay window: the retained sim time and its memory against the budget.
@@ -59,7 +59,7 @@ The **Comparison** panel counts the same trips in both: those generated since th
 - **Generated** is equal in A and B. Demand is identical; only the outcome differs.
 - **Completed**, **Incomplete** (still on their way or waiting), the removals, and the **mean / p95 travel time** show the consequences.
 - The difference column gives the sign and an arrow ▲/▼.
-- **Crossings · North / Main / Old Bridge** count the vehicles over each bridge since the branch, in A and B: where the traffic went instead.
+- **Crossings · North / Main / Old Bridge** count the vehicles over each bridge since the branch, in A and B, for the same trips and time window.
 - Incomplete trips are always listed, so a scenario does not look better just because its slowest trips have not arrived yet.
 
 While comparing, interventions are disabled (comparing is for observing). Click **Compare side by side** again to return to the single view. **Discard branch** removes B.

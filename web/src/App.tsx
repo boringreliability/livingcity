@@ -37,7 +37,7 @@ import { nextStacked } from './ui/bottomBand';
 import { ConfirmReplace, ScenarioPanel } from './ui/ScenarioPanel';
 import { DemoGuide } from './ui/DemoGuide';
 import { ConsequencesPanel } from './ui/ConsequencesPanel';
-import { crossingRates, summarizeInterventions, topQueues, type BridgeNaming } from './ui/consequences';
+import { crossingRates, summarizeInterventions, topQueues, type BridgeNaming, type InterventionEntry } from './ui/consequences';
 import { advanceGuide, guideHint, initialGuideProgress, type GuideProgress } from './ui/guideProgress';
 import { TimelineBar } from './ui/TimelineBar';
 import { VehiclePanel } from './ui/VehiclePanel';
@@ -72,6 +72,9 @@ interface FrameView {
 }
 
 type Intervention = { kind: 'close' | 'open'; link: number };
+
+/** Where a queue pin may sit around its point: above, below, right, left (CSS transforms). */
+const PIN_PLACES = ['translate(-50%, calc(-100% - 4px))', 'translate(-50%, 4px)', 'translate(4px, -50%)', 'translate(calc(-100% - 4px), -50%)'];
 
 /** `?demand=` for stress measurements, read once (an invalid value falls back to 1 with a warning). */
 const DEMAND = (() => {
@@ -269,6 +272,30 @@ export function App() {
     }
     marks.current.set(key, { el, x, y });
     placeLabel(el, { x, y });
+  };
+  /**
+   * Queue pins step aside from the labels (district names, bridge names, other pins) of their layer: the
+   * first of four places around the pin's point that overlaps none (motion-003 Gold r1). The point itself,
+   * and so the hooks, stay where the queue is.
+   */
+  const clearPins = () => {
+    for (const layer of document.querySelectorAll<HTMLElement>('.labels')) {
+      const shown = (e: HTMLElement) => e.style.visibility !== 'hidden';
+      const taken = [...layer.querySelectorAll<HTMLElement>('.zone, .bridge-label')].filter(shown).map((e) => e.getBoundingClientRect());
+      for (const pin of layer.querySelectorAll<HTMLElement>('.queue-pin')) {
+        let chosen = PIN_PLACES[0]!;
+        for (const place of PIN_PLACES) {
+          pin.style.transform = place;
+          const r = pin.getBoundingClientRect();
+          if (!taken.some((t) => r.left < t.right && t.left < r.right && r.top < t.bottom && t.top < r.bottom)) {
+            chosen = place;
+            break;
+          }
+        }
+        pin.style.transform = chosen;
+        if (shown(pin)) taken.push(pin.getBoundingClientRect());
+      }
+    }
   };
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
@@ -755,6 +782,7 @@ export function App() {
           placeLabel(m.el, m);
           els.push(m.el);
         }
+        clearPins();
         hideCutLabels(els);
       }
       renderFrames.current++;
@@ -1249,7 +1277,16 @@ export function App() {
   /** The summary shows in the single view while no road or vehicle detail is open (the column keeps its
    *  pre-motion-003 layout then; Esc brings the summary back). */
   const showSummary = !comparingNow && shownEntries.length > 0 && !sel && !tracked && !gone;
-  const allEntries = frame && naming ? summarizeInterventions(frame.interventions, Infinity, naming) : [];
+  const allEntries = ((): (InterventionEntry & { side?: 'A' | 'B' })[] => {
+    if (!frame || !naming) return [];
+    const own = summarizeInterventions(frame.interventions, Infinity, naming);
+    const fb = bFrameRef.current;
+    if (!comparingNow || !fb) return own;
+    // comparing: the shared history before the branch unlabelled, then A's and B's own interventions
+    const at = frame.timeline.branchTick;
+    const b = summarizeInterventions(fb.interventions, Infinity, naming).filter((e) => e.tick >= at);
+    return [...own.map((e) => (e.tick >= at ? { ...e, side: 'A' as const } : e)), ...b.map((e) => ({ ...e, side: 'B' as const }))];
+  })();
   const closureTick = frame && Number.isFinite(frame.bridgeFlow[15]) ? frame.bridgeFlow[15]! : null;
   /** Bridge names and queue pins on one label layer (A's or B's), from that side's frame. */
   const mapMarks = (side: 'a' | 'b', f: FrameView | null) => {

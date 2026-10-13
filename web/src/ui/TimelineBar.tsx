@@ -20,8 +20,9 @@ interface Props {
   /** The last requested position (a seek may still be on its way). */
   position: number;
   onSeek(tick: number): void;
-  /** Every intervention of the viewed scenario (also after the position): markers on the track (motion-003). */
-  interventions?: InterventionEntry[];
+  /** Every intervention of the viewed scenario (also after the position): markers on the track (motion-003).
+   *  While comparing, those after the branch carry their scenario ("A" / "B"). */
+  interventions?: (InterventionEntry & { side?: 'A' | 'B' })[];
 }
 
 /** The replay window of the viewed scenario: scrub it, jump in it, see its memory (contract T3). */
@@ -151,14 +152,15 @@ export function TimelineBar({ timeline, position, onSeek, interventions = [] }: 
           .map((e) => (
             // the lower lane of the track (the branch label has the upper one): a glyph, named for screen readers
             <span
-              key={`${e.tick}:${e.kind}:${e.links.join(',')}`}
+              key={`${e.side ?? ''}${e.tick}:${e.kind}:${e.links.join(',')}`}
               className={`timeline-intervention ${e.kind}`}
               role="img"
-              aria-label={`${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
-              title={`${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
+              aria-label={`${e.side ? `${e.side}: ` : ''}${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
+              title={`${e.side ? `${e.side}: ` : ''}${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
               style={{ left: `${frac(e.tick) * 100}%` }}
             >
               {interventionGlyph(e.kind)}
+              {e.side}
             </span>
           ))}
       </div>
