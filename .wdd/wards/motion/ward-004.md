@@ -3,7 +3,7 @@ ward: 4
 revision: null
 name: "City character"
 epic: "motion"
-status: "approved"
+status: "gold"
 dependencies: ["motion-003"]
 layer: "typescript"
 estimated_tests: 9
@@ -162,6 +162,19 @@ The facts are in `.wdd/memory/investigation-2026-10-12.md` § Character (B).
 - [ ] Each of the user's five §4 points is visible, including in grayscale.
 - [ ] Every frozen visual test is unchanged and green; all suites green.
 - [ ] The render cost is measured and documented.
+
+## Gold notes (implementation choices and deviations)
+- **Building pass.** A single program draws each building's district fill and, from `MARK_MIN_ZOOM`, its roof mark. The fragment shader tests the mark's line rectangles (`MARK_GEOMETRY`, half width `MARK_LINE_PX / 2 / zoom`) per pixel, so the marks keep a 2-px screen width at every zoom without rebuilding geometry. `markRects()` in `character.ts` gives the same rectangles to the `districtSamples` hook.
+- **Extra `CityDecor` fields** beyond the spec's three:
+  - `roadMajor: Uint8Array` (1 per major link), so both the A and the B renderer get the road classes from the decor they already receive;
+  - `quayBollardsFrom: number` (the float index where the bollards start in `quay`), so the bollards get their own `DECOR_COLORS.bollard`.
+
+  The spec'd fields are unchanged.
+- **The tracked marker and the end square** share the old ring program (mode 0 draws brackets, mode 1 draws the square). `TRACKED_MARKER_RADIUS_PX` and `CLOSURE_RING_PX` are exported for the hooks.
+- **Regression found and fixed on the way: `gold_polish004` "the completed guide fits its column".** Motion-003 Gold r2 (`c4f4cc5`) set `white-space: nowrap` on the crossing rows' headers. That made the summary table 222 px wide in a 240-px column, and the `.side` grid's auto column grew with it, pushing the guide 8–10 px out of its column. The test was red on `main` from `c4f4cc5` on; bisected on `dc2ba15^`, `dc2ba15` and `c4f4cc5`.
+  - **Fix:** `.side` gets `grid-template-columns: minmax(0, 1fr)`, and the table's cell padding goes from 6 to 4 px, with none after the last column. The table is now 204 px.
+  - **Result:** the row headers still do not wrap (motion003 and motion003_gold are green).
+- **Perf:** recorded in `docs/performance.md` § City character and `web/perf-results/motion004-before-after.json`.
 
 ## Verification
 The Red gate approves tests 1–9. Then all suites are green, the frozen visual set is green, the perf before/after is recorded, and the Gold reviewer performs the smoke test, including the grayscale check.

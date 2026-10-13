@@ -11,7 +11,7 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - i1 — at 1× a moving car could stop at the end of the junction curve for up to a tick, then move on ~7 m (polish-003 test 4). Resolved since in epic motion (motion-002: interpolation by trip id, supersessions S4–S8).
 - i2 — cars held at a stop line were drawn at the next link's start, so they could stack inside busy junctions (polish-003 tests 3(a)/4/7). Resolved since in epic motion (motion-002: stop lines clear of every other road, supersessions S4/S8).
 - i3 — the hover keeps its grey halo under the dashed stroke (gold5 G1).
-- i5 — the closure sign is a ring around the hatch, not a solid core (look.spec midpoint hatch).
+- i5 — the closure sign is a ring around the hatch, not a solid core (look.spec midpoint hatch), so it looked like the followed car's ring. Resolved since in epic motion (motion-004): the closure keeps its ring, and the followed car is marked by four corner brackets instead.
 - New in polish-006: under SwiftShader at `?demand=5`, the WebGL work that a compare switch needs (releasing B's old context, preparing a spare one) runs as main-thread tasks just *after* the switch is drawn: 0.1–0.8 s with one app tab, and up to 2.9 s was seen with two more app tabs open (Gold review). The switch itself shows within 300 ms; input in that moment waits. On a hardware GPU these calls take a few milliseconds.
 
 ## Epic motion (open notes)
@@ -94,7 +94,7 @@ Deviations for the human gate of epic `polish` (details in `docs/architecture.md
 - **i2:** held cars stack in junctions — resolved (motion-002): a held car waits at a stop line clear of every other road.
 - **i3:** the hover keeps its halo — deviation: pinned by gold5 G1 (see Epic gate).
 - **i4:** small backward steps at a steady 20× — resolved (motion-002): no extrapolation; the presentation time never runs ahead of the newest frame.
-- **i5:** the closure sign is a ring — deviation: pinned by look.spec (see Epic gate).
+- **i5:** the closure sign is a ring — resolved (motion-004): the ring stays (pinned by look.spec), and the followed car's marker is now corner brackets, so the two no longer look alike.
 - **i6:** architecture docs on the cap and `nextLinks` — resolved (polish-006).
 - **j1:** the first control row overflows with `?demand=6` — limitation: stress mode only.
 - **j2:** docs and tooltips name the "?" button — resolved (polish-006).

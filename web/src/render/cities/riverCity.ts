@@ -1,5 +1,6 @@
 import type { Landmarks, NetworkArrays, ZoneInfo } from '../../sim/protocol';
 import type { RoadGeometry } from '../geometry';
+import { DISTRICT_KINDS, PAD_RADIUS_M, kindCode, padTriangles, roadMajorFlags } from './character';
 
 /**
  * River City's look (render side only; the simulation knows only the river corridor).
@@ -28,10 +29,16 @@ export interface CityDecor {
   labels: CityLabel[];
   /** District kind code (index into DISTRICT_KINDS) per building box (motion-004). */
   buildingKinds: Uint8Array;
-  /** Triangles of the quay strip and bollards along the bank by waterfront buildings (motion-004). */
+  /**
+   * Triangles of the paved quay strip along both water edges, then the bollards (from float index
+   * `quayBollardsFrom` on; motion-004).
+   */
   quay: Float32Array;
+  quayBollardsFrom: number;
   /** District kind code per zone pad, in zone order (motion-004). */
   padKinds: Uint8Array;
+  /** 1 per major link (arterial or landmark bridge), 0 per local street, in link order (motion-004). */
+  roadMajor: Uint8Array;
 }
 
 export const LABEL_ICONS: Record<ZoneInfo['kind'], string> = { residential: '⌂', workplace: '◫', hospital: '✚' };
@@ -40,7 +47,10 @@ const PROFILE_STEP_M = 25;
 /** Far beyond any fitted view, so the river never visibly starts or ends (Gold r1). */
 const PROFILE_MARGIN_M = 2000;
 const BANK_M = 6;
-const PAD_RADIUS_M = 45;
+/** The quay: a paved strip this wide outside each water edge, bollards of BOLLARD_M every BOLLARD_EVERY_M. */
+const QUAY_M = 10;
+const BOLLARD_M = 2;
+const BOLLARD_EVERY_M = 40;
 const DECK_HALF_M = 20;
 const ROAD_CLEARANCE_M = 4;
 /** Extra keep-out around roads beyond the required clearance (looks like pavement). */
@@ -54,14 +64,6 @@ function hash01(a: number, b: number): number {
 
 function quad(out: number[], x0: number, y0: number, x1: number, y1: number): void {
   out.push(x0, y0, x1, y0, x1, y1, x0, y0, x1, y1, x0, y1);
-}
-
-function disc(out: number[], cx: number, cy: number, r: number, segments = 24): void {
-  for (let i = 0; i < segments; i++) {
-    const a0 = (2 * Math.PI * i) / segments;
-    const a1 = (2 * Math.PI * (i + 1)) / segments;
-    out.push(cx, cy, cx + r * Math.cos(a0), cy + r * Math.sin(a0), cx + r * Math.cos(a1), cy + r * Math.sin(a1));
-  }
 }
 
 /** Distance from point (px, py) to the axis-aligned box. */
@@ -145,6 +147,28 @@ export function riverCityDecor(
     banks.push(p.x1, p.y, q.x1, q.y, q.x1 + BANK_M, q.y, p.x1, p.y, q.x1 + BANK_M, q.y, p.x1 + BANK_M, p.y);
   }
 
+  // Quay: a paved strip outside both water edges (over the bank), and bollards along its water side.
+  const quay: number[] = [];
+  for (let i = 1; i < profile.length; i++) {
+    const p = profile[i - 1]!;
+    const q = profile[i]!;
+    quay.push(p.x0 - QUAY_M, p.y, q.x0 - QUAY_M, q.y, q.x0, q.y, p.x0 - QUAY_M, p.y, q.x0, q.y, p.x0, p.y);
+    quay.push(p.x1, p.y, q.x1, q.y, q.x1 + QUAY_M, q.y, p.x1, p.y, q.x1 + QUAY_M, q.y, p.x1 + QUAY_M, p.y);
+  }
+  const quayBollardsFrom = quay.length;
+  const edgeAt = (y: number) => {
+    const k = Math.min(profile.length - 1, Math.max(1, profile.findIndex((p) => p.y >= y)));
+    const [p, q] = [profile[k - 1]!, profile[k]!];
+    const t = (y - p.y) / (q.y - p.y);
+    return [p.x0 + t * (q.x0 - p.x0), p.x1 + t * (q.x1 - p.x1)] as const;
+  };
+  for (let y = profile[0]!.y + BOLLARD_EVERY_M / 2; y < profile[profile.length - 1]!.y; y += BOLLARD_EVERY_M) {
+    const [x0, x1] = edgeAt(y);
+    const h = BOLLARD_M / 2;
+    quad(quay, x0 - 1 - BOLLARD_M, y - h, x0 - 1, y + h);
+    quad(quay, x1 + 1, y - h, x1 + 1 + BOLLARD_M, y + h);
+  }
+
   // Bridge decks: one wide deck under each two-way crossing.
   const decks: number[] = [];
   for (const pair of [landmarks.central_bridge, landmarks.north_bridge, landmarks.south_bridge]) {
@@ -165,7 +189,7 @@ export function riverCityDecor(
   const labels: CityLabel[] = [];
   for (const z of zones) {
     const [x, y] = [xy[2 * z.node]!, xy[2 * z.node + 1]!];
-    disc(pads, x, y, PAD_RADIUS_M);
+    padTriangles(pads, z.kind, x, y);
     labels.push({ text: z.name, kind: z.kind, icon: LABEL_ICONS[z.kind], x, y });
   }
 
@@ -205,6 +229,9 @@ export function riverCityDecor(
     return zones[best]?.kind ?? 'residential';
   };
   const boxes: [number, number, number, number][] = [];
+  // the district kind per box: its block's zone kind, or waterfront in the grid columns next to the river's
+  const kinds: number[] = [];
+  const riverCol = gx.findIndex((x, i) => i > 0 && gx[i - 1]! < east && x > west);
   const parks: number[] = [];
   const clearOfRoads = (box: [number, number, number, number]) =>
     segs.every((s) => {
@@ -253,6 +280,8 @@ export function riverCityDecor(
           if (!(box[2] < west || box[0] > east)) continue;
           if (!clearOfRoads(box) || !clearOfPads(box)) continue;
           boxes.push(box);
+          const riverside = i === riverCol - 1 || i === riverCol + 1;
+          kinds.push(riverside && kind !== 'hospital' ? DISTRICT_KINDS.indexOf('waterfront') : kindCode(kind));
         }
       }
     }
@@ -270,8 +299,10 @@ export function riverCityDecor(
     riverProfile: profile,
     buildingBoxes: boxes,
     labels,
-    buildingKinds: new Uint8Array(0), // motion-004 red
-    quay: new Float32Array(0),
-    padKinds: new Uint8Array(0),
+    buildingKinds: new Uint8Array(kinds),
+    quay: new Float32Array(quay),
+    quayBollardsFrom,
+    padKinds: Uint8Array.from(zones, (z) => kindCode(z.kind)),
+    roadMajor: roadMajorFlags(network, landmarks),
   };
 }

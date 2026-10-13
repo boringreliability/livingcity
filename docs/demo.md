@@ -13,11 +13,18 @@ When the page opens, River City has already run for 15 sim minutes, and traffic 
 The metrics strip at the bottom left, above the timeline, shows the live values computed by the sim: **sim time** (labelled as such, in a monospaced clock), active, completed, mean trip time, **queued** and **unserved**. Hover the ⓘ for definitions.
 
 - **Speed:** the app starts at **20×**. Change it in the *Speed* box or with **+** / **−** (1×, 5×, 20×, 60×). If the engine cannot keep up, the control panel says *"⚠ Behind"* instead of silently dropping steps.
-- **Zoom:** use the mouse wheel. Zoomed out, the roads and congestion dominate (congested roads draw wider and lighter). Zoomed in, individual cars become readable. Moving cars are long and slim; queued cars are squares with a brake band. The legend at the bottom explains each symbol by shape and pattern, never by colour alone.
+- **Zoom:** use the mouse wheel. Zoomed out, the roads and congestion dominate (congested roads draw wider and lighter). The arterials and the three bridges are drawn wider and lighter than local streets, so the main routes read even at the widest zoom. Zoomed in, individual cars become readable. Moving cars are long and slim; queued cars are squares with a brake band, and from about 1.5 px/m every car has a dark outline, so the cars in a queue can be counted one by one. The legend at the bottom explains each symbol by shape and pattern, never by colour alone.
+- **Districts:** zoom to 1 px/m or closer and each district shows its own roof mark, in a darker shade than any road (it also reads in grayscale):
+  - **residential** (Westbrook and the other housing areas): a ridge line along each house;
+  - **workplace** (Market, Downtown, Tech, Harbor): an inner courtyard outline;
+  - **hospital** (St. Mary's): a cross;
+  - **waterfront** (the blocks next to the river): two shed lines, and a paved quay with bollards along the water.
+
+  The zone pads differ by shape too: a disc for housing, a square for workplaces, a cross for the hospital.
 
 ## 2. Close the main bridge
 Click **Close the main bridge** in the control panel, or press **B**.
-- The bridge gets an unmistakable marker: a hatch and white barriers at both ends.
+- The bridge gets an unmistakable marker: a hatch, white barriers at both ends and a white ring at its middle.
 - Cars already on it drive off. Cars heading for it reroute at their next junction.
 
 ### Watch the queues
@@ -25,7 +32,7 @@ Let it run for 5–15 sim minutes (about 15–45 s of wall time at 20×) and wat
 - queues building on the approaches to the **Old Bridge** and the **North Bridge**, with square cars stacking back up the streets (spillback);
 - **queued** in the metrics strip. It fluctuates while drivers reroute, and over those minutes it typically ends up well above where it was; the queues on the bridge approaches are the clearer signal.
 
-Click a road to see its lanes, vehicles, queued count and state in the *Selected road* panel. Click a car (zoomed in) to follow it and see its route.
+Click a road to see its lanes, vehicles, queued count and state in the *Selected road* panel. Click a car (zoomed in) to follow it and see its route: four white corner brackets mark the car (a different shape from the closure ring), its remaining route is a white dashed line with a dark casing that reads even across a congested road, and a white square marks where the trip ends.
 
 ### What the closure changed
 The **Intervention** panel (beside the map) answers it from the simulation's own data:

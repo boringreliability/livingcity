@@ -296,6 +296,8 @@ button.bridge.closed {
   top: 16px;
   right: 16px;
   display: grid;
+  /* the column never grows past its width: a wide child (a no-wrap table) cannot push the guide out */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   width: 240px;
 }
@@ -379,8 +381,12 @@ button.bridge.closed {
 
 .consequence-crossings th,
 .consequence-crossings td {
-  padding: 0 6px;
+  padding: 0 4px;
   text-align: right;
+}
+
+.consequence-crossings :is(th, td):last-child {
+  padding-right: 0;
 }
 
 .consequence-crossings th[scope='row'] {

@@ -1,6 +1,7 @@
 import { VEHICLE_RECORD_BYTES, type TrackedVehicle } from '../sim/protocol';
 import type { Camera } from './camera';
 import type { CityDecor } from './cities';
+import { DECOR_COLORS, DISTRICT_KINDS, DISTRICT_STYLE, MARK_GEOMETRY, MARK_LINE_PX, MARK_MIN_ZOOM, ROAD_BASE, ROAD_MIN_PX } from './cities/character';
 import { LANE_WIDTH_M, vehiclePosition, type RoadGeometry } from './geometry';
 import { NO_NEXT } from './motion';
 import { visualS, type PresentedVehicle, type Presenter } from './presentation';
@@ -21,6 +22,8 @@ export const QUEUED_MIN_PX = [3.4, 3.4] as const;
 /** Below this zoom (px/m) congestion also widens roads; above LOD_DETAIL lane marks and building outlines show. */
 const LOD_OVERVIEW_PX_PER_M = 0.5;
 const LOD_DETAIL_PX_PER_M = 2;
+/** From this zoom (px/m) cars get a dark outline seam; below it they keep a bright core (motion-004). */
+const VEHICLE_OUTLINE_FROM_PX_PER_M = 1.5;
 /** Congestion reaches its full look at this occupancy (vehicles ÷ capacity). */
 const CONGESTION_FULL_AT = 0.5;
 /** Closed roads: hatch stops this far short of each junction (CSS px), barriers at these fractions. */
@@ -29,22 +32,16 @@ const BARRIER_AT = [0.12, 0.88] as const;
 /** The closure sign at a closed link's midpoint (CSS px): a white ring between dark rings, hatch inside. */
 const GLYPH_INNER_PX = 4;
 const GLYPH_OUTER_PX = 8;
+export const CLOSURE_RING_PX = GLYPH_OUTER_PX;
 /** Dash period of a hovered road's centre stroke (CSS px; 60 % drawn). */
 const HOVER_DASH_PX = 10;
 /** Bridge decks keep at least this on-screen width (CSS px), with a dark railing edge of RAILING_PX. */
 const DECK_MIN_PX = 12;
 const RAILING_PX = 1.5;
 
-const COLORS = {
-  background: [0.055, 0.067, 0.082],
-  water: [0.075, 0.18, 0.27],
-  bank: [0.11, 0.14, 0.16],
-  park: [0.085, 0.115, 0.1],
-  building: [0.09, 0.1, 0.12],
-  outline: [0.16, 0.18, 0.21],
-  deck: [0.17, 0.185, 0.21],
-  pad: [0.14, 0.16, 0.19],
-} as const;
+const BACKGROUND = [0.055, 0.067, 0.082] as const;
+const COLORS = DECOR_COLORS;
+const glsl = (c: readonly number[]) => `vec3(${c.map((v) => v.toFixed(4)).join(', ')})`;
 
 const SOLID_VS = `#version 300 es
 layout(location = 0) in vec2 a_pos;
@@ -69,6 +66,7 @@ layout(location = 3) in float a_halfWidth;
 layout(location = 4) in float a_along;
 layout(location = 5) in float a_link;
 layout(location = 6) in float a_lanes;
+layout(location = 7) in float a_major;
 uniform vec2 u_center;
 uniform vec2 u_scale;
 uniform float u_pxPerM;
@@ -82,6 +80,7 @@ out float v_lanes;
 out vec2 v_wpx;
 flat out vec4 v_state;
 flat out float v_occ;
+flat out float v_major;
 ${LINK_TEXEL_GLSL}
 void main() {
   int l = int(a_link);
@@ -105,8 +104,9 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume: not drawn
     return;
   }
-  // the hatch is at least 9 px wide; a closed road's halo starts from the same width so it stays visible
-  float minPx = u_pass == 2 || (u_pass == 1 && closed) ? 9.0 : 2.5;
+  // the hatch is at least 9 px wide; a closed road's halo starts from the same width so it stays visible;
+  // otherwise major roads (arterials, bridges) keep a wider minimum than local streets (motion-004)
+  float minPx = u_pass == 2 || (u_pass == 1 && closed) ? 9.0 : a_major > 0.5 ? ${ROAD_MIN_PX.major.toFixed(1)} : ${ROAD_MIN_PX.local.toFixed(1)};
   float extraPx = u_pass == 3 && u_pxPerM < ${LOD_OVERVIEW_PX_PER_M.toFixed(2)} ? 3.0 * occ : 0.0;
   float core = max(a_halfWidth, 0.5 * minPx / u_pxPerM) + 0.5 * extraPx / u_pxPerM;
   float haloPx = u_pass == 1 ? (st.g > 0.5 ? ${SELECTED_HALO_PX.toFixed(1)} : ${HOVER_HALO_PX.toFixed(1)}) : 0.0;
@@ -119,6 +119,7 @@ void main() {
   v_wpx = p * u_pxPerM; // world position in CSS px: the hatch moves with the map
   v_state = st;
   v_occ = occ;
+  v_major = a_major;
 }`;
 
 const ROAD_FS = `#version 300 es
@@ -130,6 +131,7 @@ in float v_lanes;
 in vec2 v_wpx;
 flat in vec4 v_state;
 flat in float v_occ;
+flat in float v_major;
 uniform float u_pxPerM;
 uniform int u_pass;
 out vec4 o;
@@ -140,7 +142,7 @@ void main() {
     o = vec4(mod(k, 2.0) < 1.0 ? vec3(0.95, 0.76, 0.16) : vec3(0.05, 0.05, 0.05), 1.0);
     return;
   }
-  vec3 base = vec3(0.24, 0.27, 0.31);
+  vec3 base = v_major > 0.5 ? ${glsl(ROAD_BASE.major)} : ${glsl(ROAD_BASE.local)};
   // congestion: a lighter, warmer surface (lightness, not hue alone)
   base = mix(base, vec3(0.66, 0.56, 0.38), v_occ * 0.85);
   // lane separators: dashed, only when zoomed in enough to read them
@@ -150,7 +152,7 @@ void main() {
     if (edge < 0.04 && fract(v_along / 6.0) < 0.5) base = mix(base, vec3(0.7), 0.6);
   }
   // halo (pass 1): white for the selected road, light grey for the hovered one — lightness, not hue
-  if (abs(v_across) > 1.0) base = v_state.g > 0.5 ? vec3(1.0) : vec3(0.72);
+  if (u_pass == 1 && abs(v_across) > 1.0) base = v_state.g > 0.5 ? vec3(1.0) : vec3(0.72);
   // hovered (not selected): a dashed light stroke along the centre — a shape congestion never makes
   else if (u_pass == 1 && v_state.g <= 0.5 && abs(v_across) < 0.45 && fract(v_along * u_pxPerM / ${HOVER_DASH_PX.toFixed(1)}) < 0.6) base = vec3(0.92);
   o = vec4(base, 1.0);
@@ -226,7 +228,70 @@ out vec4 o;
 void main() {
   // two-tone railing: a dark outer line (reads against water) and a mid-grey inner one (reads over land)
   float e = v_halfPx - abs(v_acrossPx);
-  vec3 c = e < ${RAILING_PX.toFixed(1)} ? vec3(0.02, 0.022, 0.025) : e < ${(2 * RAILING_PX).toFixed(1)} ? vec3(0.42, 0.44, 0.47) : vec3(${COLORS.deck.map((c) => c.toFixed(3)).join(', ')});
+  vec3 c = e < ${RAILING_PX.toFixed(1)} ? ${glsl(COLORS.railingEdge)} : e < ${(2 * RAILING_PX).toFixed(1)} ? ${glsl(COLORS.railing)} : ${glsl(COLORS.deck)};
+  o = vec4(c, 1.0);
+}`;
+
+// Buildings (motion-004): each box filled with its district kind's fill; from MARK_MIN_ZOOM the kind's roof
+// mark (ridge, court, cross or quay; character.ts MARK_GEOMETRY) in lines of MARK_LINE_PX, evaluated per
+// pixel so the lines keep their screen width at every zoom without rebuilding geometry.
+const BUILDING_VS = `#version 300 es
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec4 a_box;
+layout(location = 2) in float a_kind;
+uniform vec2 u_center;
+uniform vec2 u_scale;
+out vec2 v_w;
+flat out vec4 v_box;
+flat out int v_kind;
+void main() {
+  gl_Position = vec4((a_pos - u_center) * u_scale, 0.0, 1.0);
+  v_w = a_pos;
+  v_box = a_box;
+  v_kind = int(a_kind + 0.5);
+}`;
+
+const BUILDING_FS = `#version 300 es
+precision highp float;
+precision highp int;
+in vec2 v_w;
+flat in vec4 v_box;
+flat in int v_kind;
+uniform float u_pxPerM;
+uniform vec3 u_fill[4];
+uniform vec3 u_mark[4];
+out vec4 o;
+bool inRect(vec2 p, vec4 r) { return p.x >= r.x && p.x <= r.z && p.y >= r.y && p.y <= r.w; }
+// a line along x at y from x0 to x1, or along y at x from y0 to y1 (half width h, metres)
+bool lineX(vec2 p, float y, float x0, float x1, float h) { return inRect(p, vec4(x0, y - h, x1, y + h)); }
+bool lineY(vec2 p, float x, float y0, float y1, float h) { return inRect(p, vec4(x - h, y0, x + h, y1)); }
+bool onMark(vec2 p, vec4 b, int k, float h) {
+  vec2 lo = b.xy;
+  vec2 sz = b.zw - b.xy;
+  vec2 c = lo + 0.5 * sz;
+  bool longX = sz.x >= sz.y;
+  if (k == 0) {
+    vec2 r = 0.5 * ${MARK_GEOMETRY.RIDGE_SPAN.toFixed(4)} * sz;
+    return longX ? lineX(p, c.y, c.x - r.x, c.x + r.x, h) : lineY(p, c.x, c.y - r.y, c.y + r.y, h);
+  }
+  if (k == 1) {
+    vec2 a = lo + ${MARK_GEOMETRY.COURT_AT[0].toFixed(4)} * sz;
+    vec2 z = lo + ${MARK_GEOMETRY.COURT_AT[1].toFixed(4)} * sz;
+    return lineX(p, a.y, a.x - h, z.x + h, h) || lineX(p, z.y, a.x - h, z.x + h, h) || lineY(p, a.x, a.y - h, z.y + h, h) || lineY(p, z.x, a.y - h, z.y + h, h);
+  }
+  if (k == 2) {
+    vec2 r = 0.5 * ${MARK_GEOMETRY.CROSS_SPAN.toFixed(4)} * sz;
+    return lineX(p, c.y, c.x - r.x, c.x + r.x, h) || lineY(p, c.x, c.y - r.y, c.y + r.y, h);
+  }
+  vec2 r = 0.5 * ${MARK_GEOMETRY.QUAY_SPAN.toFixed(4)} * sz;
+  vec2 q0 = lo + ${MARK_GEOMETRY.QUAY_AT[0].toFixed(4)} * sz;
+  vec2 q1 = lo + ${MARK_GEOMETRY.QUAY_AT[1].toFixed(4)} * sz;
+  return longX ? lineX(p, q0.y, c.x - r.x, c.x + r.x, h) || lineX(p, q1.y, c.x - r.x, c.x + r.x, h)
+               : lineY(p, q0.x, c.y - r.y, c.y + r.y, h) || lineY(p, q1.x, c.y - r.y, c.y + r.y, h);
+}
+void main() {
+  vec3 c = u_fill[v_kind];
+  if (u_pxPerM >= ${MARK_MIN_ZOOM.toFixed(2)} && onMark(v_w, v_box, v_kind, ${(MARK_LINE_PX / 2).toFixed(2)} / u_pxPerM)) c = u_mark[v_kind];
   o = vec4(c, 1.0);
 }`;
 
@@ -243,6 +308,8 @@ uniform float u_pxPerM;
 out vec2 v_local;
 flat out uint v_flags;
 flat out float v_band; // brake band length as a share of the vehicle (at least ~1.25 px)
+flat out vec2 v_sizePx;
+flat out float v_outlinePx; // dark seam inside the footprint (motion-004): queued cars count one by one
 void main() {
   vec2 p = a_pose.xy;
   vec2 dir = length(a_pose.zw) > 0.0 ? normalize(a_pose.zw) : vec2(1.0, 0.0);
@@ -252,6 +319,8 @@ void main() {
   vec2 size = queued ? vec2(3.6, 2.3) : vec2(4.4, 1.8);
   size = max(size, (queued ? vec2(${QUEUED_MIN_PX.map((x) => x.toFixed(1)).join(', ')}) : vec2(${MOVING_MIN_PX.map((x) => x.toFixed(1)).join(', ')})) / u_pxPerM);
   v_band = max(0.22, 1.25 / (size.x * u_pxPerM));
+  v_sizePx = size * u_pxPerM;
+  v_outlinePx = u_pxPerM >= ${VEHICLE_OUTLINE_FROM_PX_PER_M.toFixed(2)} ? max(0.6, 0.25 * u_pxPerM) : 0.0;
   vec2 local = a_corner * size;
   vec2 w = p - dir * (size.x * 0.5) + dir * local.x + n * local.y;
   gl_Position = vec4((w - u_center) * u_scale, 0.0, 1.0);
@@ -264,6 +333,8 @@ precision highp float;
 in vec2 v_local;
 flat in uint v_flags;
 flat in float v_band;
+flat in vec2 v_sizePx;
+flat in float v_outlinePx;
 out vec4 o;
 void main() {
   bool queued = (v_flags & 1u) != 0u;
@@ -272,16 +343,28 @@ void main() {
   // v_local.x runs 0 (rear) → 1 (front) along the vehicle, v_local.y −0.5 → 0.5 across it
   if (queued && v_local.x < v_band) c = vec3(0.22, 0.1, 0.02); // brake band at the rear
   if (stranded && abs(v_local.x - 0.5) < 0.3 && abs(v_local.y) < 0.25) c = vec3(0.08); // hollow mark
+  float edgePx = min((0.5 - abs(v_local.y)) * v_sizePx.y, min(v_local.x, 1.0 - v_local.x) * v_sizePx.x);
+  if (edgePx < v_outlinePx) c = vec3(0.04);
   o = vec4(c, 1.0);
 }`;
 
-/** Tracked vehicle ring: radii in CSS px (screen space, independent of zoom). */
-const RING_INNER_PX = 7;
-const RING_OUTER_PX = 10;
-const RING_EDGE_PX = 1.5;
-/** Route highlight: dashed centre line width and dash period, CSS px. */
+/**
+ * Tracked vehicle marker (motion-004): four L-shaped corner brackets, white with dark edges, their corner
+ * vertices BRACKET_PX from the car along both screen axes; the cardinal directions stay free, so the marker
+ * never reads as the closure ring. CSS px, independent of zoom.
+ */
+const BRACKET_PX = 7;
+const BRACKET_ARM_PX = 5;
+/** Distance from the car's centre to each bracket's corner vertex. */
+export const TRACKED_MARKER_RADIUS_PX = BRACKET_PX * Math.SQRT2;
+/** The route's destination mark: a square outline of this half side, aligned with the last link. */
+const ROUTE_END_HALF_PX = 4.5;
+/** Route highlight: dashed centre line width and dash period, and its dark casing on each side, CSS px. */
 const ROUTE_WIDTH_PX = 3;
 const ROUTE_DASH_PX = 12;
+const ROUTE_CASING_PX = 2.5;
+/** Half side of the marker quad (CSS px): holds the brackets and the rotated end square with its edge. */
+const MARKER_QUAD_PX = 10;
 
 // Route highlight: a screen-space dashed line along the remaining route's link centrelines.
 const ROUTE_VS = `#version 300 es
@@ -295,7 +378,7 @@ uniform float u_pxPerM;
 out float v_alongPx;
 out float v_across;
 void main() {
-  vec2 p = a_center + a_normal * a_side * (${(ROUTE_WIDTH_PX / 2 + 1).toFixed(1)} / u_pxPerM);
+  vec2 p = a_center + a_normal * a_side * (${(ROUTE_WIDTH_PX / 2 + ROUTE_CASING_PX).toFixed(1)} / u_pxPerM);
   gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
   v_alongPx = a_along * u_pxPerM;
   v_across = a_side;
@@ -308,12 +391,13 @@ in float v_across;
 out vec4 o;
 void main() {
   if (fract(v_alongPx / ${ROUTE_DASH_PX.toFixed(1)}) > 0.6) discard;
-  // near-white core with a dark 1 px edge (readable on light, congested roads too)
-  float halfW = ${(ROUTE_WIDTH_PX / 2).toFixed(2)} / ${(ROUTE_WIDTH_PX / 2 + 1).toFixed(2)};
+  // near-white core with a dark casing (readable on light, congested roads too)
+  float halfW = ${(ROUTE_WIDTH_PX / 2).toFixed(2)} / ${(ROUTE_WIDTH_PX / 2 + ROUTE_CASING_PX).toFixed(2)};
   o = vec4(abs(v_across) <= halfW ? vec3(0.97) : vec3(0.05), 1.0);
 }`;
 
-// Tracked ring: one quad around the vehicle, sized in CSS px.
+// Markers: one quad sized in CSS px around a world point. Mode 0: the tracked car's corner brackets
+// (screen-aligned); mode 1: the route's destination square, aligned with u_dir (the last link's direction).
 const RING_VS = `#version 300 es
 layout(location = 0) in vec2 a_corner;
 uniform vec2 u_center;
@@ -322,7 +406,7 @@ uniform float u_pxPerM;
 uniform vec2 u_at;
 out vec2 v_px;
 void main() {
-  float r = ${(RING_OUTER_PX + RING_EDGE_PX + 1).toFixed(1)};
+  float r = ${MARKER_QUAD_PX.toFixed(1)};
   vec2 p = u_at + a_corner * (r / u_pxPerM);
   gl_Position = vec4((p - u_center) * u_scale, 0.0, 1.0);
   v_px = a_corner * r;
@@ -331,13 +415,28 @@ void main() {
 const RING_FS = `#version 300 es
 precision highp float;
 in vec2 v_px;
+uniform int u_mode;
+uniform vec2 u_dir;
 out vec4 o;
 void main() {
-  float d = length(v_px);
-  if (d >= ${RING_INNER_PX.toFixed(1)} && d <= ${RING_OUTER_PX.toFixed(1)}) o = vec4(vec3(0.97), 1.0);
-  else if (d > ${RING_OUTER_PX.toFixed(1)} && d <= ${(RING_OUTER_PX + RING_EDGE_PX).toFixed(1)}) o = vec4(vec3(0.04), 1.0);
-  else if (d >= ${(RING_INNER_PX - RING_EDGE_PX).toFixed(1)} && d < ${RING_INNER_PX.toFixed(1)}) o = vec4(vec3(0.04), 1.0);
-  else discard;
+  if (u_mode == 1) {
+    // square outline: a 2-px white line on the square of half side ROUTE_END_HALF_PX, 1-px dark edges
+    vec2 q = vec2(dot(v_px, u_dir), dot(v_px, vec2(-u_dir.y, u_dir.x)));
+    float e = abs(max(abs(q.x), abs(q.y)) - ${ROUTE_END_HALF_PX.toFixed(1)});
+    if (e > 2.0) discard;
+    o = vec4(e <= 1.0 ? vec3(0.97) : vec3(0.04), 1.0);
+    return;
+  }
+  // brackets: per quadrant an L whose corner vertex sits at (BRACKET_PX, BRACKET_PX); white 2 px, dark 1-px edge
+  vec2 a = abs(v_px);
+  float h = ${BRACKET_PX.toFixed(1)};
+  float arm = ${BRACKET_ARM_PX.toFixed(1)};
+  bool edgeH = abs(a.y - h) <= 2.0 && a.x >= h - arm && a.x <= h + 2.0;
+  bool edgeV = abs(a.x - h) <= 2.0 && a.y >= h - arm && a.y <= h + 2.0;
+  if (!edgeH && !edgeV) discard;
+  bool coreH = abs(a.y - h) <= 1.0 && a.x >= h - arm + 1.0 && a.x <= h + 1.0;
+  bool coreV = abs(a.x - h) <= 1.0 && a.y >= h - arm + 1.0 && a.y <= h + 1.0;
+  o = vec4(coreH || coreV ? vec3(0.97) : vec3(0.04), 1.0);
 }`;
 
 /** The simulation's storage capacity of a link: lanes × max(1, floor(length / 7.5 m)). */
@@ -393,11 +492,16 @@ export class CityRenderer {
   private water: Mesh | null = null;
   private banks: Mesh | null = null;
   private parks: Mesh | null = null;
+  /** Buildings: position, box and district kind per vertex (BUILDING_VS). */
   private buildings: Mesh | null = null;
+  private readonly buildingProg: WebGLProgram;
+  private readonly uBuilding: Uniforms;
   private decks: Mesh | null = null;
   private pads: Mesh | null = null;
-  /** GL_LINES: building outlines (detail zoom). */
-  private outlines: Mesh | null = null;
+  private quay: Mesh | null = null;
+  private bollards: Mesh | null = null;
+  /** GL_LINES: building outlines per district kind (detail zoom). */
+  private outlines: (Mesh | null)[] = [];
   private roads: Mesh | null = null;
   private bars: Mesh | null = null;
   private barClosed: number[] = [];
@@ -441,6 +545,8 @@ export class CityRenderer {
     this.uBar = uniforms(gl, this.barProg, ['u_center', 'u_scale', 'u_pxPerM']);
     this.deckProg = compile(gl, DECK_VS, DECK_FS);
     this.uDeck = uniforms(gl, this.deckProg, ['u_center', 'u_scale', 'u_pxPerM']);
+    this.buildingProg = compile(gl, BUILDING_VS, BUILDING_FS);
+    this.uBuilding = uniforms(gl, this.buildingProg, ['u_center', 'u_scale', 'u_pxPerM', 'u_fill', 'u_mark']);
     this.linkTex = gl.createTexture()!;
     this.stateTex = gl.createTexture()!;
     for (const t of [this.linkTex, this.stateTex]) {
@@ -472,7 +578,7 @@ export class CityRenderer {
     this.routeProg = compile(gl, ROUTE_VS, ROUTE_FS);
     this.ringProg = compile(gl, RING_VS, RING_FS);
     this.uRoute = uniforms(gl, this.routeProg, ['u_center', 'u_scale', 'u_pxPerM']);
-    this.uRing = uniforms(gl, this.ringProg, ['u_center', 'u_scale', 'u_pxPerM', 'u_at']);
+    this.uRing = uniforms(gl, this.ringProg, ['u_center', 'u_scale', 'u_pxPerM', 'u_at', 'u_mode', 'u_dir']);
     this.ringVao = gl.createVertexArray()!;
     gl.bindVertexArray(this.ringVao);
     this.ringBuf = gl.createBuffer()!;
@@ -523,8 +629,9 @@ export class CityRenderer {
   dispose(): void {
     const gl = this.gl;
     for (const m of this.allMeshes()) this.deleteMesh(m);
-    this.water = this.banks = this.parks = this.buildings = this.decks = this.pads = null;
-    this.outlines = this.roads = this.bars = null;
+    this.water = this.banks = this.parks = this.buildings = this.decks = this.pads = this.quay = this.bollards = null;
+    this.outlines = [];
+    this.roads = this.bars = null;
     gl.deleteVertexArray(this.vehVao);
     gl.deleteBuffer(this.vehBuf);
     gl.deleteBuffer(this.poseBuf);
@@ -538,11 +645,11 @@ export class CityRenderer {
     }
     gl.deleteVertexArray(this.ringVao);
     gl.deleteBuffer(this.ringBuf);
-    for (const p of [this.solid, this.road, this.veh, this.routeProg, this.ringProg, this.barProg, this.deckProg]) gl.deleteProgram(p);
+    for (const p of [this.solid, this.road, this.veh, this.routeProg, this.ringProg, this.barProg, this.deckProg, this.buildingProg]) gl.deleteProgram(p);
   }
 
   private allMeshes(): (Mesh | null)[] {
-    return [this.water, this.banks, this.parks, this.buildings, this.decks, this.pads, this.outlines, this.roads, this.bars];
+    return [this.water, this.banks, this.parks, this.buildings, this.decks, this.pads, this.quay, this.bollards, ...this.outlines, this.roads, this.bars];
   }
 
   setNetwork(geometry: RoadGeometry, decor: CityDecor): void {
@@ -554,20 +661,25 @@ export class CityRenderer {
     this.water = this.solidMesh(decor.water);
     this.banks = this.solidMesh(decor.banks);
     this.parks = this.solidMesh(decor.parks);
-    this.buildings = this.solidMesh(decor.buildings);
+    this.buildings = this.buildingMesh(decor);
     this.decks = this.deckMesh(decor.bridgeDecks);
     this.pads = this.solidMesh(decor.pads);
-    // building outlines (shown at detail zoom)
-    const ol: number[] = [];
-    for (const [x0, y0, x1, y1] of decor.buildingBoxes) ol.push(x0, y0, x1, y0, x1, y0, x1, y1, x1, y1, x0, y1, x0, y1, x0, y0);
-    this.outlines = this.solidMesh(new Float32Array(ol));
+    this.quay = this.solidMesh(decor.quay.subarray(0, decor.quayBollardsFrom));
+    this.bollards = this.solidMesh(decor.quay.subarray(decor.quayBollardsFrom));
+    // building outlines per district kind (shown at detail zoom)
+    const ol: number[][] = DISTRICT_KINDS.map(() => []);
+    decor.buildingBoxes.forEach(([x0, y0, x1, y1], i) => {
+      ol[decor.buildingKinds[i] ?? 0]!.push(x0, y0, x1, y0, x1, y0, x1, y1, x1, y1, x0, y1, x0, y1, x0, y0);
+    });
+    this.outlines = ol.map((a) => this.solidMesh(new Float32Array(a)));
 
-    // Road quads: center, normal, side, half width, along, link, lanes (9 floats per vertex).
+    // Road quads: center, normal, side, half width, along, link, lanes, major (10 floats per vertex).
     const v: number[] = [];
     for (const l of geometry.links) {
       const len = Math.hypot(l.x1 - l.x0, l.y1 - l.y0);
+      const major = decor.roadMajor[l.id] ?? 0;
       const corner = (end: 0 | 1, side: number) => {
-        v.push(end ? l.x1 : l.x0, end ? l.y1 : l.y0, l.nx, l.ny, side, l.width / 2, end ? len : 0, l.id, l.lanes);
+        v.push(end ? l.x1 : l.x0, end ? l.y1 : l.y0, l.nx, l.ny, side, l.width / 2, end ? len : 0, l.id, l.lanes, major);
       };
       corner(0, -1);
       corner(1, -1);
@@ -590,13 +702,14 @@ export class CityRenderer {
       [4, 1, 6],
       [5, 1, 7],
       [6, 1, 8],
+      [7, 1, 9],
     ];
     for (const [loc, size, off] of layout) {
       gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 9 * F, off * F);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 10 * F, off * F);
     }
     gl.bindVertexArray(null);
-    this.roads = { vao, buf, count: v.length / 9 };
+    this.roads = { vao, buf, count: v.length / 10 };
 
     // Link table: 3 RGBA32F texels per link, 1024 links wide (see linkTable.ts).
     const n = geometry.links.length;
@@ -754,7 +867,19 @@ export class CityRenderer {
     return { link: t.link, s, length: l.length, lane: t.lane, next: NO_NEXT, nextLane: t.lane, world: [x, y] };
   }
 
-  /** Where the tracked vehicle is drawn now (world m): Follow and the ring agree with the picture. */
+  /** The tracked route's last link (where the destination square sits at its end), or undefined. */
+  private routeLastLink() {
+    const route = this.tracked?.route;
+    return route && route.length ? this.geometry?.links[route[route.length - 1]!] : undefined;
+  }
+
+  /** Where the destination square is drawn (world m): the end of the route's last link, or null. */
+  routeEndWorld(): [number, number] | null {
+    const l = this.routeLastLink();
+    return l ? [l.x1, l.y1] : null;
+  }
+
+  /** Where the tracked vehicle is drawn now (world m): Follow and the brackets agree with the picture. */
   trackedWorldPosition(): [number, number] | null {
     return this.trackedDraw()?.world ?? null;
   }
@@ -763,6 +888,34 @@ export class CityRenderer {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.stateTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, LINK_TEX_WIDTH, this.linkRowsN, gl.RGBA, gl.UNSIGNED_BYTE, this.stateBytes);
+  }
+
+  /** Building triangles (6 vertices per box, `decor.buildings`) with their box and district kind per vertex. */
+  private buildingMesh(decor: CityDecor): Mesh {
+    const gl = this.gl;
+    const tris = decor.buildings;
+    const v = new Float32Array((tris.length / 2) * 7); // position(2), box(4), kind(1)
+    for (let i = 0; i < tris.length / 2; i++) {
+      const b = Math.floor(i / 6);
+      const box = decor.buildingBoxes[b]!;
+      v.set([tris[2 * i]!, tris[2 * i + 1]!, box[0], box[1], box[2], box[3], decor.buildingKinds[b] ?? 0], 7 * i);
+    }
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const buf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+    const F = 4;
+    for (const [loc, size, off] of [
+      [0, 2, 0],
+      [1, 4, 2],
+      [2, 1, 6],
+    ] as const) {
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 7 * F, off * F);
+    }
+    gl.bindVertexArray(null);
+    return { vao, buf, count: v.length / 7 };
   }
 
   /** Deck quads (c0, c1, c2, c0, c2, c3; long sides c0–c1, c3–c2) as centre line + half width. */
@@ -853,7 +1006,7 @@ export class CityRenderer {
   draw(camera: Camera): void {
     const gl = this.gl;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    const bg = COLORS.background;
+    const bg = BACKGROUND;
     gl.clearColor(bg[0], bg[1], bg[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (!this.roads) return;
@@ -872,9 +1025,22 @@ export class CityRenderer {
     };
     fill(this.water, COLORS.water);
     fill(this.banks, COLORS.bank);
+    fill(this.quay, COLORS.quay);
+    fill(this.bollards, COLORS.bollard);
     fill(this.parks, COLORS.park);
-    fill(this.buildings, COLORS.building);
-    if (camera.zoom >= LOD_DETAIL_PX_PER_M) fill(this.outlines, COLORS.outline, gl.LINES);
+    if (this.buildings && this.buildings.count > 0) {
+      const uB = this.uBuilding;
+      gl.useProgram(this.buildingProg);
+      gl.uniform2f(uB['u_center']!, camera.cx, camera.cy);
+      gl.uniform2f(uB['u_scale']!, ...scale);
+      gl.uniform1f(uB['u_pxPerM']!, camera.zoom);
+      gl.uniform3fv(uB['u_fill']!, DISTRICT_KINDS.flatMap((k) => DISTRICT_STYLE[k].fill));
+      gl.uniform3fv(uB['u_mark']!, DISTRICT_KINDS.flatMap((k) => DISTRICT_STYLE[k].markColor));
+      gl.bindVertexArray(this.buildings.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, this.buildings.count);
+      gl.useProgram(this.solid);
+    }
+    if (camera.zoom >= LOD_DETAIL_PX_PER_M) this.outlines.forEach((m, k) => fill(m, DISTRICT_STYLE[DISTRICT_KINDS[k]!].outline, gl.LINES));
     if (this.decks && this.decks.count > 0) {
       const uD = this.uDeck;
       gl.useProgram(this.deckProg);
@@ -951,8 +1117,18 @@ export class CityRenderer {
       gl.uniform2f(uRg['u_scale']!, ...scale);
       gl.uniform1f(uRg['u_pxPerM']!, camera.zoom);
       gl.uniform2f(uRg['u_at']!, at[0], at[1]);
+      gl.uniform1i(uRg['u_mode']!, 0);
       gl.bindVertexArray(this.ringVao);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
+      // the route's destination: a square at the end of its last link, aligned with it
+      const last = this.routeLastLink();
+      if (last) {
+        const len = Math.hypot(last.x1 - last.x0, last.y1 - last.y0) || 1;
+        gl.uniform2f(uRg['u_at']!, last.x1, last.y1);
+        gl.uniform2f(uRg['u_dir']!, (last.x1 - last.x0) / len, (last.y1 - last.y0) / len);
+        gl.uniform1i(uRg['u_mode']!, 1);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
     }
     gl.bindVertexArray(null);
   }

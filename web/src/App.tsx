@@ -2,12 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import { Camera } from './render/camera';
 import { bridgeNaming, cityDecor, type CityDecor, type CityLabel } from './render/cities';
+import { DISTRICT_KINDS, DISTRICT_STYLE, MARK_LINE_PX, markRects } from './render/cities/character';
 import { buildRoadGeometry, vehiclePosition, type RoadGeometry } from './render/geometry';
 import { NO_NEXT } from './render/motion';
 import { pickLink, pickPresentedVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
 import { clearances, PresentationClock, Presenter, stopLine, visualPose, type Clearances, type PresentFrame } from './render/presentation';
 import { COMPARE_FIT_INSETS, FIT_INSETS } from './render/layout';
-import { CityRenderer, linkCapacity } from './render/renderer';
+import { CityRenderer, CLOSURE_RING_PX, linkCapacity, TRACKED_MARKER_RADIUS_PX } from './render/renderer';
 import { createSimClient, type SimClient } from './sim/client';
 import { decodeVehicles, type DecodedVehicles } from './sim/frame';
 import { RENDER_WINDOW, SampleWindow } from './sim/perf';
@@ -1178,11 +1179,78 @@ export function App() {
         const l = geometry.current?.links[link];
         return l ? { length: l.length, lanes: l.lanes } : null;
       },
-      districtSamples: () => [], // motion-004 red
-      roadClasses: () => ({ major: [], local: [] }),
-      trackedMarker: () => null,
-      routeEnd: () => null,
-      closureSigns: () => [],
+      districtSamples: (near?: [number, number]) => {
+        // per district kind, the building nearest to `near` that is fully on the canvas and not under an overlay
+        const d = decorRef.current;
+        const canvas = canvasRef.current;
+        if (!d || !canvas) return [];
+        const rect = canvas.getBoundingClientRect();
+        const page = (x: number, y: number): [number, number] => {
+          const [sx, sy] = camera.worldToScreen(x, y);
+          return [rect.left + sx, rect.top + sy];
+        };
+        const at = near ?? [rect.left + rect.width / 2, rect.top + rect.height / 2];
+        const visible = ([px, py]: [number, number]) => document.elementFromPoint(px, py) === canvas;
+        const half = MARK_LINE_PX / 2 / camera.zoom;
+        type Sample = { kind: string; page: [number, number]; box: [number, number, number, number]; mark: string };
+        const best: { s: Sample; dist: number }[] = [];
+        d.buildingBoxes.forEach((b, i) => {
+          const k = d.buildingKinds[i] ?? 0;
+          const kind = DISTRICT_KINDS[k]!;
+          // world y grows up, page y down: (x0, y1) is the top-left corner on the page
+          const [ax, ay] = page(b[0], b[3]);
+          const [bx, by] = page(b[2], b[1]);
+          const dist = Math.hypot((ax + bx) / 2 - at[0], (ay + by) / 2 - at[1]);
+          if (best[k] && best[k]!.dist <= dist) return;
+          if (ax < rect.left || ay < rect.top || bx > rect.right || by > rect.bottom) return;
+          const corners: [number, number][] = [[ax + 1, ay + 1], [bx - 1, ay + 1], [ax + 1, by - 1], [bx - 1, by - 1], [(ax + bx) / 2, (ay + by) / 2]];
+          if (!corners.every(visible)) return;
+          let p: [number, number] | null = null;
+          if (Math.min(bx - ax, by - ay) < 12) p = [(ax + bx) / 2, (ay + by) / 2];
+          else {
+            // a point ≥ 3 px from the edges and from every mark line
+            const marks = markRects(kind, b, half).map(([x0, y0, x1, y1]) => [...page(x0, y1), ...page(x1, y0)] as const);
+            const clear = (x: number, y: number) => marks.every(([m0, m1, m2, m3]) => Math.hypot(Math.max(m0 - x, 0, x - m2), Math.max(m1 - y, 0, y - m3)) >= 3);
+            for (let y = ay + 3; y <= by - 3 && !p; y += 0.5) for (let x = ax + 3; x <= bx - 3 && !p; x += 0.5) if (clear(x, y)) p = [x, y];
+          }
+          if (p) best[k] = { s: { kind, page: p, box: [ax, ay, bx, by], mark: DISTRICT_STYLE[kind].mark }, dist };
+        });
+        return best.filter((b) => b).map((b) => b.s);
+      },
+      roadClasses: () => {
+        const flags = decorRef.current?.roadMajor;
+        const major: number[] = [];
+        const local: number[] = [];
+        flags?.forEach((f, l) => (f ? major : local).push(l));
+        return { major, local };
+      },
+      trackedMarker: () => {
+        const at = renderer.current?.trackedWorldPosition();
+        const p = at ? toPage(at[0], at[1]) : null;
+        return p ? { page: p, radiusPx: TRACKED_MARKER_RADIUS_PX } : null;
+      },
+      routeEnd: () => {
+        const at = renderer.current?.routeEndWorld();
+        const canvas = canvasRef.current;
+        if (!at || !canvas) return null;
+        const [sx, sy] = camera.worldToScreen(at[0], at[1]);
+        const rect = canvas.getBoundingClientRect();
+        return { page: [rect.left + sx, rect.top + sy] as [number, number] };
+      },
+      closureSigns: () => {
+        // the rings drawn now (single view: A's closed links, at each link's midpoint)
+        const f = frameRef.current;
+        const g = geometry.current;
+        const canvas = canvasRef.current;
+        if (!f || !g || !canvas) return [];
+        const rect = canvas.getBoundingClientRect();
+        return Array.from(f.closed).flatMap((link) => {
+          const l = g.links[link];
+          if (!l) return [];
+          const [sx, sy] = camera.worldToScreen((l.x0 + l.x1) / 2, (l.y0 + l.y1) / 2);
+          return [{ link, page: [rect.left + sx, rect.top + sy] as [number, number], radiusPx: CLOSURE_RING_PX }];
+        });
+      },
       startPerfRecording: () => {
         recordingRef.current = { ticks: [], renderIntervals: [], drawMs: [], onNetwork: [], active: [], waitingAtOrigin: [], frames: 0, startMs: performance.now() };
       },

@@ -21,7 +21,7 @@ function writeCollapsed(collapsed: boolean): void {
 /** Small drawn samples of each map symbol: every state reads by shape, pattern or lightness, never by hue alone. */
 const SAMPLES: { label: string; svg: ReactElement }[] = [
   {
-    label: 'Closed road (hatch, barriers)',
+    label: 'Closed road (hatch, ring)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <defs>
@@ -32,6 +32,8 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
         </defs>
         <rect x="0" y="3" width="34" height="8" fill="url(#lg-hatch)" />
         <rect x="5" y="0" width="4" height="14" fill="#f7f7f7" stroke="#0a0a0a" strokeWidth="1" />
+        <circle cx="24" cy="7" r="4.5" fill="none" stroke="#0a0a0a" strokeWidth="3.5" />
+        <circle cx="24" cy="7" r="4.5" fill="none" stroke="#f7f7f7" strokeWidth="1.5" />
       </svg>
     ),
   },
@@ -62,12 +64,12 @@ const SAMPLES: { label: string; svg: ReactElement }[] = [
     ),
   },
   {
-    label: 'Selected / followed (halo, ring)',
+    label: 'Selected / followed (halo, brackets)',
     svg: (
       <svg width="34" height="14" viewBox="0 0 34 14" aria-hidden="true">
         <line x1="0" y1="7" x2="18" y2="7" stroke="#ffffff" strokeWidth="6" />
         <line x1="0" y1="7" x2="18" y2="7" stroke="#3d4550" strokeWidth="2.5" />
-        <circle cx="27" cy="7" r="5" fill="none" stroke="#f7f7f7" strokeWidth="2" />
+        <path d="M22 4 V2 H25 M29 2 H32 V4 M32 10 V12 H29 M25 12 H22 V10" fill="none" stroke="#f7f7f7" strokeWidth="2" />
       </svg>
     ),
   },

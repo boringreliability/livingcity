@@ -125,6 +125,30 @@ The renderer no longer extrapolates in the vertex shader. Instead, the CPU prese
 
 Each frame now also carries the command log and bridge exit counts: a `command_log()` call and four `exits_at()` reads of the 6 bridge links. A node + wasm micro-benchmark measured them on River City with 59 snapshots in the window (2026-10-13; machine load as above). They cost **0.66 µs per frame** (median; at most 0.88 µs), against 24.3 µs for the existing `encode_frame`. The payload grows by 30 numbers of `bridgeFlow` plus 3 per command (24 bytes each), about 0.3 kB per frame.
 
+## City character (`motion-004`)
+
+The new look adds only static geometry, built once per city:
+- district fills and roof marks, in one building pass whose fragment shader draws the mark at a fixed screen width;
+- the quay and its bollards;
+- pad shapes;
+- a road-class attribute.
+
+The car outline, the corner brackets, the route casing and the end square are a few shader instructions each. Every number below comes from `web/perf-results/motion004-before-after.json`:
+- **Runs:** interleaved `@perf` harness runs, in the order before, after, before, after, on the same machine within one hour (SwiftShader, 1280 × 800).
+- **Builds:** before = commit `20bf500`, the renderer before motion-004 Gold; after = the Gold code.
+- **Load:** the 1-minute load average was 11–19 at the start of the runs.
+
+| Scenario | Render interval ms median / p95, before → after (both rounds) | Draw CPU ms median / p95, before → after | Frame bytes |
+|---|---|---|---|
+| Baseline 1× (≈ 1,775 on the network) | 50.0 / 66.7 → 50.0 / 66.7 | 0.3 / 0.4 → 0.3 / 0.4 | unchanged |
+| Baseline 20× (≈ 1,655) | 50.0 / 66.7 → 50.0 / 66.7 | 0.3 / 0.4 → 0.3 / 0.4 | unchanged |
+| Closure burst (20×) | 50.1–66.6 / 66.8–83.3 → 66.6 / 66.8–83.3 | 0.3 / 0.4 → 0.3 / 0.4 | unchanged |
+| Stress `?demand=5` at 5× (≈ 5,700) | 100.0–100.1 / 116.8 → 100.1–116.6 / 133.3 | 0.7 / 0.8 → 0.7 / 0.8 | unchanged |
+
+- **Draw CPU is unchanged.** No per-frame JavaScript work was added.
+- **Render interval at baseline and in the closure burst is the same within the harness's 16.7 ms steps.** The closure-burst median moved by one step in round 1, but the after run had the higher load.
+- **Under stress, the p95 is one step (16.7 ms) higher in both rounds.** The likely cause is the heavier building fragment shader on the software rasteriser, which shades every building pixel on the CPU. On a hardware GPU this shader is trivial. That has not been measured here.
+
 ## How to reproduce
 
 ```bash
