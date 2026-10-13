@@ -106,7 +106,7 @@ test('intervention_summary_and_map_markers', async ({ page }) => {
   for (const p of pins) {
     const end = (await page.evaluate((l) => window.__livingcity!.linkScreenPoint(l, 1), p.link))!;
     expect(Math.hypot(p.page[0] - end[0], p.page[1] - end[1]), `pin of link ${p.link} at its stop-line end`).toBeLessThanOrEqual(8);
-    await expect(page.locator('.labels .queue-pin', { hasText: `▼ ${p.queued}` }).first()).toBeAttached();
+    await expect(page.locator('.labels .queue-pin').filter({ hasText: new RegExp(`^\\s*▼ ${p.queued}\\s*$`) }).first()).toBeAttached();
   }
   // the summary lists the same queues, and the crossings it shows are the hook's
   for (const p of want) await expect(box.getByRole('button', { name: new RegExp(`^Link ${p.link} · ${p.queued} queued`) })).toBeVisible();
@@ -163,7 +163,9 @@ test('consequences_in_three_bridges', async ({ page }) => {
   const labels = await page.evaluate(() => window.__livingcity!.bridgeLabels());
   expect(labels.map((l) => l.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
   await expect(page.locator('.labels .bridge-label')).toHaveCount(3);
-  expect((await page.evaluate(() => window.__livingcity!.crossings())).map((r) => r.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
+  const rates = await page.evaluate(() => window.__livingcity!.crossings());
+  expect(rates.map((r) => r.name)).toEqual(['North Bridge', 'Main Bridge', 'South Bridge']);
+  for (const r of rates) await expect(summary(page).getByRole('row', { name: new RegExp(`^${r.name}`) })).toBeVisible();
 });
 
 // 8
