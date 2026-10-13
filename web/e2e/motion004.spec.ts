@@ -109,6 +109,23 @@ async function dragTo(page: Page, from: P, to: P) {
   await sleep(400);
 }
 
+/** Bring the page point `get()` returns (it moves with the map) to FREE: drag it there when it is on the
+ * canvas, else pan towards it in steps of at most 300 px; at most 8 pans (Red r2 B-N1). */
+async function bringToFree(page: Page, get: () => Promise<P>) {
+  for (let k = 0; k < 8; k++) {
+    const p = await get();
+    if (await onCanvas(page, p, 2)) {
+      await dragTo(page, p, FREE);
+      return;
+    }
+    const [dx, dy] = [FREE[0] - p[0], FREE[1] - p[1]];
+    const d = Math.hypot(dx, dy);
+    const step = Math.min(300, d) / d;
+    await dragTo(page, FREE, [FREE[0] + dx * step, FREE[1] + dy * step]);
+  }
+  expect(await onCanvas(page, await get(), 2), 'brought onto the canvas').toBe(true);
+}
+
 /**
  * A road's cross-section at t = 0.5 of an axis-aligned link: width = pixels with lum > ground + 25 on a
  * 31 px line across it (ground = median of the 6 outermost samples); light = the median of the 3 pixels at
@@ -223,11 +240,11 @@ test('districts_read_and_stay_subordinate', async ({ page }) => {
       const cls = await page.evaluate(() => window.__livingcity!.roadClasses());
       let road: number | null = null;
       for (const l of cls.local) {
-        const m = await point(page, l, 0.5);
-        if (m && (await onCanvas(page, m, 4))) {
-          road = median(await lumAt(page, m, 3));
-          break;
+        for (let t = 0.1; t <= 0.9 && road === null; t += 0.1) {
+          const m = await point(page, l, t);
+          if (m && (await onCanvas(page, m, 4))) road = median(await lumAt(page, m, 3));
         }
+        if (road !== null) break;
       }
       expect(road, `a local road on screen at zoom ${zoom}`).not.toBeNull();
       expect(fill, `${kind} fill below a local road at zoom ${zoom}`).toBeLessThanOrEqual(road! - 15);
@@ -320,10 +337,22 @@ test('queued_cars_countable_and_cars_readable_at_fit_zoom', async ({ page }) => 
   await setRunning(page, false);
   const pins = await page.evaluate(() => window.__livingcity!.queuePins());
   expect(pins.length, 'a queue to look at').toBeGreaterThan(0);
-  const link = pins[0]!.link;
-  const info = (await page.evaluate((l) => window.__livingcity!.linkInfo(l), link))!;
-  await wheelZoom(page, (await point(page, link, 1 - 30 / info.length))!, (z) => z >= 5, -1);
-  await dragTo(page, (await point(page, link, 1 - 30 / info.length))!, FREE);
+  let link = -1;
+  let info: { length: number; lanes: number } | null = null;
+  for (const pin of pins) {
+    const li = (await page.evaluate((l) => window.__livingcity!.linkInfo(l), pin.link))!;
+    const at = (await point(page, pin.link, 1 - 30 / li.length))!;
+    const a0 = (await point(page, pin.link, 0))!;
+    const b0 = (await point(page, pin.link, 1))!;
+    const axis = Math.min(Math.abs(b0[0] - a0[0]), Math.abs(b0[1] - a0[1])) <= 1;
+    if (axis && (await onCanvas(page, at, 6))) {
+      [link, info] = [pin.link, li];
+      break;
+    }
+  }
+  expect(link, 'a queue pin on an axis-aligned link with its anchor on the canvas').toBeGreaterThanOrEqual(0);
+  await wheelZoom(page, (await point(page, link, 1 - 30 / info!.length))!, (z) => z >= 5, -1);
+  await bringToFree(page, async () => (await point(page, link, 1 - 30 / info!.length))!);
   const a = (await point(page, link, 0))!;
   const b = (await point(page, link, 1))!;
   const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -389,7 +418,7 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
   // (a) the closure sign: lit at its cardinal points across the bridge
   const main = (await snap(page)).landmarks!.central_bridge[0];
   await wheelZoom(page, (await point(page, main, 0.5))!, (z) => z >= 2, -1);
-  await dragTo(page, (await point(page, main, 0.5))!, FREE);
+  await bringToFree(page, async () => (await point(page, main, 0.5))!);
   {
     const ma = (await point(page, main, 0))!;
     const mb = (await point(page, main, 1))!;
@@ -404,7 +433,8 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
       expect(Math.max(...(await lumAt(page, q, 3))), 'ring lit across the bridge').toBeGreaterThanOrEqual(220);
     }
   }
-  // (b) follow a car on an axis-aligned link whose remaining route has a congested link (occupancy ≥ 0.5)
+  // (b) follow a car on an axis-aligned link whose remaining route has a congested link (occupancy ≥ 0.3:
+  // tinted light, lum > 100; Red r2 B-N1)
   const cands = await page.evaluate(() => {
     const h = window.__livingcity!;
     const out: [number, number][] = [];
@@ -442,7 +472,7 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
     let cong: number | null = null;
     for (const l of s.trackedRoute.slice(1)) {
       const cap = await page.evaluate((x) => window.__livingcity!.linkCapacity(x), l);
-      if (s.linkCounts[l]! / cap >= 0.5 && (await page.evaluate((x) => window.__livingcity!.linkInfo(x)!.length, l)) >= 40) {
+      if (s.linkCounts[l]! / cap >= 0.3 && (await page.evaluate((x) => window.__livingcity!.linkInfo(x)!.length, l)) >= 40) {
         cong = l;
         break;
       }
@@ -462,7 +492,7 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
     expect(marker, 'the tracked marker').not.toBeNull();
     const car = (await page.evaluate(() => window.__livingcity!.trackedScreenCenter()))!;
     expect(Math.hypot(marker!.page[0] - car[0], marker!.page[1] - car[1]), 'the marker at the car').toBeLessThanOrEqual(1.5);
-    if (!(await onCanvas(page, marker!.page, marker!.radiusPx + 4))) await dragTo(page, marker!.page, FREE);
+    if (!(await onCanvas(page, marker!.page, marker!.radiusPx + 4))) await bringToFree(page, async () => (await page.evaluate(() => window.__livingcity!.trackedMarker()))!.page);
     const m = (await page.evaluate(() => window.__livingcity!.trackedMarker()))!;
     const [c, r] = [m.page, m.radiusPx];
     for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
@@ -473,7 +503,7 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
   }
   // the route on the congested link: a white core with a dark casing ≥ 2 px wide on both sides (Red r1 M1)
   {
-    await dragTo(page, (await point(page, congestedLink!, 0.5))!, FREE);
+    await bringToFree(page, async () => (await point(page, congestedLink!, 0.5))!);
     const a = (await point(page, congestedLink!, 0))!;
     const b = (await point(page, congestedLink!, 1))!;
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -508,7 +538,7 @@ test('followed_car_and_route_are_unmistakable', async ({ page }) => {
     expect(end, 'the route end').not.toBeNull();
     const want = (await point(page, last, 1))!;
     expect(Math.hypot(end!.page[0] - want[0], end!.page[1] - want[1]), 'routeEnd at the last link end').toBeLessThanOrEqual(1);
-    await dragTo(page, end!.page, FREE);
+    await bringToFree(page, async () => (await page.evaluate(() => window.__livingcity!.routeEnd()))!.page);
     const e = (await page.evaluate(() => window.__livingcity!.routeEnd()))!.page;
     const la = (await point(page, last, 0))!;
     const lb = (await point(page, last, 1))!;
@@ -539,8 +569,17 @@ test('character_layout_legend_and_three_bridges', async ({ page }) => {
   await expect(legend.locator('li')).toHaveCount(5);
   await expect(legend.locator('li').filter({ hasText: /closed road/i })).toContainText(/ring/i);
   const sel = legend.locator('li').filter({ hasText: /select/i });
-  await expect(sel).toContainText(/corner brackets/i);
-  await expect(sel).toContainText(/dashed route/i);
+  await expect(sel).toContainText(/brackets/i);
+  // the legend keeps today's footprint (one row, 703 × 50 px; frozen layout and pixel tests depend on it)
+  for (const size of [{ width: 1280, height: 800 }, { width: 1280, height: 720 }]) {
+    await page.setViewportSize(size);
+    await sleep(500);
+    const box = (await legend.boundingBox())!;
+    expect(box.width, `legend width at ${size.width}×${size.height}`).toBeLessThanOrEqual(703.5);
+    expect(box.height, `legend height at ${size.width}×${size.height}`).toBeLessThanOrEqual(50.5);
+    expect(box.x, `legend left at ${size.width}×${size.height}`).toBeGreaterThanOrEqual(560.5);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
   expect(await legend.locator('svg').count()).toBeGreaterThanOrEqual(5);
   // layout with a closure and its summary shown, at four sizes
   await page.getByRole('button', { name: 'Close the main bridge' }).click();

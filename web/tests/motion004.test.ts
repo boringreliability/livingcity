@@ -155,9 +155,9 @@ test('district_styles_differ_without_hue', () => {
     for (let j = i + 1; j < 4; j++) {
       const a = lum(DISTRICT_STYLE[kinds[i]!].fill);
       const b = lum(DISTRICT_STYLE[kinds[j]!].fill);
-      expect(Math.abs(a - b), `${kinds[i]} vs ${kinds[j]} fill lum`).toBeGreaterThanOrEqual(0.03);
+      expect(Math.abs(a - b), `${kinds[i]} vs ${kinds[j]} fill lum`).toBeGreaterThanOrEqual(0.03 - 1e-9);
     }
-  for (const k of kinds) expect(lum(DISTRICT_STYLE[k].markColor), `${k} mark brighter than its fill`).toBeGreaterThanOrEqual(lum(DISTRICT_STYLE[k].fill) + 0.024);
+  for (const k of kinds) expect(lum(DISTRICT_STYLE[k].markColor), `${k} mark brighter than its fill`).toBeGreaterThanOrEqual(lum(DISTRICT_STYLE[k].fill) + 0.035 - 1e-9); // Red r2: contrast headroom for 1.5-px marks
   expect(new Set(Object.values(PAD_SHAPE)).size).toBe(3);
 });
 
