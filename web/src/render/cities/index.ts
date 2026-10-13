@@ -56,6 +56,9 @@ function genericDecor(ready: Pick<ReadyMessage, 'network' | 'zones' | 'river'>, 
     pads: new Float32Array(pads),
     riverProfile: profile,
     buildingBoxes: [],
+    buildingKinds: new Uint8Array(0),
+    quay: new Float32Array(0),
+    padKinds: new Uint8Array(0), // motion-004 red
     labels: ready.zones.map((z) => ({ text: z.name, kind: z.kind, icon: LABEL_ICONS[z.kind], x: xy[2 * z.node]!, y: xy[2 * z.node + 1]! })),
   };
 }

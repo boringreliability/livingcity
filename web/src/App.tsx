@@ -1178,6 +1178,11 @@ export function App() {
         const l = geometry.current?.links[link];
         return l ? { length: l.length, lanes: l.lanes } : null;
       },
+      districtSamples: () => [], // motion-004 red
+      roadClasses: () => ({ major: [], local: [] }),
+      trackedMarker: () => null,
+      routeEnd: () => null,
+      closureSigns: () => [],
       startPerfRecording: () => {
         recordingRef.current = { ticks: [], renderIntervals: [], drawMs: [], onNetwork: [], active: [], waitingAtOrigin: [], frames: 0, startMs: performance.now() };
       },

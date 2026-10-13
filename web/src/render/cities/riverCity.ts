@@ -26,6 +26,12 @@ export interface CityDecor {
   /** Building footprints as axis-aligned boxes [x0, y0, x1, y1]; `buildings` draws exactly these. */
   buildingBoxes: [number, number, number, number][];
   labels: CityLabel[];
+  /** District kind code (index into DISTRICT_KINDS) per building box (motion-004). */
+  buildingKinds: Uint8Array;
+  /** Triangles of the quay strip and bollards along the bank by waterfront buildings (motion-004). */
+  quay: Float32Array;
+  /** District kind code per zone pad, in zone order (motion-004). */
+  padKinds: Uint8Array;
 }
 
 export const LABEL_ICONS: Record<ZoneInfo['kind'], string> = { residential: '⌂', workplace: '◫', hospital: '✚' };
@@ -264,5 +270,8 @@ export function riverCityDecor(
     riverProfile: profile,
     buildingBoxes: boxes,
     labels,
+    buildingKinds: new Uint8Array(0), // motion-004 red
+    quay: new Float32Array(0),
+    padKinds: new Uint8Array(0),
   };
 }

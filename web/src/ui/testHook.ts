@@ -134,6 +134,16 @@ interface LivingCityHook {
   bridgeLabels(): { name: string; page: [number, number]; shown: boolean }[];
   /** A link's sim length and lanes, or null for an unknown link. */
   linkInfo(link: number): { length: number; lanes: number } | null;
+  /** Per district kind, a shown building nearest to `near` (default: canvas centre) (motion-004). */
+  districtSamples(near?: [number, number]): { kind: string; page: [number, number]; box: [number, number, number, number]; mark: string }[];
+  /** Link ids by road class (motion-004). */
+  roadClasses(): { major: number[]; local: number[] };
+  /** The followed car's corner-bracket marker: centre and radius in page px, or null (motion-004). */
+  trackedMarker(): { page: [number, number]; radiusPx: number } | null;
+  /** The followed route's destination mark in page px, or null (motion-004). */
+  routeEnd(): { page: [number, number] } | null;
+  /** The closure rings drawn now: link, centre and outer radius in page px (motion-004). */
+  closureSigns(): { link: number; page: [number, number]; radiusPx: number }[];
   /** The latest comparison (plain arrays), or null outside the comparison. */
   comparison(): {
     tick: number;
