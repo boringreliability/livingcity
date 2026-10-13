@@ -362,14 +362,36 @@ impl Sim {
     /// The command log as `[tick, kind (0 = close, 1 = open), link]` triples, in log order (ward motion-003,
     /// read-only).
     pub fn command_log(&self) -> Vec<f64> {
-        Vec::new() // motion-003 red
+        let mut out = Vec::with_capacity(self.timeline.world().command_log().len() * 3);
+        for c in self.timeline.world().command_log() {
+            let (kind, link) = match c.kind {
+                CommandKind::CloseLink(l) => (0.0, l.0),
+                CommandKind::OpenLink(l) => (1.0, l.0),
+            };
+            out.extend([c.tick as f64, kind, link as f64]);
+        }
+        out
     }
 
     /// `[baseTick, cumulative exits per link…]` at `tick` (`Timeline::exits_at`); baseTick NaN when no
     /// retained snapshot is that old (ward motion-003, read-only).
     pub fn exits_at(&self, tick: f64, links: &[u32]) -> Vec<f64> {
-        let _ = (tick, links);
-        Vec::new() // motion-003 red
+        let known = links
+            .iter()
+            .all(|&l| (l as usize) < self.export.link_from.len());
+        let ids: Vec<LinkId> = links.iter().map(|&l| LinkId(l)).collect();
+        // an unknown link or a tick that cannot be a sim tick: no reading
+        let found = if known && tick.is_finite() && tick >= 0.0 {
+            self.timeline.exits_at(tick as u64, &ids)
+        } else {
+            None
+        };
+        match found {
+            Some((base, counts)) => std::iter::once(base as f64)
+                .chain(counts.into_iter().map(|c| c as f64))
+                .collect(),
+            None => vec![f64::NAN; links.len() + 1],
+        }
     }
 
     pub fn state_hash_hex(&self) -> String {

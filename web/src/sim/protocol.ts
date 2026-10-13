@@ -191,11 +191,10 @@ export interface FrameMessage {
   interventions: Float64Array;
   /**
    * Bridge crossings (motion-003), for the landmark links L in order (north W→E, E→W, central …, south …):
-   * `[posTick, nowBase, …L exits at the position, …L exits at nowBase,
-   *   closeTick, beforeBase, …L exits at closeTick, …L exits at beforeBase]`.
-   * nowBase / beforeBase are the bases of `exits_at(position − 1200)` / `exits_at(closeTick − 1200)`;
-   * closeTick is the latest close command at or before the position. Missing values are NaN; empty
-   * without landmarks.
+   * two blocks `[refTick, refBase, fromBase, …L exits at refBase, …L exits at fromBase]` (15 numbers each):
+   * "now" (ref = the position) and "before the closure" (ref = the latest bridge closure at or before the
+   * position). refBase/fromBase are the snapshot bases of `exits_at(ref)` / `exits_at(ref − 1200)`; a
+   * rate divides by refBase − fromBase. Missing values are NaN; empty without landmarks.
    */
   bridgeFlow: Float64Array;
   linkCounts: Uint16Array;

@@ -340,6 +340,55 @@ button.bridge.closed {
   color: #ffd27a;
 }
 
+.consequences h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.consequences h3 {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.consequence-log,
+.consequence-queues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.consequence-queues button {
+  margin: 1px 0;
+  font-size: 12px;
+}
+
+.consequence-crossings {
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.consequence-crossings caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--muted);
+}
+
+.consequence-crossings th,
+.consequence-crossings td {
+  padding: 0 6px;
+  text-align: right;
+}
+
+.consequence-crossings th[scope='row'] {
+  padding-left: 0;
+  text-align: left;
+  font-weight: 500;
+}
+
 .selection h2 {
   margin: 0 0 6px;
   font-size: 15px;
@@ -365,6 +414,39 @@ button.bridge.closed {
   inset: 0;
   pointer-events: none;
   overflow: hidden;
+}
+
+.bridge-label,
+.queue-pin {
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* bridge names (motion-003): italic, on a dark plate, just above the bridge's middle, so a closed
+   bridge's hatch stays visible */
+.bridge-label {
+  transform: translate(-50%, calc(-100% - 12px));
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(10, 12, 16, 0.72);
+  color: #e8edf3;
+  font-size: 11px;
+  font-style: italic;
+  letter-spacing: 0.03em;
+}
+
+/* the head of one of the longest queues (motion-003): a ▼ and the count, on a light outlined badge */
+.queue-pin {
+  transform: translate(-50%, calc(-100% - 4px));
+  padding: 0 3px;
+  border: 1.5px solid #111;
+  border-radius: 3px;
+  background: #f5f1e6;
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .zone {
@@ -474,7 +556,8 @@ button.bridge.closed {
 .timeline-track {
   position: relative;
   flex: 1;
-  height: 18px;
+  /* two lanes: the branch label above, intervention markers below (motion-003) */
+  height: 22px;
   border: 1px solid var(--line);
   border-radius: 4px;
   cursor: pointer;
@@ -517,7 +600,7 @@ button.bridge.closed {
   top: 0;
   transform: translateX(-0.45em);
   font-size: 10.5px;
-  line-height: 16px;
+  line-height: 11px;
   white-space: nowrap;
   pointer-events: none;
   text-shadow: 0 0 2px #000, 0 0 2px #000;
@@ -525,6 +608,18 @@ button.bridge.closed {
 
 .timeline-branch.to-left {
   transform: translateX(calc(-100% + 0.45em));
+}
+
+/* an intervention (motion-003): ✕ closed, ○ reopened, in the track's lower lane */
+.timeline-intervention {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 10px;
+  pointer-events: none;
+  text-shadow: 0 0 2px #000, 0 0 2px #000;
 }
 
 .timeline-memory {
@@ -718,6 +813,18 @@ button.bridge.closed {
   .legend.stacked {
     bottom: 138px;
   }
+}
+
+/* The guide's slot: the guide alone, or a fixed 100 px band while the intervention summary is shown
+   (motion-003: the panels below never move when the guide is hidden or shown). */
+.guide-slot {
+  display: grid;
+  min-width: 0;
+}
+
+.guide-slot.reserved {
+  height: 100px;
+  align-content: start;
 }
 
 /* The demo guide (ward polish-004): the top of the right column, ≤ 100 px tall so it stays in the top

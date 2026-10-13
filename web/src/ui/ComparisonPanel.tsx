@@ -23,13 +23,15 @@ function timeDelta(a: number, b: number): string {
 
 interface Props {
   comparison: ComparisonMessage;
+  /** The bridges' display names in landmark order (motion-003): crossing rows since the branch. */
+  bridgeNames?: string[];
 }
 
 /**
  * A and B at the same sim time, over the same cohort (the demand trips created since the branch):
  * real window metrics from both simulations (contract T4), with incomplete trips always shown.
  */
-export function ComparisonPanel({ comparison: c }: Props) {
+export function ComparisonPanel({ comparison: c, bridgeNames = [] }: Props) {
   const { a, b } = c;
   const unserved = (w: Float64Array) => w[4]! + w[5]!;
   const rows: [string, string, string, string, string][] = [
@@ -40,6 +42,14 @@ export function ComparisonPanel({ comparison: c }: Props) {
     ['Mean trip', 'Mean travel time of the completed ones', mss(a[7]!), mss(b[7]!), timeDelta(a[7]!, b[7]!)],
     ['p95 trip', '95th percentile travel time of the completed ones', mss(a[8]!), mss(b[8]!), timeDelta(a[8]!, b[8]!)],
   ];
+  // crossings of each bridge (both directions) since the branch: the same window for A and B (motion-003)
+  const x = c.crossings;
+  if (x)
+    bridgeNames.forEach((name, i) => {
+      const [ca, cb] = [x.a[2 * i]! + x.a[2 * i + 1]!, x.b[2 * i]! + x.b[2 * i + 1]!];
+      if (Number.isFinite(ca) && Number.isFinite(cb))
+        rows.push([`Crossings · ${name}`, `Vehicles that crossed ${name} (both directions) since the branch`, String(ca), String(cb), countDelta(cb - ca)]);
+    });
   return (
     <section className="panel comparison" aria-label="Comparison">
       <p className="comparison-when">

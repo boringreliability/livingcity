@@ -3,6 +3,7 @@ import { TickWindow } from './perf';
 import {
   DT,
   VEHICLE_RECORD_WORDS,
+  type ComparisonMessage,
   type FrameMessage,
   type FromWorker,
   type Landmarks,
@@ -144,6 +145,13 @@ export function createSimHost(deps: HostDeps): SimHost {
   let scenarios: SimLike[] = [];
   let viewed: 0 | 1 = 0;
   let branchTick = -1;
+  /** The landmark bridge links (north W→E, E→W, central …, south …) once the world is ready (motion-003). */
+  let bridgeLinks: Uint32Array | null = null;
+  /** Crossing rates are measured over 10 sim min. */
+  const FLOW_WINDOW_TICKS = 600 / DT;
+  /** Their cumulative exits at the branch tick, read once when B is made (equal in A and B): crossings
+   *  since the branch keep working after B's branch snapshot leaves the replay window (motion-003). */
+  let branchBase: Float64Array | null = null;
   /** A and B advance in lockstep and are posted as (A, B) frame pairs (ward timeline-004). */
   let comparing = false;
   let lastComparison = Number.NEGATIVE_INFINITY;
@@ -205,6 +213,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     scenarios = [sim];
     viewed = 0;
     branchTick = -1;
+    branchBase = null;
     comparing = false;
     clock.reset(); // a new world: the whole clock afresh (f1)
     clock.resetExecuted(sim.tick());
@@ -248,12 +257,57 @@ export function createSimHost(deps: HostDeps): SimHost {
           linkSpeed: s.link_speed(),
           ...(typeof s.link_sat_flow === 'function' ? { linkSatFlow: s.link_sat_flow() } : {}),
         },
-        landmarks: JSON.parse(s.landmarks_json()) as Landmarks,
+        landmarks: readLandmarks(s),
         zones: JSON.parse(s.zones_json()) as ZoneInfo[],
         metricNames: s.metric_names(),
       },
       [],
     );
+  };
+
+  const readLandmarks = (s: SimLike): Landmarks => {
+    const lm = JSON.parse(s.landmarks_json()) as Landmarks;
+    bridgeLinks = Uint32Array.from([...lm.north_bridge, ...lm.central_bridge, ...lm.south_bridge]);
+    return lm;
+  };
+
+  /** One `bridgeFlow` block: `[refTick, refBase, fromBase, …exits at refBase, …exits at fromBase]` (NaN if missing). */
+  const flowBlock = (s: SimLike, L: Uint32Array, ref: number): Float64Array => {
+    const out = new Float64Array(3 + 2 * L.length).fill(NaN);
+    if (!Number.isFinite(ref)) return out;
+    const at = s.exits_at!(ref, L);
+    const from = s.exits_at!(ref - FLOW_WINDOW_TICKS, L);
+    out[0] = ref;
+    out[1] = at[0]!;
+    out[2] = from[0]!;
+    out.set(at.subarray(1), 3);
+    out.set(from.subarray(1), 3 + L.length);
+    return out;
+  };
+
+  /** Bridge crossings now and before the latest bridge closure at or before the position (motion-003). */
+  const bridgeFlow = (s: SimLike, log: Float64Array): Float64Array => {
+    const L = bridgeLinks;
+    if (!L || typeof s.exits_at !== 'function') return new Float64Array(0);
+    const pos = s.tick();
+    let close = NaN;
+    for (let i = 0; i + 2 < log.length; i += 3) {
+      const [tick, kind, link] = [log[i]!, log[i + 1]!, log[i + 2]!];
+      if (kind === 0 && tick <= pos && L.includes(link) && !(tick <= close)) close = tick;
+    }
+    const out = new Float64Array(2 * (3 + 2 * L.length));
+    out.set(flowBlock(s, L, pos), 0);
+    out.set(flowBlock(s, L, close), 3 + 2 * L.length);
+    return out;
+  };
+
+  /** Exits of the bridge links since the branch, per side (motion-003), or undefined without a base. */
+  const crossingsSinceBranch = (a: SimLike, b: SimLike): ComparisonMessage['crossings'] => {
+    const L = bridgeLinks;
+    const base = branchBase;
+    if (!L || !base || typeof a.exits_at !== 'function' || typeof b.exits_at !== 'function') return undefined;
+    const since = (s: SimLike) => s.exits_at!(s.tick(), L).subarray(1).map((v, i) => v - base[i]!);
+    return { a: since(a), b: since(b), baseTick: branchTick };
   };
 
   const command = (kind: 'close' | 'open', link: number) => {
@@ -320,8 +374,16 @@ export function createSimHost(deps: HostDeps): SimHost {
   const postComparison = (t: number) => {
     const [a, b] = [scenarios[0]!, scenarios[1]!];
     if (typeof a.window_metrics !== 'function' || typeof b.window_metrics !== 'function') return;
+    const crossings = crossingsSinceBranch(a, b);
     deps.post(
-      { type: 'comparison', tick: a.tick(), fromTick: branchTick, a: Float64Array.from(a.window_metrics(branchTick)), b: Float64Array.from(b.window_metrics(branchTick)) },
+      {
+        type: 'comparison',
+        tick: a.tick(),
+        fromTick: branchTick,
+        a: Float64Array.from(a.window_metrics(branchTick)),
+        b: Float64Array.from(b.window_metrics(branchTick)),
+        ...(crossings ? { crossings } : {}),
+      },
       [],
     );
     lastComparison = t;
@@ -440,6 +502,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     sim = a;
     viewed = 0;
     branchTick = -1;
+    branchBase = null;
     comparing = false;
     scenarios[1]?.free?.();
     scenarios = [a];
@@ -457,6 +520,8 @@ export function createSimHost(deps: HostDeps): SimHost {
     viewed = 1;
     sim = b;
     branchTick = fromTick;
+    const base = bridgeLinks && typeof b.exits_at === 'function' ? b.exits_at(fromTick, bridgeLinks) : null;
+    branchBase = base && base[0] === fromTick ? base.slice(1) : null;
     for (const c of then) command(c.kind, c.link);
     clock.setRunning(false);
     afterJump(b);
@@ -490,6 +555,7 @@ export function createSimHost(deps: HostDeps): SimHost {
     worlds[1]++;
     viewed = 0;
     branchTick = -1;
+    branchBase = null;
     sim = scenarios[0]!;
     afterJump(sim);
   };
@@ -566,6 +632,9 @@ export function createSimHost(deps: HostDeps): SimHost {
     }
     const vehicles = reuse ?? new ArrayBuffer(bytes);
     new Uint32Array(vehicles).set(new Uint32Array(deps.memory().buffer, s.frame_ptr(), words));
+    // the consequence data (motion-003): the command log and the bridge crossings, inside the encode cost
+    const log = Float64Array.from(s.command_log?.() ?? []);
+    const flow = bridgeFlow(s, log);
     encodeMs = perfNow() - e0;
     frameTimes.push(t);
     const tick = s.tick();
@@ -580,6 +649,8 @@ export function createSimHost(deps: HostDeps): SimHost {
       nextLinks: s.next_links?.() ?? new Uint16Array(count).fill(NO_NEXT_LINK),
       // 4 bytes per vehicle (motion-002); fakes without trip ids are matched by record index
       tripIds: s.trip_ids?.() ?? Uint32Array.from({ length: count }, (_, i) => i),
+      interventions: log,
+      bridgeFlow: flow,
       linkCounts: s.link_counts(),
       linkQueued: s.link_queued(),
       closed: s.closed_links(),

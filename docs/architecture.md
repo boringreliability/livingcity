@@ -25,7 +25,7 @@ web/src/ui        React panels: controls, timeline, scenarios, comparison, selec
 2. The vehicle `ArrayBuffer` is a **transferable** (not copied); the UI returns it (`returnBuffer`) to its side's pool. `nextLinks` is copied, not transferred.
 3. Frames also carry trip ids (`tripIds`, 4 bytes each) and a per-side `epoch` that changes on every jump. The presenter (`render/presentation.ts`) shows a time just behind the newest frame, never ahead, interpolating each car by trip id. Held cars wait at stop lines clear of other roads; turns follow one curve from stop line to the next link's entry. The CPU computes each pose, the GPU draws it; A and B share one clock.
 
-There are no per-vehicle JS↔wasm calls and no per-frame JSON. Vehicle and road details are fetched only on request: `inspectVehicle` names a vehicle by frame tick and record, and `inspectLink` names a link id. In compare mode a small `comparison` message (the windowed metrics of A and B) is sent at most every 500 ms. It is also sent on entering compare, on a seek and on pause.
+There are no per-vehicle JS↔wasm calls and no per-frame JSON. Vehicle and road details are fetched only on request: `inspectVehicle` names a vehicle by frame tick and record, and `inspectLink` names a link id. Frames also carry the command log and bridge exits (motion-003). In compare mode a small `comparison` message (A's and B's windowed metrics) goes out at most every 500 ms. Also sent on entering compare, seeking or pausing.
 
 ## Determinism
 - **Fixed timestep:** 0.5 s per tick. The processing order is stable: vehicles, links and nodes go in index order, and no hash-map iteration feeds any decision. The sim logic never reads the wall clock (enforced by `clippy.toml`).

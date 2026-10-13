@@ -6,13 +6,19 @@ import { LABEL_ICONS, riverCityDecor, type CityDecor } from './riverCity';
 export type { CityDecor, CityLabel } from './riverCity';
 
 /**
- * Display names of the bridges (render-side data, ward motion-003): River City's own names, else
- * "Bridge 1/2/3", in landmark order (north, central, south).
+ * Display names of the bridges (render-side data, ward motion-003), in landmark order (north, central,
+ * south). The central one is the "Main Bridge" the control panel closes in every city; River City's
+ * southern bridge is its Old Bridge.
  */
 export function bridgeNaming(city: string, landmarks: Landmarks): BridgeNaming {
-  void city;
-  void landmarks;
-  throw new Error('bridgeNaming: not implemented (motion-003 red)');
+  const south = city === 'river_city' ? 'Old Bridge' : 'South Bridge';
+  return {
+    bridges: [
+      { key: 'north_bridge', name: 'North Bridge', links: [...landmarks.north_bridge] },
+      { key: 'central_bridge', name: 'Main Bridge', links: [...landmarks.central_bridge] },
+      { key: 'south_bridge', name: south, links: [...landmarks.south_bridge] },
+    ],
+  };
 }
 
 const PAD_RADIUS_M = 45;

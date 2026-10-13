@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
 import { DT, type TimelineStatus } from '../sim/protocol';
+import { interventionGlyph, interventionVerb, type InterventionEntry } from './consequences';
 
 /** One step of the arrow keys and the ±1 min buttons: 1 sim minute. */
 const STEP_TICKS = 120;
@@ -19,10 +20,12 @@ interface Props {
   /** The last requested position (a seek may still be on its way). */
   position: number;
   onSeek(tick: number): void;
+  /** Every intervention of the viewed scenario (also after the position): markers on the track (motion-003). */
+  interventions?: InterventionEntry[];
 }
 
 /** The replay window of the viewed scenario: scrub it, jump in it, see its memory (contract T3). */
-export function TimelineBar({ timeline, position, onSeek }: Props) {
+export function TimelineBar({ timeline, position, onSeek, interventions = [] }: Props) {
   const { windowStartTick: lo, headTick: hi, branchTick, snapshotBytes, budgetBytes } = timeline;
   const span = Math.max(1, hi - lo);
   const frac = (t: number) => Math.min(1, Math.max(0, (t - lo) / span));
@@ -143,6 +146,21 @@ export function TimelineBar({ timeline, position, onSeek }: Props) {
             <span aria-hidden="true">◆</span> branch {simClock(branchTick)}
           </div>
         )}
+        {interventions
+          .filter((e) => e.tick >= lo && e.tick <= hi)
+          .map((e) => (
+            // the lower lane of the track (the branch label has the upper one): a glyph, named for screen readers
+            <span
+              key={`${e.tick}:${e.kind}:${e.links.join(',')}`}
+              className={`timeline-intervention ${e.kind}`}
+              role="img"
+              aria-label={`${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
+              title={`${interventionVerb(e.kind)} ${e.label} at ${simClock(e.tick)}`}
+              style={{ left: `${frac(e.tick) * 100}%` }}
+            >
+              {interventionGlyph(e.kind)}
+            </span>
+          ))}
       </div>
       <span className="timeline-label mono" title="Playhead">
         ▸ {simClock(position)}

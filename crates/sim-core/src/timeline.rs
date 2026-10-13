@@ -295,8 +295,14 @@ impl Timeline {
     /// when `tick ≥ position` (base = position), else the newest retained snapshot at or before `tick`
     /// (base = its tick); `None` when no retained snapshot is that old.
     pub fn exits_at(&self, tick: u64, links: &[LinkId]) -> Option<(u64, Vec<u64>)> {
-        let _ = (tick, links);
-        todo!("motion-003 red: exits_at")
+        let counts = |w: &World| links.iter().map(|&l| w.link_exit_count(l)).collect();
+        let position = self.world.tick();
+        if tick >= position {
+            return Some((position, counts(&self.world)));
+        }
+        let idx = self.snapshots.partition_point(|s| s.tick() <= tick);
+        let snap = self.snapshots.get(idx.checked_sub(1)?)?;
+        Some((snap.tick(), counts(&snap.state)))
     }
 
     /// How many snapshots this timeline shares (the same `Arc`) with `other` (ward polish-005).

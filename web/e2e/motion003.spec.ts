@@ -95,8 +95,14 @@ test('intervention_summary_and_map_markers', async ({ page }) => {
       return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] as [number, number];
     }, [we, ew] as const);
     expect(labels[i]!.shown, `${labels[i]!.name} shown at the fitted view`).toBe(true);
-    expect(Math.hypot(labels[i]!.page[0] - mid[0], labels[i]!.page[1] - mid[1]), `${labels[i]!.name} at its bridge`).toBeLessThanOrEqual(6);
-    await expect(page.locator('.labels .bridge-label', { hasText: labels[i]!.name })).toBeVisible();
+    // just above its bridge's middle, never over it: a closed bridge's hatch there must stay visible
+    const el = page.locator('.labels .bridge-label', { hasText: labels[i]!.name });
+    await expect(el).toBeVisible();
+    const b = (await el.boundingBox())!;
+    expect(Math.abs(b.x + b.width / 2 - mid[0]), `${labels[i]!.name} centred on its bridge`).toBeLessThanOrEqual(6);
+    expect(mid[1] - (b.y + b.height), `${labels[i]!.name} just above its bridge`).toBeGreaterThanOrEqual(8);
+    expect(mid[1] - (b.y + b.height), `${labels[i]!.name} close to its bridge`).toBeLessThanOrEqual(30);
+    expect(Math.abs(labels[i]!.page[0] - (b.x + b.width / 2)) + Math.abs(labels[i]!.page[1] - (b.y + b.height / 2)), 'the hook reports the label').toBeLessThanOrEqual(1);
   }
   // the queue pins: the most-queued links of the frame, with their counts, at their stop-line ends
   const pins = await page.evaluate(() => window.__livingcity!.queuePins());

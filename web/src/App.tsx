@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Camera } from './render/camera';
-import { cityDecor, type CityDecor, type CityLabel } from './render/cities';
+import { bridgeNaming, cityDecor, type CityDecor, type CityLabel } from './render/cities';
 import { buildRoadGeometry, vehiclePosition, type RoadGeometry } from './render/geometry';
 import { NO_NEXT } from './render/motion';
 import { pickLink, pickPresentedVehicle, VEHICLE_PICK_MIN_ZOOM } from './render/picking';
@@ -36,6 +36,8 @@ import { Legend } from './ui/Legend';
 import { nextStacked } from './ui/bottomBand';
 import { ConfirmReplace, ScenarioPanel } from './ui/ScenarioPanel';
 import { DemoGuide } from './ui/DemoGuide';
+import { ConsequencesPanel } from './ui/ConsequencesPanel';
+import { crossingRates, summarizeInterventions, topQueues, type BridgeNaming } from './ui/consequences';
 import { advanceGuide, guideHint, initialGuideProgress, type GuideProgress } from './ui/guideProgress';
 import { TimelineBar } from './ui/TimelineBar';
 import { VehiclePanel } from './ui/VehiclePanel';
@@ -64,6 +66,9 @@ interface FrameView {
   frameBytes: number;
   scenario: 0 | 1;
   timeline: TimelineStatus;
+  /** The command log as triples, and the bridge crossings (motion-003). */
+  interventions: Float64Array;
+  bridgeFlow: Float64Array;
 }
 
 type Intervention = { kind: 'close' | 'open'; link: number };
@@ -161,6 +166,8 @@ export function App() {
   /** The comparison as last drawn (the hook's `compare`): both sides drawn, or A alone. */
   const shownCompare = useRef(false);
   const decorRef = useRef<CityDecor | null>(null);
+  /** The bridges' display names for this city (motion-003). */
+  const namingRef = useRef<BridgeNaming | null>(null);
   /** B's latest frame view, and a copy of its records (replayed into a renderer created later). */
   const bFrameRef = useRef<FrameView | null>(null);
   const bRecordsRef = useRef<{ words: Uint32Array; count: number } | null>(null);
@@ -237,7 +244,7 @@ export function App() {
    */
   const labelCam = useRef({ labels: null as unknown, cx: NaN, cy: NaN, zoom: NaN, w: NaN, h: NaN, gen: 0 });
   const labelPlaced = useRef(new WeakMap<HTMLElement, number>());
-  const placeLabel = (el: HTMLElement, l: CityLabel) => {
+  const placeLabel = (el: HTMLElement, l: { x: number; y: number }) => {
     labelPlaced.current.set(el, labelCam.current.gen);
     const [sx, sy] = camera.worldToScreen(l.x, l.y);
     el.style.left = `${sx}px`;
@@ -252,6 +259,16 @@ export function App() {
       return !!layer && (r.left < layer.left - 0.5 || r.right > layer.right + 0.5 || r.top < layer.top - 0.5 || r.bottom > layer.bottom + 0.5);
     });
     els.forEach((el, i) => (el.style.visibility = cut[i] ? 'hidden' : ''));
+  };
+  /** Map marks of motion-003 (bridge names, queue pins) by key: placed every animation frame, hidden when cut. */
+  const marks = useRef(new Map<string, { el: HTMLElement; x: number; y: number }>());
+  const markRef = (key: string, x: number, y: number) => (el: HTMLElement | null) => {
+    if (!el) {
+      marks.current.delete(key);
+      return;
+    }
+    marks.current.set(key, { el, x, y });
+    placeLabel(el, { x, y });
   };
   const [tracked, setTracked] = useState<TrackedVehicle | null>(null);
   const [gone, setGone] = useState<TrackedGone | null>(null);
@@ -395,6 +412,7 @@ export function App() {
       labelsRef.current = decor.labels;
       setLabels(decor.labels);
       renderer.current!.setNetwork(g, decor);
+      namingRef.current = bridgeNaming(r.city, r.landmarks);
       const C = clearances(g.links, r.network.linkFrom, r.network.linkTo);
       const clock = new PresentationClock();
       presentRef.current = {
@@ -441,6 +459,8 @@ export function App() {
         frameBytes: f.vehicles.byteLength + f.nextLinks.byteLength + f.tripIds.byteLength,
         scenario: f.scenario,
         timeline: f.timeline,
+        interventions: f.interventions,
+        bridgeFlow: f.bridgeFlow,
       };
     };
     c.onFrame((f: FrameMessage) => {
@@ -538,6 +558,8 @@ export function App() {
         frameBytes,
         scenario: f.scenario,
         timeline: f.timeline,
+        interventions: f.interventions,
+        bridgeFlow: f.bridgeFlow,
       };
       if (pendingSeekRef.current !== null && f.timeline.positionTick === pendingSeekRef.current) {
         pendingSeekRef.current = null;
@@ -727,6 +749,14 @@ export function App() {
         }
       });
       if (placed.length) hideCutLabels(placed);
+      if (marks.current.size) {
+        const els: HTMLElement[] = [];
+        for (const m of marks.current.values()) {
+          placeLabel(m.el, m);
+          els.push(m.el);
+        }
+        hideCutLabels(els);
+      }
       renderFrames.current++;
       scheduleHousekeeping();
       raf = requestAnimationFrame(loop);
@@ -1064,10 +1094,33 @@ export function App() {
         const v = r.vehicles;
         return { link: v.link(record), s: v.s(record), queued: (v.flags(record) & FLAG_QUEUED) !== 0, lane: v.lane(record), next: r.next[record] ?? NO_NEXT };
       },
-      interventions: () => [], // motion-003 red
-      crossings: () => [],
-      queuePins: () => [],
-      bridgeLabels: () => [],
+      interventions: () => {
+        const f = frameRef.current;
+        const n = namingRef.current;
+        return f && n ? summarizeInterventions(f.interventions, f.tick, n) : [];
+      },
+      crossings: () => {
+        const f = frameRef.current;
+        const n = namingRef.current;
+        return f && n && summarizeInterventions(f.interventions, f.tick, n).length ? crossingRates(f.bridgeFlow, n) : [];
+      },
+      queuePins: () => {
+        const f = frameRef.current;
+        const g = geometry.current;
+        const canvas = canvasRef.current;
+        if (!f || !g || !canvas) return [];
+        const r = canvas.getBoundingClientRect();
+        return topQueues(f.linkQueued).map(({ link, queued }) => {
+          const l = g.links[link]!;
+          const [sx, sy] = camera.worldToScreen(l.x1, l.y1);
+          return { link, queued, page: [r.left + sx, r.top + sy] as [number, number] };
+        });
+      },
+      bridgeLabels: () =>
+        [...document.querySelectorAll<HTMLElement>('.labels:not(.labels-b) .bridge-label')].map((el) => {
+          const b = el.getBoundingClientRect();
+          return { name: el.textContent ?? '', page: [b.left + b.width / 2, b.top + b.height / 2] as [number, number], shown: el.style.visibility !== 'hidden' };
+        }),
       linkInfo: (link: number) => {
         const l = geometry.current?.links[link];
         return l ? { length: l.length, lanes: l.lanes } : null;
@@ -1190,6 +1243,42 @@ export function App() {
 
   const g = geometry.current;
   const sel = selected !== null && g ? g.links[selected] : undefined;
+  // consequences of an intervention (motion-003): from the viewed frame's command log and bridge crossings
+  const naming = namingRef.current;
+  const shownEntries = frame && naming ? summarizeInterventions(frame.interventions, frame.tick, naming) : [];
+  /** The summary shows in the single view while no road or vehicle detail is open (the column keeps its
+   *  pre-motion-003 layout then; Esc brings the summary back). */
+  const showSummary = !comparingNow && shownEntries.length > 0 && !sel && !tracked && !gone;
+  const allEntries = frame && naming ? summarizeInterventions(frame.interventions, Infinity, naming) : [];
+  const closureTick = frame && Number.isFinite(frame.bridgeFlow[15]) ? frame.bridgeFlow[15]! : null;
+  /** Bridge names and queue pins on one label layer (A's or B's), from that side's frame. */
+  const mapMarks = (side: 'a' | 'b', f: FrameView | null) => {
+    if (!g || !naming) return null;
+    return (
+      <>
+        {naming.bridges.map((b) => {
+          const [p, q] = [g.links[b.links[0]], g.links[b.links[1]]];
+          if (!p || !q) return null;
+          const x = (p.x0 + p.x1 + q.x0 + q.x1) / 4;
+          const y = (p.y0 + p.y1 + q.y0 + q.y1) / 4;
+          return (
+            <span key={`${side}:bridge:${b.key}`} ref={markRef(`${side}:bridge:${b.key}`, x, y)} className="bridge-label">
+              {b.name}
+            </span>
+          );
+        })}
+        {f &&
+          topQueues(f.linkQueued).map(({ link, queued }) => {
+            const l = g.links[link]!;
+            return (
+              <span key={`${side}:pin:${link}`} ref={markRef(`${side}:pin:${link}`, l.x1, l.y1)} className="queue-pin" title={`Link ${link}: ${queued} queued`}>
+                ▼ {queued}
+              </span>
+            );
+          })}
+      </>
+    );
+  };
   /** The frame of the side the road was picked on (B's only while comparing). */
   const selFrame = selectedSide === 'B' && bFrameRef.current ? bFrameRef.current : frame;
   const focusSlider = focusTimeline;
@@ -1269,6 +1358,7 @@ export function App() {
             <span className="zone-icon">{l.icon}</span> {l.text}
           </span>
         ))}
+        {mapMarks('a', frame)}
       </div>
       {comparingNow && (
         <div className="labels labels-b" aria-hidden="true">
@@ -1283,6 +1373,7 @@ export function App() {
               <span className="zone-icon">{l.icon}</span> {l.text}
             </span>
           ))}
+          {mapMarks('b', bFrameRef.current)}
         </div>
       )}
       {fatal && (
@@ -1345,7 +1436,27 @@ export function App() {
         </p>
       )}
       <div className="side">
-        {ready && frame && !guideHidden && !comparingNow && <DemoGuide done={guide.done} hint={guideHint(guide, speed)} onHide={() => hideGuide(true)} />}
+        {/* the guide's band (≤ 100 px, above the roads) stays reserved while the intervention summary is shown,
+            so hiding or showing the guide never moves the panels below it onto other roads (motion-003) */}
+        {(() => {
+          const showGuide = !!(ready && frame && !guideHidden && !comparingNow);
+          const reserve = showSummary;
+          if (!showGuide && !reserve) return null;
+          return (
+            <div className={reserve ? 'guide-slot reserved' : 'guide-slot'}>
+              {showGuide && <DemoGuide done={guide.done} hint={guideHint(guide, speed)} onHide={() => hideGuide(true)} />}
+            </div>
+          );
+        })()}
+        {showSummary && frame && naming && (
+          <ConsequencesPanel
+            entries={shownEntries}
+            rates={crossingRates(frame.bridgeFlow, naming)}
+            closureTick={closureTick}
+            queues={topQueues(frame.linkQueued)}
+            onSelectLink={(link) => select(link)}
+          />
+        )}
         {sel && selFrame && ready && (
           <SelectionPanel
             link={sel}
@@ -1374,8 +1485,8 @@ export function App() {
       </div>
       {!comparingNow && <MetricsStrip simTimeS={frame?.simTimeS ?? 0} metrics={frame?.metrics ?? {}} />}
       {!comparingNow && <Legend stacked={legendStacked} />}
-      {comparingNow && comparison && <ComparisonPanel comparison={comparison} />}
-      {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} />}
+      {comparingNow && comparison && <ComparisonPanel comparison={comparison} bridgeNames={naming?.bridges.map((b) => b.name) ?? []} />}
+      {frame && <TimelineBar timeline={frame.timeline} position={pendingSeek ?? frame.timeline.positionTick} onSeek={requestSeek} interventions={allEntries} />}
     </main>
   );
 }

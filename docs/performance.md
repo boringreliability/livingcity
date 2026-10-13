@@ -121,6 +121,10 @@ The renderer no longer extrapolates in the vertex shader. Instead, the CPU prese
 - **Payload:** the trip ids add 4 bytes per vehicle (plus 2 bytes of next link and 16 bytes of record, as before).
 - **Presentation latency:** the picture trails the newest frame by a measured median of 281 ms at 1× and 37 ms at 20× (`motion002.spec` test 8; bounds 600 ms and 120 ms). The Diagnostics heading shows it live.
 
+## Consequence data (`motion-003`)
+
+Each frame now also carries the command log and bridge exit counts: a `command_log()` call and four `exits_at()` reads of the 6 bridge links. A node + wasm micro-benchmark measured them on River City with 59 snapshots in the window (2026-10-13; machine load as above). They cost **0.66 µs per frame** (median; at most 0.88 µs), against 24.3 µs for the existing `encode_frame`. The payload grows by 30 numbers of `bridgeFlow` plus 3 per command (24 bytes each), about 0.3 kB per frame.
+
 ## How to reproduce
 
 ```bash
