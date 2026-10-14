@@ -103,7 +103,7 @@ Each flow is checked through successive observed frames, sampled on every animat
 
 ## Must NOT
 - Change product behaviour without a failing regression test that names the ward the defect belongs to.
-- Change, skip or supersede any frozen test, except S9: the user authorized on 2026-10-13 (`.wdd/memory/authorization-2026-10-13-s9-ci.md`) superseding only the 600 s timeout of motion002 `3b visual_rule_sweep`, now `3b-ci` with 1800 s and identical assertions, because it failed CI on GitHub's runners.
+- Change, skip or supersede any frozen test, except S9 and S10 (S10: the user authorized on 2026-10-14, `.wdd/memory/authorization-2026-10-14-s10-queue-release.md`, replacing only the release check of this ward's own `flow_queue_forms_and_releases`, now `flow_queue_forms_and_releases_s10`). S9: the user authorized on 2026-10-13 (`.wdd/memory/authorization-2026-10-13-s9-ci.md`) superseding only the 600 s timeout of motion002 `3b visual_rule_sweep`, now `3b-ci` with 1800 s and identical assertions, because it failed CI on GitHub's runners.
 - Present SwiftShader numbers as hardware performance, or claim an improvement without a before/after measurement.
 - Deploy (the user's task: "Do not deploy unless separately authorized"). By the same 2026-10-13 authorization, the CI `deploy` job now runs only on a manual `workflow_dispatch`, so a green push no longer deploys.
 - Commit test-results, videos or temporary configs.
@@ -150,7 +150,7 @@ Each flow is checked through successive observed frames, sampled on every animat
   - Minors: the demo wording, the stale comment, a note on code that only frozen tests use, the after-commit note, and the missing p95 row.
 - **Gold r2 fixes:**
   - MAJOR 1: on CI's Linux runners the legend stayed stacked over the city (gap ~19 px inside the old 12–24 px hysteresis band), failing 7 frozen e2e tests. Regression test `web/e2e/motion005_legend.spec.ts` (Red: `.wdd/reviews/motion-005-legend-red-1.md` APPROVED, snapshot 6db415cc…) fails on 2284e32 and passes after the fix: `ui/bottomBand.ts` places the legend from the measured gap alone (stacking moves it only vertically, so the gap does not change and there is no feedback to damp). The affected specs pass locally: 53/53.
-  - MAJOR 2 (`flow_queue_forms_and_releases` release oracle fragile when the queue at the reopen is small): put to the user (supersede or known flake).
+  - MAJOR 2: superseded as S10 with the user's authorization. S10 Red r1 was REJECTED: the single-sample oracle is vacuous and passed a sim that keeps the bridge closed. Measured over 2 sim min with the bridge still closed, rerouting had already dissolved the queue (2.5–4.5 mean). The user then chose A2: both Main Bridge links carry cars within 5 sim min, and the queue does not grow (≤ before + 2). S10 Red r2 was APPROVED: both mutants fail at the bridge check. Snapshot of `motion005.spec.ts`: 8ea41fe3….
   - Minors: performance.md p95 and paused-transfer wording, known-issues lag numbers and the frames/s row, these notes.
 - **Suites:**
   - `cargo test --workspace` and clippy are clean.

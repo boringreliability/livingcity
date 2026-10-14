@@ -445,7 +445,11 @@ for (const m of [1, 20]) {
 }
 
 // 2
-test('flow_queue_forms_and_releases', async ({ page }) => {
+// SUPERSEDED (S10 in .wdd/memory/supersessions.md, user authorization 2026-10-14): its release check compares single
+// instantaneous queue counts (CI: 6 → 4 > 3), which swing by tens of cars within sim seconds, so it neither holds on
+// slower machines nor shows a release. Replaced by flow_queue_forms_and_releases_s10 below; everything before the
+// release section is identical.
+test.skip('flow_queue_forms_and_releases', async ({ page }) => {
   test.setTimeout(420_000);
   await ready(page);
   const main = await mainBridge(page);
@@ -521,6 +525,112 @@ test('flow_queue_forms_and_releases', async ({ page }) => {
     .toBe(true);
   const s1 = await snap(page);
   expect(sum(s1), `queues released within 15 sim min (from ${q0})`).toBeLessThanOrEqual(0.5 * q0);
+  expect(await page.evaluate(() => (window.__livingcity as unknown as Hook).closureSigns().length), 'no ring after the reopen').toBe(0);
+  await shot(page, 'queue-released');
+});
+
+// 2 (S10)
+test('flow_queue_forms_and_releases_s10', async ({ page }) => {
+  test.setTimeout(420_000);
+  await ready(page);
+  const main = await mainBridge(page);
+  await speed(page, 20);
+  await play(page);
+  await bridgeButton(page).click();
+  await expect.poll(async () => (await snap(page)).closed).toEqual(expect.arrayContaining(main));
+  const closedAt = (await snap(page)).simTimeS;
+  await expect
+    .poll(async () => (await page.evaluate(() => (window.__livingcity as unknown as Hook).queuePins())).some((p) => p.queued >= 10), { timeout: 120_000, intervals: [500] })
+    .toBe(true);
+  expect((await snap(page)).simTimeS - closedAt, 'a queue of ≥ 10 within 20 sim min').toBeLessThanOrEqual(20 * 60);
+  // the longest queue; zoom to it while paused so it is still there to observe
+  await pause(page);
+  const pin = (await page.evaluate(() => (window.__livingcity as unknown as Hook).queuePins())).sort((a, b) => b.queued - a.queued)[0]!;
+  await wheelZoom(page, pin.page, (z) => z >= 3);
+  await shot(page, 'queue-formed');
+  for (const mm of [1, 20]) {
+    await speed(page, mm);
+    await play(page);
+    const frames = await page.evaluate(
+      (link) =>
+        new Promise<{ queued: number; behind: boolean }[]>((resolve) => {
+          const h = window.__livingcity as unknown as Hook;
+          const out: { queued: number; behind: boolean }[] = [];
+          const t0 = performance.now();
+          let withQueue = 0;
+          const step = () => {
+            let queued = 0;
+            let behind = true;
+            const n = h.snapshot().frameRecords;
+            for (let i = 0; i < n; i++) {
+              const f = h.frameVehicle(i);
+              if (!f || f.link !== link || !f.queued) continue;
+              const v = h.vehicleDraw(i);
+              if (!v || v.link !== link) continue;
+              queued++;
+              if (v.s > v.stop + 0.05) behind = false;
+            }
+            out.push({ queued, behind });
+            if (queued) withQueue++;
+            // ≥ 3 s and ≥ 15 frames with queued cars (load and stop-and-go both thin them out), at most 10 s
+            const ms = performance.now() - t0;
+            if (ms < 10_000 && (ms < 3000 || withQueue < 15)) requestAnimationFrame(step);
+            else resolve(out);
+          };
+          requestAnimationFrame(step);
+        }),
+      pin.link,
+    );
+    await attachJson(`queue-${mm}x-frames`, frames);
+    for (const f of frames) expect(f.behind, `${mm}×: queued cars held behind the stop line`).toBe(true);
+    // not vacuous: queued cars were on the link in enough frames to see them held (the queue may drain at 20×)
+    expect(frames.filter((f) => f.queued >= 1).length, `${mm}×: frames with queued cars`).toBeGreaterThanOrEqual(15);
+  }
+  // release (S10)
+  await speed(page, 20);
+  const pinLinks = (await page.evaluate(() => (window.__livingcity as unknown as Hook).queuePins())).map((p) => p.link);
+  // `linkQueued` is an instantaneous count that swings by tens of cars within sim seconds, so the release is judged on
+  // means over 2 sim min windows, and on the bridge itself: both of its links carry cars again
+  const simWindow = (simS: number) =>
+    page.evaluate(
+      ([pins, mainLinks, simS]) =>
+        new Promise<{ mean: number; n: number; mainMax: number[]; t0: number; t1: number }>((resolve) => {
+          const h = window.__livingcity!;
+          const t0 = h.snapshot().simTimeS;
+          let total = 0;
+          let n = 0;
+          const mainMax = mainLinks.map(() => 0);
+          const wallEnd = performance.now() + 60_000;
+          const id = setInterval(() => {
+            const s = h.snapshot();
+            total += pins.reduce((a, l) => a + (s.linkQueued[l] ?? 0), 0);
+            n++;
+            mainLinks.forEach((l, i) => (mainMax[i] = Math.max(mainMax[i]!, s.linkCounts[l] ?? 0)));
+            if (s.simTimeS - t0 >= simS || performance.now() > wallEnd) {
+              clearInterval(id);
+              resolve({ mean: n ? total / n : 0, n, mainMax, t0, t1: s.simTimeS });
+            }
+          }, 100);
+        }),
+      [pinLinks, main, simS] as [number[], number[], number],
+    );
+  // (A2, user 2026-10-14) by the reopen, rerouting has mostly dissolved the closure's queue (2.5–4.5 mean queued on
+  // the pins locally), so the release shows as the bridge carrying traffic again, with the queues not growing
+  const before = await simWindow(120);
+  await attachJson('queue-release-before', before);
+  expect(before.t1 - before.t0, 'the window before the reopen spans 2 sim min').toBeGreaterThanOrEqual(120);
+  expect(before.n, 'samples in the window before the reopen').toBeGreaterThanOrEqual(20);
+  await bridgeButton(page).click();
+  await expect.poll(async () => (await snap(page)).closed.filter((l) => main.includes(l)).length).toBe(0);
+  const flow = await simWindow(5 * 60);
+  await attachJson('queue-release-flow', flow);
+  expect(flow.t1 - flow.t0, 'the bridge is watched for 5 sim min after the reopen').toBeGreaterThanOrEqual(5 * 60);
+  main.forEach((l, i) => expect(flow.mainMax[i], `Main Bridge link ${l} carries cars again within 5 sim min of the reopen`).toBeGreaterThan(0));
+  const after = await simWindow(120);
+  await attachJson('queue-release-after', after);
+  expect(after.t1 - after.t0, 'the window after the reopen spans 2 sim min').toBeGreaterThanOrEqual(120);
+  expect(after.n, 'samples in the window after the reopen').toBeGreaterThanOrEqual(20);
+  expect(after.mean, `mean queued on the pinned links after the reopen (before: ${before.mean.toFixed(1)})`).toBeLessThanOrEqual(before.mean + 2);
   expect(await page.evaluate(() => (window.__livingcity as unknown as Hook).closureSigns().length), 'no ring after the reopen').toBe(0);
   await shot(page, 'queue-released');
 });
