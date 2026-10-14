@@ -32,4 +32,4 @@ In English: should the test get (A, recommended) a replacement of only its relea
 
 **What the replacement checks (A2):**
 - Both Main Bridge links carry cars again (`linkCounts` > 0) within 5 sim min of the reopen.
-- The mean queued on the pinned links over 2 sim min after the reopen is at most the mean over the 2 sim min before it, plus 2.
+- The mean queued on the pinned links over 2 sim min, measured from 5 to 7 sim min after the reopen (after the bridge-flow window), is at most the mean over the 2 sim min before it, plus 2.

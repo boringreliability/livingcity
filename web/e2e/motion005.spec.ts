@@ -445,10 +445,9 @@ for (const m of [1, 20]) {
 }
 
 // 2
-// SUPERSEDED (S10 in .wdd/memory/supersessions.md, user authorization 2026-10-14): its release check compares single
-// instantaneous queue counts (CI: 6 → 4 > 3), which swing by tens of cars within sim seconds, so it neither holds on
-// slower machines nor shows a release. Replaced by flow_queue_forms_and_releases_s10 below; everything before the
-// release section is identical.
+// SUPERSEDED (S10, user authorization 2026-10-14): single instantaneous queue counts swing by tens of cars within sim
+// seconds, so the release check neither held on CI (6 → 4 > 3) nor showed a release. Replaced by
+// flow_queue_forms_and_releases_s10 below (identical up to the release); see .wdd/memory/supersessions.md.
 test.skip('flow_queue_forms_and_releases', async ({ page }) => {
   test.setTimeout(420_000);
   await ready(page);
