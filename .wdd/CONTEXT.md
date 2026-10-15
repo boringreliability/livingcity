@@ -14,6 +14,7 @@
 - **User decisions:**
   - Convergence rule: from round 4, a gate whose only BLOCKER/MAJOR findings are verified-fixable test gaps is approved with the fix tests (logged as `*-auto.md`). It escalates on a BLOCKER, a contract defect, an unverified finding or a disagreement.
   - Behind indicator: option (ii), where no cap event counts after lowering the speed until a plan clears the backlog.
+  - Frozen tests (2026-10-15): a frozen test that preserves undesirable behaviour is superseded. The process stays (no in-place weakening, a replacement, a Red gate, a row in `supersessions.md`). Determinism, replay, branch independence, identical demand and comparison metrics stay pinned unless named. See `.wdd/memory/authorization-2026-10-15-s11-closure-marker.md`.
 
 ## Architecture Decisions Made
 | Decision | Rationale | Ward |

@@ -69,7 +69,7 @@ gold → complete (`wdd complete <id>`), then update CONTEXT.md and continue to 
 
 **Frozen tests and contracts: unlocking (supersession)**
 A frozen test or WDD contract pins a *requirement*, not an implementation. If it preserves unwanted behaviour, "a frozen test requires it" is no reason to keep that behaviour once the user authorizes revising it.
-- **Who may unlock.** Only the user, explicitly, and scoped to named behaviours or tests. Example: the 2026-10-11 authorization for motion, paused frames and buffer pools (`.wdd/memory/task-2026-10-11-motion-paused-consequences.md`). Without such an authorization, frozen tests stay untouched; regressions go in new files.
+- **Who may unlock.** The user, on 2026-10-15 (`.wdd/memory/authorization-2026-10-15-s11-closure-marker.md`): a frozen test that preserves undesirable behaviour is superseded. Do not keep that behaviour because the test is frozen, and do not wait for a separate authorization for that case. The process below still applies. Earlier scoped authorizations remain in force (the 2026-10-11 task for motion, paused frames and buffer pools, plus S9 and S10). Without an undesirable pinned behaviour, frozen tests stay untouched and regressions go in new files.
 - **How to supersede.** Preserve the valid intent and replace implementation-specific assertions with tests of the desired observable behaviour.
   - Supersede a whole test file or test case: never weaken an assertion in place, and never delete a failing test to get a green suite.
   - The replacing tests go through a normal Red gate. The Red reviewer checks that the intent is kept and that the replacement is not weaker for any behaviour that is still wanted.

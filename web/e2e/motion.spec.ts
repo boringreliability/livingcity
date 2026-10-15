@@ -342,7 +342,9 @@ test('hover_differs_from_congestion_by_shape', async ({ page }) => {
 });
 
 // 10
-test('closed_road_marked_at_every_zoom', async ({ page }) => {
+// SUPERSEDED (S11, user authorization 2026-10-15): the page clip also counted HTML overlays, which covered
+// the window on CI before the closure. Replaced by closed_road_marked_at_every_zoom_s11; see .wdd/memory/supersessions.md.
+test.skip('closed_road_marked_at_every_zoom', async ({ page }) => {
   test.setTimeout(240_000);
   await ready(page);
   await pause(page);
@@ -354,6 +356,62 @@ test('closed_road_marked_at_every_zoom', async ({ page }) => {
   const counts = async () => {
     const px = await lum(page, await mid(), 14, 14);
     return { bright: px.filter((v) => v >= 220).length, dark: px.filter((v) => v <= 40).length };
+  };
+  const centre = await mid();
+  const zooms: { label: string; ok: (z: number) => boolean; dir: -1 | 1 }[] = [
+    { label: 'MIN_ZOOM 0.05', ok: (z) => z <= 0.0501, dir: 1 },
+    { label: '0.07', ok: (z) => z >= 0.06 && z <= 0.08, dir: -1 },
+    { label: '0.2', ok: (z) => z >= 0.17 && z <= 0.23, dir: -1 },
+  ];
+  const before: Record<string, { bright: number; dark: number }> = {};
+  for (const z of zooms) {
+    await wheelZoom(page, centre, z.ok, z.dir, 25);
+    before[z.label] = await counts();
+  }
+  await page.getByRole('button', { name: /close the main bridge/i }).click();
+  await blur(page);
+  await page.keyboard.press('Space');
+  await expect.poll(async () => (await snap(page)).closed).toEqual(expect.arrayContaining(lm.central_bridge));
+  await pause(page);
+  // the same zooms in the same order (out to the minimum, then in)
+  for (const z of zooms) {
+    await wheelZoom(page, await mid(), z.ok, z.dir, 25);
+    const c = await counts();
+    const b = before[z.label]!;
+    expect(c.bright - b.bright, `${z.label}: the closure adds a bright marker (${b.bright} → ${c.bright})`).toBeGreaterThanOrEqual(20);
+  }
+});
+
+// S11: the same check, counting the canvas only. HTML overlays (bridge labels, queue pins) are hidden
+// for each capture, as motion-005 reads B's map. The assertion is unchanged.
+test('closed_road_marked_at_every_zoom_s11', async ({ page }) => {
+  test.setTimeout(240_000);
+  await ready(page);
+  await pause(page);
+  // vehicles hidden for both measurements (moving cars are as bright as the glyph)
+  await page.evaluate(() => window.__livingcity!.setDebug({ hideVehicles: true }));
+  const lm = (await snap(page)).landmarks!;
+  const link = lm.central_bridge[0]!;
+  const mid = async () => (await page.evaluate((l) => window.__livingcity!.linkScreenPoint(l, 0.5), link))!;
+  const counts = async () => {
+    await page.evaluate(() => {
+      document.getElementById('zz-hide-overlays')?.remove();
+      const st = document.createElement('style');
+      st.id = 'zz-hide-overlays';
+      st.textContent = 'body * { visibility: hidden !important; } canvas { visibility: visible !important; }';
+      document.head.append(st);
+    });
+    await page.mouse.move(3, 3);
+    await sleep(100);
+    const label = page.locator('.bridge-label').first();
+    await expect(label, 'a bridge label is in the DOM').toBeAttached();
+    await expect(label, 'HTML overlays are hidden during the capture').toHaveCSS('visibility', 'hidden');
+    try {
+      const px = await lum(page, await mid(), 14, 14);
+      return { bright: px.filter((v) => v >= 220).length, dark: px.filter((v) => v <= 40).length };
+    } finally {
+      await page.evaluate(() => document.getElementById('zz-hide-overlays')?.remove());
+    }
   };
   const centre = await mid();
   const zooms: { label: string; ok: (z: number) => boolean; dir: -1 | 1 }[] = [
