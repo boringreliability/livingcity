@@ -84,7 +84,7 @@ It must not break any frozen visual test that pins valid behaviour.
 | motion-002 | complete |
 | motion-003 | complete |
 | motion-004 | complete |
-| motion-005 | M5: integration (browser flows, measurements, docs) |
+| motion-005 | complete (Gold r4 APPROVED 2026-10-15; epic gate not yet approved) |
 
 ## Completion criteria
 - All suites are green locally and on GitHub Actions.

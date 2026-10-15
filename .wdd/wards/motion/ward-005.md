@@ -3,12 +3,12 @@ ward: 5
 revision: null
 name: "Integration: verified in the browser, measured"
 epic: "motion"
-status: "gold"
+status: "complete"
 dependencies: ["motion-001", "motion-002", "motion-003", "motion-004"]
 layer: "typescript"
 estimated_tests: 8
 created: "2026-10-11"
-completed: null
+completed: "2026-10-15"
 ---
 # Ward motion-005: Integration: verified in the browser, measured
 
@@ -158,6 +158,8 @@ Each flow is checked through successive observed frames, sampled on every animat
   - Full e2e: 149 passed, 2 skipped, 5 failed. It took 41 min at a 15-minute load of about 28 (normally about 31 min).
   - The 5 were all timing or frame-count tests (gold_city003 M1, integration_polish `controls_respond_under_load`, motion.spec `tracked_car_moves_continuously`, motion002 `compare_shares_one_presentation_time` and `presentation_latency_is_bounded_in_the_browser`). Rerun alone at a load of about 20, they passed 5/5. motion-005 changes no product code.
 - **Docs:** `docs/verification/motion-005.md` with 14 screenshots (downscaled to 960 px), plus `docs/demo.md` (motion, quiet pause) and `docs/performance.md`.
+- **Gold r3:** REJECTED. The S10 skip comment put `supersessions.md` four lines above `test.skip`, so `epic_wiring_and_docs` failed the Web job and E2E never ran. Fixed in `f66e2f6` (comment lines only; snapshot `ef21bac2…`).
+- **Gold r4:** APPROVED on `45b42b5` (`.wdd/reviews/motion-005-gold-4.md`). CI run 38738516921: Rust, Web (162 passed, 8 skipped) and E2E (155 passed, 4 skipped, 0 failed). The four skips are S8, S11, S10 and the city-005 G4 skip. Smoke on a headed Apple M4 Pro passed all six flows. One minor: the queue-release sentence in `docs/verification/motion-005.md` still described the pre-S10 oracle; that sentence now states the S10 check. Epic gate waits for the user.
 
 ## Verification
 The Red gate approves tests 1–8. Gold makes them pass, with product fixes only through failing regression tests. Gold also records the measurements and the docs and runs every suite. The Gold reviewer reruns the flows, performs the smoke test (with a recording) and checks the integration: no orphaned exports, no hooks without consumers, no UI control without effect.

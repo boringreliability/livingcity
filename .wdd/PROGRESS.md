@@ -1,7 +1,7 @@
 # Progress — livingcity
 
 ## Summary
-25 of 27 Wards complete · 423 estimated tests · 0 blocked
+27 of 27 Wards complete · 424 estimated tests · 0 blocked
 
 ## Ward Status
 | Ward | Name | Tests | Status | Date |
@@ -20,8 +20,8 @@
 | motion-001 | Quiet pause and bounded buffer reuse | 8 | ✅ Complete | 2026-10-12 |
 | motion-002 | Interpolated motion by identity | 16 | ✅ Complete | 2026-10-13 |
 | motion-003 | Consequences of an intervention | 10 | ✅ Complete | 2026-10-13 |
-| motion-004 | City character | 8 | 📋 Planned | - |
-| motion-005 | Integration: verified in the browser, measured | 8 | 📋 Planned | - |
+| motion-004 | City character | 9 | ✅ Complete | 2026-10-13 |
+| motion-005 | Integration: verified in the browser, measured | 8 | ✅ Complete | 2026-10-15 |
 | polish-001 | Keyboard, focus and honest labels | 9 | ✅ Complete | 2026-10-09 |
 | polish-002 | Layout that fits: resize refit, split-view panels and narrow widths | 6 | ✅ Complete | 2026-10-09 |
 | polish-003 | Calm motion and clear markers in the renderer | 10 | ✅ Complete | 2026-10-09 |
@@ -35,4 +35,4 @@
 | timeline-005 | The full brief workflow in the browser, measured | 9 | ✅ Complete | 2026-10-09 |
 
 ## Test Summary
-- Estimated total: 423
+- Estimated total: 424
